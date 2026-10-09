@@ -18,7 +18,7 @@
           {
             "type": "command",
             "command": "node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/hooks/require-gates.ts\" || exit 2",
-            "timeout": 15
+            "timeout": 1800
           }
         ]
       }
@@ -41,7 +41,7 @@
           {
             "type": "command",
             "command": "node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/hooks/require-gates.ts\" || exit 2",
-            "timeout": 15
+            "timeout": 1800
           },
           { "type": "command", "command": "node --disable-warning=ExperimentalWarning \"${CLAUDE_PLUGIN_ROOT}/hooks/ledger.ts\" || true", "timeout": 10 }
         ]

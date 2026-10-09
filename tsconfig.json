@@ -18,5 +18,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["scripts/**/*.ts", "controller/src/**/*.ts", "plugin/**/*.ts"]
+  "include": ["*.ts", "scripts/**/*.ts", "controller/src/**/*.ts", "gates/src/**/*.ts", "plugin/**/*.ts"]
 }

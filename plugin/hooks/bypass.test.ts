@@ -208,25 +208,52 @@ describe("human sessions", () => {
 
 describe("require-gates", () => {
   const stop = (active = false) => JSON.stringify({ hook_event_name: "Stop", session_id: "s1", stop_hook_active: active });
-  it("blocks a builder that stops without preflight or a recorded failure", () => {
+  // A config whose preflight is a stand-in command (factoryctl configures the gate runner).
+  const withPreflight = (name: string, code: string, timeout_ms = 10_000) => {
+    const path = join(taskDir, `guard-${name}.json`);
+    writeFileSync(path, JSON.stringify({ ...(JSON.parse(readFileSync(configPath, "utf8")) as object), preflight: { argv: [process.execPath, "-e", code], timeout_ms } }));
+    return { FACTORY_GUARD_CONFIG: path };
+  };
+  const passing = withPreflight("preflight-pass", "process.exit(0)");
+  const failing = withPreflight("preflight-fail", "console.log('typecheck: 2 errors in src/orders/list.ts'); process.exit(1)");
+
+  it("lets a builder stop when the preflight passes", () => {
+    expect(runHook("require-gates.ts", stop(), passing).status).toBe(0);
+  });
+  it("blocks when the preflight fails, and shows the builder why", () => {
+    const r = runHook("require-gates.ts", stop(), failing);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("typecheck: 2 errors in src/orders/list.ts");
+  });
+  it("does not accept a preflight.json the builder wrote", () => {
+    writeFileSync(join(taskDir, "preflight.json"), JSON.stringify({ passed: true }));
+    expect(runHook("require-gates.ts", stop(), failing).status).toBe(2);
+    rmSync(join(taskDir, "preflight.json"));
+  });
+  it("blocks a preflight that runs past its timeout", () => {
+    const r = runHook("require-gates.ts", stop(), withPreflight("preflight-slow", "setTimeout(() => {}, 60_000)", 1000));
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("timed out");
+  });
+  it("blocks when no preflight is configured", () => {
     expect(runHook("require-gates.ts", stop()).status).toBe(2);
   });
   it("lets a builder stop after a structured failure", () => {
     writeFileSync(join(taskDir, "build-failure.json"), JSON.stringify({ reason: "spec is contradictory" }));
-    expect(runHook("require-gates.ts", stop()).status).toBe(0);
+    expect(runHook("require-gates.ts", stop(), failing).status).toBe(0);
     rmSync(join(taskDir, "build-failure.json"));
   });
-  it("lets a builder stop after a passing preflight", () => {
-    writeFileSync(join(taskDir, "preflight.json"), JSON.stringify({ passed: true }));
-    expect(runHook("require-gates.ts", stop()).status).toBe(0);
-    rmSync(join(taskDir, "preflight.json"));
+  it("does not accept an empty failure reason", () => {
+    writeFileSync(join(taskDir, "build-failure.json"), JSON.stringify({ reason: "  " }));
+    expect(runHook("require-gates.ts", stop(), failing).status).toBe(2);
+    rmSync(join(taskDir, "build-failure.json"));
   });
   it("also holds a builder that runs as a subagent", () => {
     const subagentStop = JSON.stringify({ hook_event_name: "SubagentStop", session_id: "s1", stop_hook_active: false });
-    expect(runHook("require-gates.ts", subagentStop).status).toBe(2);
+    expect(runHook("require-gates.ts", subagentStop, failing).status).toBe(2);
   });
   it("never loops: a stop already forced by the hook goes through", () => {
-    expect(runHook("require-gates.ts", stop(true)).status).toBe(0);
+    expect(runHook("require-gates.ts", stop(true), failing).status).toBe(0);
   });
   it("ignores human sessions", () => {
     expect(runHook("require-gates.ts", stop(), {}).status).toBe(0);

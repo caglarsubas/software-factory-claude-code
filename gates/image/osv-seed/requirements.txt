@@ -1,0 +1,2 @@
+# Seed for refreshing the offline OSV PyPI database (see pnpm-lock.yaml).
+six==1.17.0

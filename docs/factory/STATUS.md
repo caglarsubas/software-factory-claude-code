@@ -19,9 +19,9 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | P0-01 | Scaffold, factory CI, repository ruleset | core | done | #4 | merged 2026-10-09 with `ci` green; ruleset applies once the owner imports `.github/rulesets/main.json` |
 | P0-02 | Schemas v1 | core | done | #6 | merged 2026-10-09 with `ci` green; 17 schemas (strict Ajv 2020); 9 valid and 25 invalid fixtures behave as expected |
 | P0-03 | Policies, config, policy engine | core | done | #6 | merged 2026-10-09 with `ci` green; 26 table-driven cases plus fail-upward property tests; 4 engine mutations each caught |
-| P0-04 | Plugin v0.1 | core | review | #8 | 8 agents, 1 skill, 3 rubrics, marketplace; `claude plugin validate --strict` passes on the pinned 2.1.286 (CI step); conformance test keeps agents, `tools.yaml`, routing and `hooks.json` in agreement |
-| P0-05 | Four hooks and bypass-variant suite | core | review | #8 | 58 bypass variants exit 2, 13 ordinary actions pass, 11 protected writes denied under a broad scope; missing config, invalid config and missing script fail closed; 9 guard mutations each caught; require-gates, format-typecheck and ledger each tested through the real entrypoint |
-| P0-06 | Gate runner in a disposable container | core | todo | | |
+| P0-04 | Plugin v0.1 | core | done | #8 | merged 2026-10-09 with `ci` green; 8 agents, 1 skill, 3 rubrics, marketplace; `claude plugin validate --strict` passes on the pinned 2.1.286 (CI step); conformance test keeps agents, `tools.yaml`, routing and `hooks.json` in agreement |
+| P0-05 | Four hooks and bypass-variant suite | core | done | #8 | merged 2026-10-09 with `ci` green; 58 bypass variants exit 2, 13 ordinary actions pass, 11 protected writes denied under a broad scope; missing config, invalid config and missing script fail closed; 9 guard mutations each caught; require-gates, format-typecheck and ledger each tested through the real entrypoint |
+| P0-06 | Gate runner in a disposable container | core | review | #9 | 19 seeded-defect runs (11 TypeScript, 8 Python) each fail exactly the gates they target, including `export-ignore`, `nosemgrep` and `trufflehog:ignore` bypass attempts; both rule packs (13 rules) pass their annotated tests; 8 pinned downloads verified by cosign, SLSA or GitHub attestation in CI; require-gates now runs the preflight itself |
 | P0-07 | `factoryctl` v0 and replay harness | core | todo | | |
 | P0-08 | Fixture targets and profiles | core | todo | | |
 | P0-09 | Operator guide, threat model, G0, `v0.1.0` | core | todo | | |
@@ -140,6 +140,8 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | 2026-10-09 | P0-04 | every §2.2 agent in plugin v0.1 | the eight P0–P1 agents: triager, spec-writer, builder, code-reviewer, security-reviewer, refuter, approver, summarizer | the dependency and migration reviewers and the ux-evaluator arrive with P2-09, second-opinion with P2-12, the localiser with P2-13; the gate-runner is a script (P0-06) |
 | 2026-10-09 | P0-04 | markdownlint default rules | MD041 (first line a heading) off under `plugin/` | agent and skill prompts start with frontmatter |
 | 2026-10-09 | P0-05 | hooks in exec form | shell form: `node … \|\| exit 2` (the ledger uses `\|\| true`) | exec form passes through every exit code, so a missing runtime or a crash (exit 1) would fail open; the wrapper turns any failure into exit 2, and CI checks every hook carries it |
+| 2026-10-09 | P0-06 | every gate container with `--network none` | gates, scans and tests run with no network; setup and the vulnerability-database refresh run in separate fetch containers | dependencies must come from the lockfile, not the builder's checkout; setup runs with lifecycle scripts and source builds off, the refresh sees no target content, and P2-01's egress proxy narrows both to package registries |
+| 2026-10-09 | P0-06 | worktree-only mount | no host mount: the committed tree is streamed into a per-run volume from the object database | stricter; `git archive` would honour the change's own `export-ignore` and hide files from every gate |
 
 ### Platform re-verification (ROADMAP §11)
 

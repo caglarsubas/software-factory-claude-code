@@ -5,7 +5,8 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default defineConfig([
-  globalIgnores(["node_modules/", "coverage/", "dist/"]),
+  // Gate fixtures and rule tests are target code under test, not factory code.
+  globalIgnores(["node_modules/", "coverage/", "dist/", "gates/fixtures/", "gates/rules/"]),
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,

@@ -94,6 +94,7 @@ describe("hooks.json", () => {
   interface HookEntry {
     type: string;
     command: string;
+    timeout?: number;
   }
   const hooks = (JSON.parse(readFileSync(join(PLUGIN_DIR, "hooks/hooks.json"), "utf8")) as { hooks: Record<string, { hooks: HookEntry[] }[]> }).hooks;
   const commands = Object.entries(hooks).flatMap(([event, groups]) => groups.flatMap((g) => g.hooks.map((h) => ({ event, command: h.command }))));
@@ -107,6 +108,16 @@ describe("hooks.json", () => {
     expect(eventsOf("require-gates")).toEqual(["Stop", "SubagentStop"]);
     expect(eventsOf("format-typecheck")).toEqual(["PostToolUse"]);
     expect(eventsOf("ledger")).toEqual(expect.arrayContaining(["SessionEnd", "SubagentStop"]));
+  });
+
+  it("gives require-gates longer than the longest preflight a guard config allows", () => {
+    const schema = JSON.parse(readFileSync(join(REPO_ROOT, "schemas/guard-config.schema.json"), "utf8")) as {
+      properties: { preflight: { properties: { timeout_ms: { maximum: number } } } };
+    };
+    const longest = schema.properties.preflight.properties.timeout_ms.maximum;
+    const timeouts = Object.values(hooks).flatMap((groups) => groups.flatMap((g) => g.hooks.filter((h) => scriptOf(h.command) === "require-gates").map((h) => h.timeout ?? 60)));
+    expect(timeouts).toHaveLength(2);
+    for (const seconds of timeouts) expect(seconds * 1000).toBeGreaterThan(longest);
   });
 
   it("exits 2 on any error in every hook except the observing ledger", () => {

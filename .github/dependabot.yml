@@ -10,7 +10,7 @@ updates:
       actions:
         patterns: ["*"]
   - package-ecosystem: npm
-    directories: ["/", "/controller"]
+    directories: ["/", "/controller", "/gates"]
     schedule:
       interval: weekly
     cooldown:
@@ -27,3 +27,11 @@ updates:
         dependency-type: development
       runtime-dependencies:
         dependency-type: production
+  # Gate image base images (pinned by digest). Tool downloads are pinned in the same Dockerfile
+  # by SHA-256 and verified in CI; bump those by hand with gates/src/verify-tools.ts.
+  - package-ecosystem: docker
+    directory: /gates/image
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
