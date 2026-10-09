@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0042",
+  "kind": "feature",
+  "proposed_tier": "R1",
+  "uncertain": false,
+  "duplicate_of": null,
+  "summary": "Add a helper that reports whether a cart is empty."
+}

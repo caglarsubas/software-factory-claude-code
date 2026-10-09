@@ -19,7 +19,8 @@ pnpm lint                        #   ESLint (typescript-eslint strict, type-chec
 pnpm lint:md                     #   markdownlint-cli2
 pnpm typecheck                   #   tsc --noEmit
 pnpm test                        #   Vitest
-pnpm test:gates                  # gate runner container suite (needs Docker; CI's gates job)
+pnpm test:gates                  # container suites: gate runner and factoryctl end to end (needs Docker; CI's gates job)
+pnpm factoryctl doctor           # factoryctl v0 (controller/README.md)
 pnpm check:docs                  #   ROADMAP/STATUS ID parity, links, model-ID placement
 ```
 
@@ -41,4 +42,4 @@ These are R3 in the self profile (ROADMAP §3.3): changes need the operator's re
 
 ## Layout
 
-The target layout is in ROADMAP §2.4. Today the repository holds the docs, the toolchain, `scripts/` (repository checks), CI, `schemas/` (JSON Schema 2020-12 plus fixtures), `policies/`, `config/`, `profiles/`, `controller/` (the `@software-factory/controller` workspace package: schema validation, the policy engine and the plugin conformance test so far), `gates/` (the `@software-factory/gates` package: the gate runner, its image, rule packs and seeded-defect fixtures), and `plugin/` (the `software-factory` Claude Code plugin: agents, the `status` skill, rubrics and the four hooks, listed by `.claude-plugin/marketplace.json`). Hooks are plain Node TypeScript with no dependencies; `plugin/hooks/bypass.test.ts` runs them exactly as `hooks.json` does. Each Phase 0 PR adds the next piece.
+The target layout is in ROADMAP §2.4. Today the repository holds the docs, the toolchain, `scripts/` (repository checks), CI, `schemas/` (JSON Schema 2020-12 plus fixtures), `policies/`, `config/`, `profiles/`, `controller/` (the `@software-factory/controller` workspace package: `factoryctl` v0 with the event store, pipeline and replay harness, plus schema validation, the policy engine and the plugin conformance test), `gates/` (the `@software-factory/gates` package: the gate runner, its image, rule packs and seeded-defect fixtures), and `plugin/` (the `software-factory` Claude Code plugin: agents, the `status` skill, rubrics and the four hooks, listed by `.claude-plugin/marketplace.json`). Hooks are plain Node TypeScript with no dependencies; `plugin/hooks/bypass.test.ts` runs them exactly as `hooks.json` does. Each Phase 0 PR adds the next piece.

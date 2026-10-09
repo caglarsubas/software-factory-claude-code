@@ -7,7 +7,7 @@ import { createValidator, SCHEMA_DIR } from "./validate.ts";
 
 const validator = createValidator();
 const FIXTURES = join(SCHEMA_DIR, "fixtures");
-const ARTIFACTS = ["task", "spec", "plan", "finding", "review", "verdict", "manifest", "event", "gates", "profile"];
+const ARTIFACTS = ["task", "triage", "spec", "plan", "finding", "review", "verdict", "summary", "manifest", "event", "gates", "profile"];
 
 const read = (path: string): unknown =>
   path.endsWith(".json") ? JSON.parse(readFileSync(path, "utf8")) : parse(readFileSync(path, "utf8"));
