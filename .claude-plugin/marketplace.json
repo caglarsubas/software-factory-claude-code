@@ -1,0 +1,14 @@
+{
+  "name": "software-factory",
+  "description": "The software factory's Claude Code plugin: agents, skills and enforcement hooks.",
+  "owner": {
+    "name": "caglarsubas"
+  },
+  "plugins": [
+    {
+      "name": "software-factory",
+      "source": "./plugin",
+      "description": "Agents, skills and enforcement hooks for the software factory."
+    }
+  ]
+}

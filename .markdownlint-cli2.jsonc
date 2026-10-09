@@ -1,11 +1,5 @@
 {
-  "config": {
-    "default": true,
-    // Long lines are allowed: the docs are table-heavy.
-    "MD013": false,
-    // Table pipe alignment is cosmetic; the docs use compact rows with tight delimiter rows.
-    "MD060": false
-  },
+  // Rules live in .markdownlint.jsonc so nested directories can extend them.
   "globs": ["**/*.md"],
   "ignores": ["**/node_modules/**"]
 }

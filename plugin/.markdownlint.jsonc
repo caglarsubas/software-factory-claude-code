@@ -1,0 +1,5 @@
+{
+  "extends": "../.markdownlint.jsonc",
+  // Agent and skill files are prompts behind YAML frontmatter, not documents with a title.
+  "MD041": false
+}

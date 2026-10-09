@@ -1,0 +1,10 @@
+{
+  "name": "software-factory",
+  "displayName": "Software Factory",
+  "version": "0.1.0",
+  "description": "Agents, skills and enforcement hooks for the software factory. factoryctl runs them headless; humans can use them interactively.",
+  "author": { "name": "caglarsubas" },
+  "homepage": "https://github.com/caglarsubas/software-factory-claude-code",
+  "repository": "https://github.com/caglarsubas/software-factory-claude-code",
+  "keywords": ["factory", "agents", "code-review", "guardrails"]
+}
