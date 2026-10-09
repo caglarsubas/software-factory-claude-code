@@ -114,6 +114,29 @@
           "timeout_ms"
         ]
       }
+    },
+    "preflight": {
+      "description": "Build stage: the command require-gates runs when the builder tries to stop (the gate runner, from P0-07's factoryctl). Exit 0 lets the builder stop.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.schema.json#/$defs/text"
+          },
+          "minItems": 1
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 1740000
+        }
+      },
+      "required": [
+        "argv",
+        "timeout_ms"
+      ]
     }
   },
   "required": [

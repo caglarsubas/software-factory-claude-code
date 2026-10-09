@@ -1,0 +1,50 @@
+# default: high-confidence insecure patterns. A match on an added line fails the sast gate.
+# Self-authored (no registry rules), so the pack stays usable if the factory is offered to others.
+rules:
+  - id: js-tls-verification-disabled
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: TLS certificate verification disabled
+    metadata: {pack: default}
+    pattern-either:
+      - pattern: "{..., rejectUnauthorized: false, ...}"
+      - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = $V
+      - pattern: process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = $V
+  - id: js-jwt-none-algorithm
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: JWT verification accepts the "none" algorithm
+    metadata: {pack: default}
+    pattern-either:
+      - pattern: '{..., algorithms: [..., "none", ...], ...}'
+      - pattern: "{..., algorithms: [..., 'none', ...], ...}"
+  - id: py-tls-verification-disabled
+    languages: [python]
+    severity: ERROR
+    message: TLS certificate verification disabled
+    metadata: {pack: default}
+    pattern-either:
+      - pattern: $F(..., verify=False, ...)
+      - pattern: ssl._create_unverified_context(...)
+      - pattern: $CTX.check_hostname = False
+      - pattern: $CTX.verify_mode = ssl.CERT_NONE
+  - id: py-jwt-signature-not-verified
+    languages: [python]
+    severity: ERROR
+    message: JWT decoded without verifying its signature
+    metadata: {pack: default}
+    pattern-either:
+      - pattern: 'jwt.decode(..., options={..., "verify_signature": False, ...}, ...)'
+      - pattern: jwt.decode(..., algorithms=[..., "none", ...], ...)
+  - id: py-insecure-tempfile
+    languages: [python]
+    severity: ERROR
+    message: tempfile.mktemp is race-prone; use mkstemp or NamedTemporaryFile
+    metadata: {pack: default}
+    pattern: tempfile.mktemp(...)
+  - id: py-debug-server
+    languages: [python]
+    severity: ERROR
+    message: Debug server enabled (the Werkzeug debugger executes arbitrary code)
+    metadata: {pack: default}
+    pattern: $APP.run(..., debug=True, ...)

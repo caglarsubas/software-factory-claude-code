@@ -1,0 +1,20 @@
+# Seed for refreshing the offline OSV databases: one package per ecosystem the adapters
+# scan (npm here, PyPI in requirements.txt). No target content reaches the refresh container.
+lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      is-number:
+        specifier: 7.0.0
+        version: 7.0.0
+
+packages:
+
+  is-number@7.0.0:
+    resolution: {integrity: sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==}
+
+snapshots:
+
+  is-number@7.0.0: {}

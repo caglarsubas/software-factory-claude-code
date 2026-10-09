@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0042",
+  "stage": "build",
+  "worktree": "/home/op/.factory/worktrees/T-0042",
+  "task_dir": "/home/op/.factory/runs/T-0042",
+  "protected_paths": [
+    "src/auth/**"
+  ],
+  "scope": {
+    "include": [
+      "src/orders/",
+      "tests/orders/"
+    ],
+    "exclude": [
+      "src/auth/"
+    ]
+  },
+  "writable_task_files": [
+    "build-report.md",
+    "build-failure.json",
+    "progress.md"
+  ],
+  "secret_paths": [],
+  "allowed_tools": [
+    "Read",
+    "Grep",
+    "Glob",
+    "Edit",
+    "Write",
+    "Bash"
+  ],
+  "readable_roots": [],
+  "post_edit": [
+    {
+      "argv": [
+        "pnpm",
+        "exec",
+        "prettier",
+        "--write"
+      ],
+      "append_path": true,
+      "timeout_ms": 30000
+    }
+  ],
+  "preflight": {
+    "argv": "pnpm test && pnpm lint",
+    "timeout_ms": 600000
+  }
+}

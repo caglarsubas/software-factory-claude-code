@@ -10,5 +10,9 @@
   "secret_paths": [],
   "allowed_tools": ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
   "readable_roots": [],
-  "post_edit": [{ "argv": ["pnpm", "exec", "prettier", "--write"], "append_path": true, "timeout_ms": 30000 }]
+  "post_edit": [{ "argv": ["pnpm", "exec", "prettier", "--write"], "append_path": true, "timeout_ms": 30000 }],
+  "preflight": {
+    "argv": ["node", "/home/op/.factory/releases/v0.1.0/gates/src/cli.ts", "run", "--worktree", "/home/op/.factory/worktrees/T-0042", "--base", "4a0757250aa77bd37294c842d4ab4c13463c5c64", "--task", "T-0042", "--profile", "/home/op/.factory/profiles/orders/profile.yaml", "--out", "/home/op/.factory/runs/T-0042/gates.json"],
+    "timeout_ms": 1500000
+  }
 }

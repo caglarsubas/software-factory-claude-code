@@ -13,6 +13,7 @@
     "lint:md": "markdownlint-cli2",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:gates": "vitest run --config vitest.gates.config.ts",
     "check:docs": "node scripts/check-docs.ts",
     "check": "pnpm lint && pnpm lint:md && pnpm typecheck && pnpm test && pnpm check:docs"
   },

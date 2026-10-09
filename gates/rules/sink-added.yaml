@@ -1,0 +1,130 @@
+# sink_added: a risk signal, not a failure. A match on an added line puts its sink kind into
+# gates.json `signals.sink_added`; policies/risk.yaml raises such a change to R3 with a
+# security review. Rules favour recall: a false positive costs a review, a miss costs a tier.
+rules:
+  # --- code_exec ---------------------------------------------------------------------------
+  - id: js-code-exec
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: Dynamic code execution added
+    metadata: {pack: sink_added, sink: code_exec}
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: Function(...)
+      - pattern: $VM.runInThisContext(...)
+      - pattern: $VM.runInNewContext(...)
+      - pattern: $VM.runInContext(...)
+      - pattern: $VM.compileFunction(...)
+      - pattern: new $VM.Script(...)
+      - pattern: import "vm"
+      - pattern: import "node:vm"
+      - pattern: require("vm")
+      - pattern: require("node:vm")
+  - id: py-code-exec
+    languages: [python]
+    severity: WARNING
+    message: Dynamic code execution added
+    metadata: {pack: sink_added, sink: code_exec}
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: exec(...)
+      - pattern: compile(...)
+      - pattern: __import__(...)
+      - pattern: importlib.import_module(...)
+      - pattern: code.InteractiveInterpreter(...)
+      - pattern: code.InteractiveConsole(...)
+  # --- shell (any process execution) ---------------------------------------------------------
+  - id: js-process-exec
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: Process execution added
+    metadata: {pack: sink_added, sink: shell}
+    pattern-either:
+      - pattern: import "child_process"
+      - pattern: import "node:child_process"
+      - pattern: require("child_process")
+      - pattern: require("node:child_process")
+      - pattern: execSync(...)
+      - pattern: spawnSync(...)
+      - pattern: execFileSync(...)
+      - pattern: $CP.execSync(...)
+      - pattern: $CP.spawnSync(...)
+      - pattern: $CP.execFileSync(...)
+      - pattern: $CP.execFile(...)
+      - pattern: $CP.spawn(...)
+      - pattern: $CP.fork(...)
+      - patterns:
+          - pattern: $CP.exec(...)
+          - metavariable-regex: {metavariable: $CP, regex: '^(child_process|childProcess|cp|proc|subprocess)$'}
+      - pattern: Bun.spawn(...)
+      - pattern: Bun.spawnSync(...)
+      - pattern: Deno.Command(...)
+      - pattern: new Deno.Command(...)
+  - id: py-process-exec
+    languages: [python]
+    severity: WARNING
+    message: Process execution added
+    metadata: {pack: sink_added, sink: shell}
+    pattern-either:
+      - pattern: import subprocess
+      - pattern: from subprocess import $X
+      - pattern: subprocess.$F(...)
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+      - pattern: asyncio.create_subprocess_shell(...)
+      - pattern: asyncio.create_subprocess_exec(...)
+      - pattern: pty.spawn(...)
+  # os.execv, os.spawnlp, os.posix_spawn and the rest of the family.
+  - id: py-os-exec-family
+    languages: [python]
+    severity: WARNING
+    message: Process execution added
+    metadata: {pack: sink_added, sink: shell}
+    patterns:
+      - pattern: os.$F(...)
+      - metavariable-regex: {metavariable: $F, regex: '^(exec[lv]p?e?|spawn[lv]p?e?|posix_spawnp?|startfile)$'}
+  # --- deserialization -----------------------------------------------------------------------
+  - id: js-unsafe-deserialization
+    languages: [typescript, javascript]
+    severity: WARNING
+    message: Unsafe deserialization added
+    metadata: {pack: sink_added, sink: deserialization}
+    pattern-either:
+      - pattern: require("node-serialize")
+      - pattern: import "node-serialize"
+      - pattern: $S.unserialize(...)
+      - pattern: unserialize(...)
+      - patterns:
+          - pattern: $V8.deserialize(...)
+          - metavariable-regex: {metavariable: $V8, regex: '^v8$'}
+      - pattern: "$Y.loadAll(..., {schema: $Y.DEFAULT_FULL_SCHEMA})"
+      - pattern: "$Y.load(..., {schema: $Y.DEFAULT_FULL_SCHEMA})"
+  - id: py-unsafe-deserialization
+    languages: [python]
+    severity: WARNING
+    message: Unsafe deserialization added
+    metadata: {pack: sink_added, sink: deserialization}
+    pattern-either:
+      - pattern: pickle.load(...)
+      - pattern: pickle.loads(...)
+      - pattern: pickle.Unpickler(...)
+      - pattern: cPickle.loads(...)
+      - pattern: dill.load(...)
+      - pattern: dill.loads(...)
+      - pattern: marshal.load(...)
+      - pattern: marshal.loads(...)
+      - pattern: shelve.open(...)
+      - pattern: jsonpickle.decode(...)
+      - pattern: joblib.load(...)
+      - pattern: pandas.read_pickle(...)
+      - pattern: pd.read_pickle(...)
+      - pattern: yaml.unsafe_load(...)
+      - pattern: yaml.unsafe_load_all(...)
+      - pattern: yaml.load(..., Loader=yaml.Loader)
+      - pattern: yaml.load(..., Loader=yaml.UnsafeLoader)
+      - pattern: yaml.load(..., Loader=yaml.FullLoader)
+      - pattern: yaml.load($X)
+      - patterns:
+          - pattern: torch.load(...)
+          - pattern-not: torch.load(..., weights_only=True, ...)

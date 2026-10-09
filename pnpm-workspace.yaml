@@ -1,6 +1,7 @@
 # pnpm workspace for the factory repository.
 packages:
   - controller
+  - gates
 
 # Supply-chain buffer: never resolve a version published in the last 7 days.
 minimumReleaseAge: 10080

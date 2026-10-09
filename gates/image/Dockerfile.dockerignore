@@ -1,0 +1,4 @@
+# Build context is gates/; only the rule packs and the OSV seed go into the image.
+*
+!rules/*.yaml
+!image/osv-seed/
