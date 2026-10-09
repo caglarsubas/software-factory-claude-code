@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/profile.schema.json",
+  "title": "Target profile",
+  "description": "Per-target configuration. Profiles may add rules and raise tiers, never lower them.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repo": {
+          "$ref": "defs.schema.json#/$defs/repo"
+        },
+        "default_branch": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "visibility": {
+          "enum": [
+            "public",
+            "private"
+          ]
+        }
+      },
+      "required": [
+        "repo",
+        "default_branch",
+        "visibility"
+      ]
+    },
+    "factory_release": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "setup": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "build": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "typecheck": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "lint": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "test": {
+          "$ref": "defs.schema.json#/$defs/text"
+        }
+      },
+      "required": [
+        "test"
+      ]
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "adapters": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "typescript",
+              "python"
+            ]
+          },
+          "minItems": 1
+        },
+        "sast_rules": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.schema.json#/$defs/text"
+          }
+        }
+      },
+      "required": [
+        "adapters"
+      ]
+    },
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "glob": {
+            "$ref": "defs.schema.json#/$defs/glob"
+          },
+          "minimum_risk": {
+            "$ref": "defs.schema.json#/$defs/tier"
+          },
+          "note": {
+            "$ref": "defs.schema.json#/$defs/text"
+          }
+        },
+        "required": [
+          "glob",
+          "minimum_risk"
+        ]
+      }
+    },
+    "restricted": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "glob": {
+            "$ref": "defs.schema.json#/$defs/glob"
+          },
+          "note": {
+            "$ref": "defs.schema.json#/$defs/text"
+          }
+        },
+        "required": [
+          "glob"
+        ]
+      }
+    },
+    "invariants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^INV-[0-9]+$"
+          },
+          "text": {
+            "$ref": "defs.schema.json#/$defs/text"
+          },
+          "check": {
+            "$ref": "defs.schema.json#/$defs/text"
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ]
+      }
+    },
+    "reviewers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ui_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.schema.json#/$defs/glob"
+          }
+        },
+        "migration_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.schema.json#/$defs/glob"
+          }
+        }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url_template": {
+          "$ref": "defs.schema.json#/$defs/text"
+        }
+      },
+      "required": [
+        "url_template"
+      ]
+    },
+    "egress_class": {
+      "enum": [
+        "anthropic_only",
+        "allow_second_opinion"
+      ]
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "monthly_usd": {
+          "$ref": "defs.schema.json#/$defs/usd"
+        }
+      },
+      "required": [
+        "monthly_usd"
+      ]
+    },
+    "spec_dir": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "retention_days": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bundles": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "transcripts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "otel": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "bundles",
+        "transcripts",
+        "otel"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "target",
+    "factory_release",
+    "commands",
+    "gates",
+    "protected_paths",
+    "restricted",
+    "egress_class",
+    "budgets",
+    "spec_dir",
+    "retention_days"
+  ]
+}

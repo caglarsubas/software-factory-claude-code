@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/finding.schema.json",
+  "title": "Finding",
+  "description": "One review finding, tied to file:line with a concrete failure scenario and a fix.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^F-[0-9]+$"
+    },
+    "severity": {
+      "enum": [
+        "blocking",
+        "major",
+        "minor",
+        "nit"
+      ]
+    },
+    "category": {
+      "enum": [
+        "correctness",
+        "security",
+        "test_adequacy",
+        "maintainability",
+        "dependency",
+        "migration",
+        "ux",
+        "spec_compliance"
+      ]
+    },
+    "file": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "line": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "title": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "failure_scenario": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "fix": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "confidence": {
+      "$ref": "defs.schema.json#/$defs/confidence"
+    }
+  },
+  "required": [
+    "id",
+    "severity",
+    "category",
+    "file",
+    "line",
+    "title",
+    "failure_scenario",
+    "fix",
+    "confidence"
+  ]
+}

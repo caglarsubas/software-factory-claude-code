@@ -1,0 +1,6 @@
+schema_version: 1
+tiers: {R0: auto_merge, R1: auto_merge, R2: approver_and_policy, R3: human_required, Restricted: prepare_only}
+baseline: {default: R1, low_risk: {all_paths: ["docs/**"], tier: R0}}
+manifests: ["**/package.json"]
+rules:
+  - {when: {diff_lines_gt: 10}, minimum_risk: R2, raise_by: 1}

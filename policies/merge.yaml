@@ -1,0 +1,7 @@
+# Merge policy (ROADMAP §2.6).
+schema_version: 1
+branch_prefix: factory/
+required_checks: [gates, policy-check]
+require_up_to_date: true
+serialize_merges: true
+reverify_on_base_drift: true

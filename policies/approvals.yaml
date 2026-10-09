@@ -1,0 +1,10 @@
+# Autonomy ladder (ROADMAP §4). Moving a tier to auto_merge needs the gate named in the roadmap.
+schema_version: 1
+spec_gate_tiers: [R3]
+phases:
+  P0: {R0: human_merge, R1: human_merge, R2: human_merge, R3: human_merge, Restricted: prepare_only}
+  P1: {R0: human_merge, R1: human_merge, R2: human_merge, R3: human_merge, Restricted: prepare_only}
+  P2: {R0: auto_merge, R1: auto_merge, R2: human_merge, R3: human_merge, Restricted: prepare_only}
+  P3: {R0: auto_merge, R1: auto_merge, R2: human_merge, R3: human_merge, Restricted: prepare_only}
+# R2 auto-merge is enabled per target only after measured approver–human agreement (P3-09).
+r2_auto_merge: {min_agreement: 0.9, min_decisions: 30}

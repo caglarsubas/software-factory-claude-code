@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/plan.schema.json",
+  "title": "Plan",
+  "description": "Localisation output: impacted files and approach.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "task_id": {
+      "$ref": "defs.schema.json#/$defs/taskId"
+    },
+    "source": {
+      "enum": [
+        "explore",
+        "graph"
+      ]
+    },
+    "impacted_files": {
+      "type": "array",
+      "items": {
+        "$ref": "defs.schema.json#/$defs/text"
+      },
+      "minItems": 1
+    },
+    "approach": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "$ref": "defs.schema.json#/$defs/text"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "source",
+    "impacted_files",
+    "approach"
+  ]
+}

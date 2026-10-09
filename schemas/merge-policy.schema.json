@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/merge-policy.schema.json",
+  "title": "Merge policy",
+  "description": "policies/merge.yaml.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "branch_prefix": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+/$"
+    },
+    "required_checks": {
+      "type": "array",
+      "items": {
+        "$ref": "defs.schema.json#/$defs/text"
+      },
+      "minItems": 1
+    },
+    "require_up_to_date": {
+      "type": "boolean"
+    },
+    "serialize_merges": {
+      "type": "boolean"
+    },
+    "reverify_on_base_drift": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "branch_prefix",
+    "required_checks",
+    "require_up_to_date",
+    "serialize_merges",
+    "reverify_on_base_drift"
+  ]
+}

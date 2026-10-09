@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/verdict.schema.json",
+  "title": "Verdict",
+  "description": "The approver's assessment. Policy, not this verdict, decides merge eligibility.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "task_id": {
+      "$ref": "defs.schema.json#/$defs/taskId"
+    },
+    "candidate_commit": {
+      "$ref": "defs.schema.json#/$defs/gitSha"
+    },
+    "decision": {
+      "enum": [
+        "approve",
+        "reject",
+        "needs_human"
+      ]
+    },
+    "tier": {
+      "$ref": "defs.schema.json#/$defs/tier"
+    },
+    "confidence": {
+      "$ref": "defs.schema.json#/$defs/confidence"
+    },
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ac_id": {
+            "type": "string",
+            "pattern": "^AC-[0-9]+$"
+          },
+          "met": {
+            "type": "boolean"
+          },
+          "evidence": {
+            "$ref": "defs.schema.json#/$defs/text"
+          }
+        },
+        "required": [
+          "ac_id",
+          "met",
+          "evidence"
+        ]
+      },
+      "minItems": 1
+    },
+    "blocking_findings": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^F-[0-9]+$"
+      }
+    },
+    "rationale": {
+      "$ref": "defs.schema.json#/$defs/text"
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "candidate_commit",
+    "decision",
+    "tier",
+    "confidence",
+    "criteria",
+    "blocking_findings",
+    "rationale"
+  ]
+}

@@ -16,9 +16,9 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 
 | ID | Deliverable | Track | Status | PR | Evidence |
 |---|---|---|---|---|---|
-| P0-01 | Scaffold, factory CI, repository ruleset | core | review | #4 | `ci` green on the PR; ruleset applies after the owner imports `.github/rulesets/main.json` |
-| P0-02 | Schemas v1 | core | todo | | |
-| P0-03 | Policies, config, policy engine | core | todo | | |
+| P0-01 | Scaffold, factory CI, repository ruleset | core | done | #4 | merged 2026-10-09 with `ci` green; ruleset applies once the owner imports `.github/rulesets/main.json` |
+| P0-02 | Schemas v1 | core | review | #6 | 17 schemas (strict Ajv 2020); 9 valid and 25 invalid fixtures behave as expected |
+| P0-03 | Policies, config, policy engine | core | review | #6 | 26 table-driven cases plus fail-upward property tests; 4 engine mutations each caught |
 | P0-04 | Plugin v0.1 | core | todo | | |
 | P0-05 | Four hooks and bypass-variant suite | core | todo | | |
 | P0-06 | Gate runner in a disposable container | core | todo | | |
@@ -133,6 +133,10 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | 2026-10-09 | P0-01 | ruleset with CODEOWNERS review applied by the factory | ruleset JSON committed for owner import; code-owner review off | rulesets are settings a PR cannot apply; PRs are authored under the owner's account, so required code-owner review would deadlock until the factory App authors PRs |
 | 2026-10-09 | P0-01 | `claude plugin validate --strict` in CI | added with P0-04 | the validator needs a plugin manifest, which P0-04 creates |
 | 2026-10-09 | P0-01 | markdownlint default rules | MD060 (table pipe alignment) disabled | cosmetic only; enabling it would require reformatting ROADMAP.md, which is never edited |
+| 2026-10-09 | P0-02 | `schema_version` on every schema | `finding` has none | findings are embedded in reviews, which carry the version |
+| 2026-10-09 | P0-03 | Appendix B `risk.yaml` shape | adds `baseline` (R0 only for docs-only diffs) and `manifests`; uses `minimum_risk: Restricted` instead of `tier: Restricted`; one condition per rule | every rule can only raise a tier, and its trace stays unambiguous |
+| 2026-10-09 | P0-03 | budgets in `config/factory.yaml` (§2.4) | budgets only in `policies/budgets.yaml` | one source of truth; the config holds concurrency, routing, model pins and retention |
+| 2026-10-09 | P0-03 | self-profile R3 paths (§3.3) | also `scripts/**` | the repository checks are guardrails too; stricter only |
 
 ### Platform re-verification (ROADMAP §11)
 

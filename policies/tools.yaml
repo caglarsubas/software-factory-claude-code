@@ -1,0 +1,16 @@
+# Tool allowlists per agent. factoryctl passes `allow` as allowedTools under dontAsk,
+# so anything not listed is denied. `forbidden` applies to every session.
+schema_version: 1
+agents:
+  triager: {allow: [], deny: ["*"]}
+  spec-writer: {allow: [Read, Grep, Glob], deny: [Bash, Edit, Write, WebFetch, WebSearch]}
+  builder: {allow: [Read, Grep, Glob, Edit, Write, Bash], deny: [WebFetch, WebSearch]}
+  code-reviewer: {allow: [Read, Grep, Glob], deny: [Bash, Edit, Write, WebFetch, WebSearch]}
+  security-reviewer: {allow: [Read, Grep, Glob], deny: [Bash, Edit, Write, WebFetch, WebSearch]}
+  refuter: {allow: [Read, Grep, Glob], deny: [Bash, Edit, Write, WebFetch, WebSearch]}
+  approver: {allow: [Read], deny: [Bash, Edit, Write, Grep, Glob, WebFetch, WebSearch]}
+  summarizer: {allow: [], deny: ["*"]}
+forbidden:
+  - {pattern: "Bash(git push*)", reason: agents never push; factoryctl pushes from its mirror}
+  - {pattern: "Bash(graphify * --mode deep*)", reason: deep graph extraction spends tokens on every rebuild}
+  - {pattern: Workflow, reason: dynamic workflows are disabled in factory sessions}

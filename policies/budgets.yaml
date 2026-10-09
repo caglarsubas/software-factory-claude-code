@@ -1,0 +1,8 @@
+# Per-task budgets (USD). Initial values from ROADMAP §6; P1-01 replaces them with
+# observed max × multiplier until a tier has min_runs_per_tier runs.
+schema_version: 1
+task_usd: {R0: 3, R1: 12, R2: 30, R3: 60, Restricted: 60}
+default_monthly_cap_usd: 300
+wall_clock_minutes: 90
+max_remediation_rounds: 3
+calibration: {multiplier: 1.5, min_runs_per_tier: 20}

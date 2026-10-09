@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0042",
+  "candidate_commit": "4a0757250aa77bd37294c842d4ab4c13463c5c64",
+  "decision": "merge",
+  "tier": "R1",
+  "confidence": 90,
+  "criteria": [
+    {
+      "ac_id": "AC-1",
+      "met": true,
+      "evidence": "tests/orders/pagination.test.ts passes in gates.json"
+    }
+  ],
+  "blocking_findings": [],
+  "rationale": "All criteria met; no surviving blocking findings."
+}

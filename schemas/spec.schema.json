@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/spec.schema.json",
+  "title": "Spec",
+  "description": "Executable task contract: no code is written before this validates.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "id": {
+      "$ref": "defs.schema.json#/$defs/taskId"
+    },
+    "objective": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "include": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.schema.json#/$defs/glob"
+          },
+          "minItems": 1
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.schema.json#/$defs/glob"
+          }
+        }
+      },
+      "required": [
+        "include",
+        "exclude"
+      ]
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^AC-[0-9]+$"
+          },
+          "statement": {
+            "$ref": "defs.schema.json#/$defs/text"
+          },
+          "verification": {
+            "$ref": "defs.schema.json#/$defs/text"
+          }
+        },
+        "required": [
+          "id",
+          "statement",
+          "verification"
+        ]
+      },
+      "minItems": 1
+    },
+    "invariants": {
+      "type": "array",
+      "items": {
+        "$ref": "defs.schema.json#/$defs/text"
+      }
+    },
+    "risk_signals": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*$"
+      }
+    },
+    "required_evidence": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]*$"
+      }
+    },
+    "operation_requested": {
+      "description": "True when the task asks the factory to execute an operation rather than change code (Restricted).",
+      "type": "boolean"
+    },
+    "human_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "reason": {
+          "$ref": "defs.schema.json#/$defs/text"
+        }
+      },
+      "required": [
+        "required"
+      ],
+      "if": {
+        "properties": {
+          "required": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "reason": {
+            "$ref": "defs.schema.json#/$defs/text"
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "objective",
+    "scope",
+    "acceptance_criteria",
+    "invariants",
+    "risk_signals",
+    "required_evidence",
+    "human_gate"
+  ]
+}

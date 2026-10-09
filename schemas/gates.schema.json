@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/gates.schema.json",
+  "title": "Gate results",
+  "description": "Deterministic gate outcomes and the risk signals they emit.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "task_id": {
+      "$ref": "defs.schema.json#/$defs/taskId"
+    },
+    "candidate_commit": {
+      "$ref": "defs.schema.json#/$defs/gitSha"
+    },
+    "passed": {
+      "type": "boolean"
+    },
+    "gates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "fail",
+              "skipped",
+              "error"
+            ]
+          },
+          "duration_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "summary": {
+            "$ref": "defs.schema.json#/$defs/text"
+          }
+        },
+        "required": [
+          "name",
+          "status",
+          "duration_ms",
+          "summary"
+        ]
+      },
+      "minItems": 1
+    },
+    "signals": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sink_added": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.schema.json#/$defs/sink"
+          }
+        },
+        "secret_material": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "sink_added",
+        "secret_material"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "candidate_commit",
+    "passed",
+    "gates",
+    "signals"
+  ]
+}

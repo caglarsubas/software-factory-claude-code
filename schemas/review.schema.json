@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/review.schema.json",
+  "title": "Review",
+  "description": "One reviewer's verdict on a bundle.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "task_id": {
+      "$ref": "defs.schema.json#/$defs/taskId"
+    },
+    "reviewer": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "model": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "candidate_commit": {
+      "$ref": "defs.schema.json#/$defs/gitSha"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "finding.schema.json"
+      }
+    },
+    "summary": {
+      "$ref": "defs.schema.json#/$defs/text"
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "reviewer",
+    "model",
+    "candidate_commit",
+    "findings",
+    "summary"
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "T-0042",
+  "created_at": "2026-10-09T06:30:00Z",
+  "target": {
+    "repo": "owner/name",
+    "profile": "template",
+    "base_branch": "main"
+  },
+  "source": {
+    "kind": "github_issue",
+    "ref": "owner/name#17",
+    "admitted_by": "maintainer-login",
+    "snapshot_digest": "sha256:abababababababababababababababababababababababababababababababab"
+  },
+  "text_trust": "untrusted",
+  "title": "Add cursor pagination to the orders list",
+  "priority": "normal",
+  "proposed_tier": "R1"
+}

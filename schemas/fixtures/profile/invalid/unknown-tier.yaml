@@ -1,0 +1,12 @@
+schema_version: 1
+target: {repo: owner/name, default_branch: main, visibility: private}
+factory_release: v0.2.0
+commands: {test: "pnpm test"}
+gates: {adapters: [typescript]}
+protected_paths:
+  - {glob: "src/auth/**", minimum_risk: R4}
+restricted: []
+egress_class: anthropic_only
+budgets: {monthly_usd: 300}
+spec_dir: docs/specs
+retention_days: {bundles: 180, transcripts: 30, otel: 30}

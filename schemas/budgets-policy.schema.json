@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/budgets-policy.schema.json",
+  "title": "Budgets policy",
+  "description": "policies/budgets.yaml.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "task_usd": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "R0": {
+          "$ref": "defs.schema.json#/$defs/usd"
+        },
+        "R1": {
+          "$ref": "defs.schema.json#/$defs/usd"
+        },
+        "R2": {
+          "$ref": "defs.schema.json#/$defs/usd"
+        },
+        "R3": {
+          "$ref": "defs.schema.json#/$defs/usd"
+        },
+        "Restricted": {
+          "$ref": "defs.schema.json#/$defs/usd"
+        }
+      },
+      "required": [
+        "R0",
+        "R1",
+        "R2",
+        "R3",
+        "Restricted"
+      ]
+    },
+    "default_monthly_cap_usd": {
+      "$ref": "defs.schema.json#/$defs/usd"
+    },
+    "wall_clock_minutes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "max_remediation_rounds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "calibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "multiplier": {
+          "type": "number",
+          "minimum": 1
+        },
+        "min_runs_per_tier": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "multiplier",
+        "min_runs_per_tier"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_usd",
+    "default_monthly_cap_usd",
+    "wall_clock_minutes",
+    "max_remediation_rounds",
+    "calibration"
+  ]
+}

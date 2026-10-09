@@ -1,0 +1,20 @@
+# Operational configuration. Model IDs are pinned here and in the runner image only;
+# agent files use aliases. Changing a pin goes through the eval-replay gate (P3-01).
+schema_version: 1
+claude_code: {version: 2.1.286, agent_sdk: 0.3.286, minimum: 2.1.271}
+concurrency: {max_tasks: 2}
+model_pins:
+  opus: claude-opus-5-5
+  sonnet: claude-sonnet-5-5
+  haiku: claude-haiku-5-5
+  fable: claude-fable-5-1
+routing:
+  triager: {model: haiku, effort: low}
+  spec-writer: {model: opus, effort: high}
+  builder: {model: sonnet, effort: high, escalate_to: opus}
+  code-reviewer: {model: sonnet, effort: high}
+  security-reviewer: {model: opus, effort: high}
+  refuter: {model: sonnet, effort: high, escalate_to: opus}
+  approver: {model: opus, effort: xhigh}
+  summarizer: {model: haiku, effort: low}
+retention_days: {bundles: 180, transcripts: 30, otel: 30}

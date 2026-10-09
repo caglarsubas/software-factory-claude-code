@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/task.schema.json",
+  "title": "Task",
+  "description": "A unit of work admitted to the factory.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "id": {
+      "$ref": "defs.schema.json#/$defs/taskId"
+    },
+    "created_at": {
+      "$ref": "defs.schema.json#/$defs/timestamp"
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repo": {
+          "$ref": "defs.schema.json#/$defs/repo"
+        },
+        "profile": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "base_branch": {
+          "$ref": "defs.schema.json#/$defs/text"
+        }
+      },
+      "required": [
+        "repo",
+        "profile"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "github_issue",
+            "manual",
+            "relay"
+          ]
+        },
+        "ref": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "admitted_by": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "snapshot_digest": {
+          "$ref": "defs.schema.json#/$defs/digest"
+        }
+      },
+      "required": [
+        "kind",
+        "admitted_by"
+      ]
+    },
+    "text_trust": {
+      "description": "Provenance of the request text; issue and relay text is always untrusted.",
+      "enum": [
+        "untrusted",
+        "operator"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "priority": {
+      "enum": [
+        "low",
+        "normal",
+        "high"
+      ]
+    },
+    "proposed_tier": {
+      "$ref": "defs.schema.json#/$defs/tier"
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "created_at",
+    "target",
+    "source",
+    "text_trust",
+    "title",
+    "priority"
+  ]
+}

@@ -1,0 +1,66 @@
+# Risk policy: the policy engine (controller/src/policy) reads this file, never a model.
+# Rules can only raise a tier. Profiles append rules; nothing can lower a default.
+schema_version: 1
+
+# What each tier allows. The autonomy ladder (approvals.yaml) can be stricter per phase.
+tiers: {R0: auto_merge, R1: auto_merge, R2: approver_and_policy, R3: human_required, Restricted: prepare_only}
+
+# Starting tier before rules: R0 only when every changed path is low-risk documentation.
+baseline:
+  default: R1
+  low_risk:
+    all_paths: ["**/*.md", "docs/**"]
+    tier: R0
+
+# Any change to one of these counts as a dependency change.
+manifests:
+  - "**/package.json"
+  - "**/pnpm-lock.yaml"
+  - "**/package-lock.json"
+  - "**/yarn.lock"
+  - "**/pyproject.toml"
+  - "**/requirements*.txt"
+  - "**/uv.lock"
+  - "**/poetry.lock"
+  - "**/go.mod"
+  - "**/Cargo.toml"
+
+rules:
+  - when: {any_path: [".claude/**", ".github/**", "**/CODEOWNERS", ".claude-plugin/**"]}
+    minimum_risk: R3
+    note: agent and CI guardrails
+  - when: {any_path: ["**/auth/**", "**/authz/**", "**/billing/**", "**/payments/**", "**/migrations/**", "infra/**", "**/*.tf"]}
+    minimum_risk: R3
+    reviews: [security]
+    note: security-sensitive areas
+  - when: {any_path: ["**/migrations/**"]}
+    minimum_risk: R3
+    reviews: [migration]
+    note: schema migrations
+  - when: {sink_added: [code_exec, deserialization, shell]}
+    minimum_risk: R3
+    reviews: [security]
+    note: new dynamic-execution sink (from the SAST gate)
+  - when: {dependency_added: true}
+    minimum_risk: R2
+    reviews: [dependency, security]
+    note: dependency manifest changed
+  - when: {diff_lines_gt: 400}
+    minimum_risk: R2
+    note: large change
+  - when: {secret_material: true}
+    minimum_risk: Restricted
+    note: secret material in the diff
+  - when: {any_path: ["LICENSE*", "**/LICENSE*", "legal/**"]}
+    minimum_risk: Restricted
+    note: legal or licence text
+  - when: {operation_requested: true}
+    minimum_risk: Restricted
+    note: the task asks the factory to execute an operation
+  - when: {graph_reaches_protected_within_hops: 2}
+    minimum_risk: R2
+    mode: shadow
+    note: code-graph blast radius; enforced only after P3-05
+  - when: {classification_uncertain: true}
+    raise_by: 1
+    note: uncertainty raises scrutiny, never lowers it

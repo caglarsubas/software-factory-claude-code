@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/defs.schema.json",
+  "title": "Shared definitions",
+  "description": "Types shared by every factory schema.",
+  "$defs": {
+    "schemaVersion": {
+      "description": "Version of the artifact format; bump with a forward-only migration.",
+      "const": 1
+    },
+    "taskId": {
+      "type": "string",
+      "pattern": "^T-[0-9]{4,}$"
+    },
+    "tier": {
+      "enum": [
+        "R0",
+        "R1",
+        "R2",
+        "R3",
+        "Restricted"
+      ]
+    },
+    "state": {
+      "enum": [
+        "RECEIVED",
+        "TRIAGED",
+        "SPECIFIED",
+        "NEEDS_HUMAN",
+        "BUILDING",
+        "VERIFYING",
+        "REVIEWING",
+        "REMEDIATING",
+        "POLICY",
+        "AUTO_APPROVED",
+        "MERGE_QUEUED",
+        "MERGED",
+        "DEPLOYING",
+        "OBSERVING",
+        "DONE",
+        "ROLLED_BACK",
+        "BLOCKED",
+        "FAILED",
+        "CANCELLED",
+        "SUPERSEDED"
+      ]
+    },
+    "stage": {
+      "enum": [
+        "triage",
+        "spec",
+        "build",
+        "gates",
+        "review",
+        "refute",
+        "approve",
+        "summarize",
+        "merge",
+        "deploy"
+      ]
+    },
+    "gitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "glob": {
+      "type": "string",
+      "minLength": 1
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "confidence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "reviewKind": {
+      "enum": [
+        "security",
+        "dependency",
+        "migration",
+        "ux"
+      ]
+    },
+    "sink": {
+      "enum": [
+        "code_exec",
+        "deserialization",
+        "shell"
+      ]
+    },
+    "modelAlias": {
+      "enum": [
+        "opus",
+        "sonnet",
+        "haiku",
+        "fable"
+      ]
+    },
+    "effort": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    },
+    "usd": {
+      "type": "number",
+      "minimum": 0
+    }
+  }
+}

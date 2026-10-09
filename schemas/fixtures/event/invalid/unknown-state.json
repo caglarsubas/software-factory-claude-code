@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "seq": 7,
+  "task_id": "T-0042",
+  "ts": "2026-10-09T06:30:00Z",
+  "epoch": 1,
+  "actor": {
+    "kind": "factoryctl",
+    "id": "factoryctl@v0.1.0"
+  },
+  "type": "state_changed",
+  "from": "BUILDING",
+  "to": "SHIPPED",
+  "payload": {}
+}

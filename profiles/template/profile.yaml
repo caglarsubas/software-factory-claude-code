@@ -1,0 +1,19 @@
+# Template target profile (ROADMAP Appendix B). Copy it for a new target; private
+# targets keep their profile in the private store, never in this repository.
+schema_version: 1
+target: {repo: owner/name, default_branch: main, visibility: private}
+factory_release: v0.2.0
+commands: {setup: "pnpm install --frozen-lockfile", typecheck: "pnpm tsc --noEmit", lint: "pnpm lint", test: "pnpm test"}
+gates: {adapters: [typescript], sast_rules: [default, sink_added]}
+protected_paths:
+  - {glob: "src/auth/**", minimum_risk: R3, note: authentication}
+restricted:
+  - {glob: "infra/prod/**", note: production apply}
+invariants:
+  - {id: INV-1, text: Public API responses keep backward-compatible fields, check: "pnpm test contract"}
+reviewers: {ui_paths: ["web/**"], migration_paths: ["db/migrations/**"]}
+preview: {url_template: "https://pr-{pr}.preview.example.com"}
+egress_class: anthropic_only
+budgets: {monthly_usd: 300}
+spec_dir: docs/specs
+retention_days: {bundles: 180, transcripts: 30, otel: 30}
