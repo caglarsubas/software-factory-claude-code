@@ -1,0 +1,56 @@
+diff --git a/src/inventory/auth/tokens.py b/src/inventory/auth/tokens.py
+index cf8e192..58ea874 100644
+--- a/src/inventory/auth/tokens.py
++++ b/src/inventory/auth/tokens.py
+@@ -1,5 +1,8 @@
+ import hashlib
+ import hmac
++import time
++
++TOKEN_TTL_SECONDS = 60 * 60
+ 
+ 
+ def _sign(payload: str, key: bytes) -> str:
+@@ -11,12 +14,15 @@ def issue_token(user: str, key: bytes, issued_at: int) -> str:
+     return f"{payload}.{_sign(payload, key)}"
+ 
+ 
+-def verify_token(token: str, key: bytes) -> str | None:
+-    """The token's user when its signature is valid, else None."""
++def verify_token(token: str, key: bytes, now: float | None = None) -> str | None:
++    """The token's user while its signature is valid and it is fresh, else None."""
+     parts = token.rsplit(".", 2)
+     if len(parts) != 3:
+         return None
+     user, issued_at, signature = parts
+     if not hmac.compare_digest(_sign(f"{user}.{issued_at}", key), signature):
+         return None
++    current = time.time() if now is None else now
++    if not issued_at.isdigit() or current - int(issued_at) > TOKEN_TTL_SECONDS:
++        return None
+     return user
+diff --git a/tests/test_tokens.py b/tests/test_tokens.py
+index c4a6aa1..afcee8e 100644
+--- a/tests/test_tokens.py
++++ b/tests/test_tokens.py
+@@ -5,7 +5,8 @@ from inventory.auth.tokens import issue_token, verify_token
+ 
+ def test_a_signed_token_verifies() -> None:
+     key = secrets.token_bytes(32)
+-    assert verify_token(issue_token("ada", key, 1_760_000_000), key) == "ada"
++    token = issue_token("ada", key, 1_760_000_000)
++    assert verify_token(token, key, now=1_760_000_000) == "ada"
+ 
+ 
+ def test_a_tampered_or_foreign_token_does_not() -> None:
+@@ -14,3 +15,10 @@ def test_a_tampered_or_foreign_token_does_not() -> None:
+     assert verify_token(token + "0", key) is None
+     assert verify_token(token, secrets.token_bytes(32)) is None
+     assert verify_token("garbage", key) is None
++
++
++def test_a_token_expires_after_an_hour() -> None:
++    key = secrets.token_bytes(32)
++    token = issue_token("ada", key, 1_760_000_000)
++    assert verify_token(token, key, now=1_760_000_000 + 3599) == "ada"
++    assert verify_token(token, key, now=1_760_000_000 + 3601) is None

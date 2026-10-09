@@ -1,0 +1,39 @@
+diff --git a/src/inventory/snapshots.py b/src/inventory/snapshots.py
+index 1341b2d..a4db805 100644
+--- a/src/inventory/snapshots.py
++++ b/src/inventory/snapshots.py
+@@ -1,4 +1,5 @@
+ import json
++import pickle
+ from pathlib import Path
+ 
+ from inventory.stock import Item, Stock
+@@ -10,5 +11,10 @@ def save_snapshot(stock: Stock, path: Path) -> None:
+ 
+ 
+ def load_snapshot(path: Path) -> Stock:
++    if path.suffix == ".pkl":
++        legacy: dict[str, tuple[int, int]] = pickle.loads(path.read_bytes())
++        return Stock(
++            {sku: Item(sku, qty, level) for sku, (qty, level) in legacy.items()}
++        )
+     data: dict[str, list[int]] = json.loads(path.read_text())
+     return Stock({sku: Item(sku, qty, level) for sku, (qty, level) in data.items()})
+diff --git a/tests/test_snapshots.py b/tests/test_snapshots.py
+index 4ffd9ce..746e49a 100644
+--- a/tests/test_snapshots.py
++++ b/tests/test_snapshots.py
+@@ -1,3 +1,4 @@
++import pickle
+ from pathlib import Path
+ 
+ from inventory.snapshots import load_snapshot, save_snapshot
+@@ -11,3 +12,8 @@ def test_round_trip(tmp_path: Path) -> None:
+     loaded = load_snapshot(tmp_path / "snap.json")
+     assert loaded.items["apple"].quantity == 5
+     assert loaded.items["apple"].reorder_level == 2
++
++
++def test_loads_legacy_pickle_snapshots(tmp_path: Path) -> None:
++    (tmp_path / "old.pkl").write_bytes(pickle.dumps({"apple": (4, 1)}))
++    assert load_snapshot(tmp_path / "old.pkl").items["apple"].quantity == 4

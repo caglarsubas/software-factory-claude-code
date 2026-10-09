@@ -1,0 +1,5 @@
+// Seeded task texts are issue bodies: they start with prose, not a heading.
+{
+  "extends": "../../.markdownlint.jsonc",
+  "MD041": false
+}

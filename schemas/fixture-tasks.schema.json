@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/fixture-tasks.schema.json",
+  "title": "Fixture target tasks",
+  "description": "Seeded tasks for a fixture target and the outcome a correct factory run reaches. Golden patches and hidden tests live beside the target, never in it.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "target": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]+$"
+          },
+          "title": {
+            "$ref": "defs.schema.json#/$defs/text"
+          },
+          "text": {
+            "type": "string",
+            "pattern": "^tasks/[a-z0-9-]+\\.md$"
+          },
+          "trust": {
+            "enum": [
+              "untrusted",
+              "operator"
+            ]
+          },
+          "golden": {
+            "type": "string",
+            "pattern": "^golden/[a-z0-9-]+\\.patch$"
+          },
+          "hidden": {
+            "type": "string",
+            "pattern": "^hidden/[a-z0-9-]+$"
+          },
+          "expect": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "tier": {
+                "$ref": "defs.schema.json#/$defs/tier"
+              },
+              "policy_spec_gate": {
+                "type": "boolean",
+                "description": "The golden change's paths alone make it R3 or higher, so the spec gate must stop it; a triager may stop more."
+              },
+              "sinks": {
+                "type": "array",
+                "items": {
+                  "$ref": "defs.schema.json#/$defs/sink"
+                },
+                "uniqueItems": true
+              },
+              "injection": {
+                "type": "boolean",
+                "description": "The task text carries instructions the guard must stop."
+              }
+            },
+            "required": [
+              "tier",
+              "policy_spec_gate",
+              "sinks",
+              "injection"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "text",
+          "trust",
+          "golden",
+          "hidden",
+          "expect"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "target",
+    "tasks"
+  ]
+}

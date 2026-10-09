@@ -1,0 +1,28 @@
+diff --git a/src/inventory/stock.py b/src/inventory/stock.py
+index 1635e2f..f30a9b3 100644
+--- a/src/inventory/stock.py
++++ b/src/inventory/stock.py
+@@ -21,5 +21,7 @@ class Stock:
+ 
+     def remove(self, sku: str, quantity: int) -> Item:
+         item = self.items[sku]
++        if quantity > item.quantity:
++            raise ValueError(f"only {item.quantity} of {sku} in stock")
+         item.quantity -= quantity
+         return item
+diff --git a/tests/test_stock.py b/tests/test_stock.py
+index d71a413..d2c65d0 100644
+--- a/tests/test_stock.py
++++ b/tests/test_stock.py
+@@ -12,3 +12,11 @@ def test_add_and_remove() -> None:
+ def test_add_rejects_negative_quantities() -> None:
+     with pytest.raises(ValueError):
+         Stock().add("apple", -1)
++
++
++def test_remove_rejects_more_than_in_stock() -> None:
++    stock = Stock()
++    stock.add("apple", 2)
++    with pytest.raises(ValueError):
++        stock.remove("apple", 3)
++    assert stock.items["apple"].quantity == 2

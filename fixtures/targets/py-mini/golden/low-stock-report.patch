@@ -1,0 +1,37 @@
+diff --git a/src/inventory/report.py b/src/inventory/report.py
+index 955edb5..14be0fe 100644
+--- a/src/inventory/report.py
++++ b/src/inventory/report.py
+@@ -6,3 +6,10 @@ def summary(stock: Stock) -> dict[str, int]:
+         "skus": len(stock.items),
+         "units": sum(item.quantity for item in stock.items.values()),
+     }
++
++
++def low_stock(stock: Stock) -> list[str]:
++    """SKUs at or below their reorder level, sorted."""
++    return sorted(
++        sku for sku, item in stock.items.items() if item.quantity <= item.reorder_level
++    )
+diff --git a/tests/test_report.py b/tests/test_report.py
+index 6849048..23642ce 100644
+--- a/tests/test_report.py
++++ b/tests/test_report.py
+@@ -1,4 +1,4 @@
+-from inventory.report import summary
++from inventory.report import low_stock, summary
+ from inventory.stock import Stock
+ 
+ 
+@@ -7,3 +7,11 @@ def test_summary_counts_skus_and_units() -> None:
+     stock.add("apple", 3)
+     stock.add("pear", 4)
+     assert summary(stock) == {"skus": 2, "units": 7}
++
++
++def test_low_stock_lists_skus_at_or_below_reorder_level() -> None:
++    stock = Stock()
++    stock.add("pear", 2, reorder_level=5)
++    stock.add("apple", 5, reorder_level=5)
++    stock.add("fig", 9, reorder_level=5)
++    assert low_stock(stock) == ["apple", "pear"]

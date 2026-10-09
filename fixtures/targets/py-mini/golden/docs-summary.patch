@@ -1,0 +1,16 @@
+diff --git a/docs/usage.md b/docs/usage.md
+index 69fd605..ac6fc56 100644
+--- a/docs/usage.md
++++ b/docs/usage.md
+@@ -10,7 +10,10 @@
+ 
+ ## Reports
+ 
+-`summary(stock)` summarises the stock.
++`summary(stock)` returns a dict with two keys:
++
++- `skus`: how many distinct SKUs the stock holds.
++- `units`: the total quantity across every SKU.
+ 
+ ## Snapshots
+ 

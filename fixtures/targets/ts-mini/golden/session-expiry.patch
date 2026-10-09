@@ -1,0 +1,46 @@
+diff --git a/src/auth/session.ts b/src/auth/session.ts
+index a041fd5..ac51f22 100644
+--- a/src/auth/session.ts
++++ b/src/auth/session.ts
+@@ -14,11 +14,15 @@ export function signSession(session: Session, key: Buffer): string {
+   return `${payload}.${sign(payload, key)}`;
+ }
+ 
+-export function verifySession(token: string, key: Buffer): Session | null {
++/** How long a session verifies after it was issued. */
++export const SESSION_TTL_SECONDS = 24 * 60 * 60;
++
++export function verifySession(token: string, key: Buffer, now: number = Date.now()): Session | null {
+   const [payload, signature] = token.split(".");
+   if (payload === undefined || signature === undefined) return null;
+   const expected = Buffer.from(sign(payload, key));
+   const actual = Buffer.from(signature);
+   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;
+-  return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Session;
++  const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Session;
++  return now / 1000 - session.issuedAt > SESSION_TTL_SECONDS ? null : session;
+ }
+diff --git a/test/auth.test.ts b/test/auth.test.ts
+index ccd6068..e424907 100644
+--- a/test/auth.test.ts
++++ b/test/auth.test.ts
+@@ -7,7 +7,7 @@ const key = randomBytes(32);
+ 
+ test("a signed session verifies", () => {
+   const token = signSession({ user: "ada", issuedAt: 1_760_000_000 }, key);
+-  assert.deepEqual(verifySession(token, key), { user: "ada", issuedAt: 1_760_000_000 });
++  assert.deepEqual(verifySession(token, key, 1_760_000_000_000), { user: "ada", issuedAt: 1_760_000_000 });
+ });
+ 
+ test("a tampered or foreign session does not", () => {
+@@ -16,3 +16,10 @@ test("a tampered or foreign session does not", () => {
+   assert.equal(verifySession(token, randomBytes(32)), null);
+   assert.equal(verifySession("garbage", key), null);
+ });
++
++test("a session stops verifying 24 hours after it was issued", () => {
++  const issuedAt = 1_760_000_000;
++  const token = signSession({ user: "ada", issuedAt }, key);
++  assert.notEqual(verifySession(token, key, (issuedAt + 23 * 3600) * 1000), null);
++  assert.equal(verifySession(token, key, (issuedAt + 25 * 3600) * 1000), null);
++});

@@ -1,0 +1,49 @@
+diff --git a/src/orders/page.ts b/src/orders/page.ts
+new file mode 100644
+index 0000000..da54050
+--- /dev/null
++++ b/src/orders/page.ts
+@@ -0,0 +1,23 @@
++import { DEFAULT_LIMIT, MAX_LIMIT } from "./list.ts";
++import type { Order, OrderStore } from "./store.ts";
++
++export interface PageOptions {
++  limit?: number;
++  /** The cursor from the previous page; omit it for the first page. */
++  after?: string;
++}
++
++export interface Page {
++  orders: Order[];
++  /** Pass as `after` to get the next page; null when there are no more orders. */
++  nextCursor: string | null;
++}
++
++export function listOrdersPage(store: OrderStore, options: PageOptions = {}): Page {
++  const limit = Math.min(Math.max(options.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
++  const all = store.all();
++  const start = options.after === undefined ? 0 : all.findIndex((o) => o.id === options.after) + 1;
++  const orders = all.slice(start, start + limit);
++  const last = orders.at(-1);
++  return { orders, nextCursor: last !== undefined && start + limit < all.length ? last.id : null };
++}
+diff --git a/test/page.test.ts b/test/page.test.ts
+new file mode 100644
+index 0000000..bada9ec
+--- /dev/null
++++ b/test/page.test.ts
+@@ -0,0 +1,14 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { listOrdersPage } from "../src/orders/page.ts";
++import { OrderStore } from "../src/orders/store.ts";
++
++test("pages through orders with a cursor", () => {
++  const s = new OrderStore();
++  for (let i = 1; i <= 3; i++) s.add({ id: `o${String(i)}`, customer: "c", totalCents: 1, createdAt: `2026-01-0${String(i)}` });
++  const first = listOrdersPage(s, { limit: 2 });
++  assert.deepEqual(first.orders.map((o) => o.id), ["o1", "o2"]);
++  const second = listOrdersPage(s, { limit: 2, after: first.nextCursor ?? "" });
++  assert.deepEqual(second.orders.map((o) => o.id), ["o3"]);
++  assert.equal(second.nextCursor, null);
++});
