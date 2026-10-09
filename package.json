@@ -1,0 +1,29 @@
+{
+  "name": "software-factory",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Target-agnostic software factory on Claude Code",
+  "type": "module",
+  "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=24.21.0 <25"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "lint:md": "markdownlint-cli2",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check:docs": "node scripts/check-docs.ts",
+    "check": "pnpm lint && pnpm lint:md && pnpm typecheck && pnpm test && pnpm check:docs"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.13.6",
+    "eslint": "10.11.0",
+    "globals": "17.12.0",
+    "markdownlint-cli2": "0.23.3",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.70.1",
+    "vitest": "5.0.1"
+  }
+}

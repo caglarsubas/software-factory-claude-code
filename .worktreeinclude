@@ -1,0 +1,2 @@
+# Gitignored files to copy into Claude Code worktrees.
+# Intentionally empty: task worktrees must never receive secrets or local state.

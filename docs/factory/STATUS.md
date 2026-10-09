@@ -4,11 +4,11 @@ Claude Code updates this file after every deliverable; the plan is [`ROADMAP.md`
 
 | Field | Value |
 |---|---|
-| Current phase | P0 Foundation (not started) |
+| Current phase | P0 Foundation (in progress) |
 | Next gate | G0 · target Oct 23, 2026 |
 | Factory release | none yet (first: `v0.1.0` at G0) |
 | Claude Code / Agent SDK pin | 2.1.286 / 0.3.286 (stable on Oct 9, 2026; re-check at P0 start) |
-| P0 entry criteria | GitHub App ☐ · Console workspace with spend limit ☐ · `main` created ☐ · toolchain pinned ☐ |
+| P0 entry criteria | GitHub App ☐ · Console workspace with spend limit ☐ · `main` created ☑ · toolchain pinned ☑ (Node 24.21.0, pnpm 12.6.0, TypeScript 6.0.3) — code work started without the first two by operator decision; both are required before G0-1 |
 
 Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliverable is `done` only when its "done when" check in the roadmap passes and the evidence link proves it.
 
@@ -16,7 +16,7 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 
 | ID | Deliverable | Track | Status | PR | Evidence |
 |---|---|---|---|---|---|
-| P0-01 | Scaffold, factory CI, repository ruleset | core | todo | | |
+| P0-01 | Scaffold, factory CI, repository ruleset | core | review | #4 | `ci` green on the PR; ruleset applies after the owner imports `.github/rulesets/main.json` |
 | P0-02 | Schemas v1 | core | todo | | |
 | P0-03 | Policies, config, policy engine | core | todo | | |
 | P0-04 | Plugin v0.1 | core | todo | | |
@@ -127,6 +127,12 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 
 | Date | Deliverable | Planned | Used instead | Reason |
 |---|---|---|---|---|
+| 2026-10-09 | P0 entry criteria | GitHub App and Console spend limit before any P0 work | P0-01…P0-08 built first; both required before G0-1 | operator decision: no P0 deliverable before G0-1 needs credentials |
+| 2026-10-09 | P0-01 | latest TypeScript (7.0) | TypeScript 6.0.3 | typescript-eslint 8.x supports TypeScript < 6.1; type-aware lint rules outweigh the faster compiler |
+| 2026-10-09 | P0-01 | LICENSE file | not added | licence choice is the owner's decision (tied to the §10 question on offering the factory to others); until then all rights are reserved |
+| 2026-10-09 | P0-01 | ruleset with CODEOWNERS review applied by the factory | ruleset JSON committed for owner import; code-owner review off | rulesets are settings a PR cannot apply; PRs are authored under the owner's account, so required code-owner review would deadlock until the factory App authors PRs |
+| 2026-10-09 | P0-01 | `claude plugin validate --strict` in CI | added with P0-04 | the validator needs a plugin manifest, which P0-04 creates |
+| 2026-10-09 | P0-01 | markdownlint default rules | MD060 (table pipe alignment) disabled | cosmetic only; enabling it would require reformatting ROADMAP.md, which is never edited |
 
 ### Platform re-verification (ROADMAP §11)
 

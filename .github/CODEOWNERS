@@ -1,0 +1,5 @@
+# Every path is owned by the operator.
+# Required code-owner review stays off in the ruleset while PRs are authored under
+# the operator's own account (an author cannot approve their own PR). Turn it on
+# once the factory's GitHub App authors PRs (ROADMAP §2.6).
+* @caglarsubas
