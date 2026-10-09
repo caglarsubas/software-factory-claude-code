@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/release.schema.json",
+  "title": "Release",
+  "description": "RELEASE.json of an installed factory release, $FACTORY_HOME/releases/<sha>/. Written by factoryctl release install; the release directory is read-only afterwards.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "sha": {
+      "$ref": "defs.schema.json#/$defs/gitSha"
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$"
+    },
+    "repository": {
+      "description": "The factory repository on GitHub, from the source checkout's origin; null when it has none.",
+      "anyOf": [
+        {
+          "$ref": "defs.schema.json#/$defs/repo"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "installed_at": {
+      "$ref": "defs.schema.json#/$defs/timestamp"
+    },
+    "installed_by": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "tree_digest": {
+      "description": "Digest of the commit's tree entries (mode, object ID, path).",
+      "$ref": "defs.schema.json#/$defs/digest"
+    },
+    "files_digest": {
+      "description": "Digest of the installed files, dependencies included, RELEASE.json excluded.",
+      "$ref": "defs.schema.json#/$defs/digest"
+    },
+    "files": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "plugin_version": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "claude_code": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "agent_sdk": {
+      "$ref": "defs.schema.json#/$defs/text"
+    }
+  },
+  "required": [
+    "schema_version",
+    "sha",
+    "tag",
+    "repository",
+    "installed_at",
+    "installed_by",
+    "tree_digest",
+    "files_digest",
+    "files",
+    "plugin_version",
+    "claude_code",
+    "agent_sdk"
+  ]
+}

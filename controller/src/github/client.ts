@@ -19,18 +19,53 @@ export interface GitHub {
   createPullRequest(input: PullRequestInput): Promise<PullRequest>;
 }
 
+export interface CheckRun {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  /** Slug of the GitHub App that posted it. */
+  app: string | null;
+}
+
+/** Read-only: the check runs on a commit, for gate evidence (G0-4). */
+export interface CommitChecks {
+  checkRuns(repo: string, sha: string): Promise<CheckRun[]>;
+}
+
 export class GitHubError extends Error {}
 
-export function restGitHub(token: string, api = "https://api.github.com", fetchFn: typeof fetch = fetch): GitHub {
-  const call = async (method: string, path: string, body?: unknown): Promise<unknown> => {
+type Call = (method: string, path: string, body?: unknown) => Promise<unknown>;
+
+/** A public repository needs no token for reads. */
+function caller(token: string | null, api: string, fetchFn: typeof fetch): Call {
+  return async (method, path, body) => {
     const res = await fetchFn(`${api}${path}`, {
       method,
-      headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "content-type": "application/json" },
+      headers: {
+        ...(token === null ? {} : { authorization: `Bearer ${token}` }),
+        accept: "application/vnd.github+json",
+        "x-github-api-version": "2022-11-28",
+        "content-type": "application/json",
+      },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     if (!res.ok) throw new GitHubError(`${method} ${path}: HTTP ${String(res.status)}`);
     return res.json();
   };
+}
+
+export function restCommitChecks(token: string | null, api = "https://api.github.com", fetchFn: typeof fetch = fetch): CommitChecks {
+  const call = caller(token, api, fetchFn);
+  return {
+    async checkRuns(repo, sha) {
+      const body = (await call("GET", `/repos/${repo}/commits/${sha}/check-runs?per_page=100`)) as { check_runs: { name: string; status: string; conclusion: string | null; app: { slug?: string } | null }[] };
+      return body.check_runs.map((r) => ({ name: r.name, status: r.status, conclusion: r.conclusion, app: r.app?.slug ?? null }));
+    },
+  };
+}
+
+export function restGitHub(token: string, api = "https://api.github.com", fetchFn: typeof fetch = fetch): GitHub {
+  const call = caller(token, api, fetchFn);
   return {
     async findPullRequest(repo, head) {
       const owner = repo.split("/")[0] ?? "";

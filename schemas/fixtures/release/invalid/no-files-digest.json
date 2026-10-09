@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "sha": "4a0757250aa77bd37294c842d4ab4c13463c5c64",
+  "tag": "v0.1.0",
+  "repository": "caglarsubas/software-factory-claude-code",
+  "installed_at": "2026-10-12T09:00:00Z",
+  "installed_by": "operator",
+  "tree_digest": "sha256:abababababababababababababababababababababababababababababababab",
+  "files": 4210,
+  "plugin_version": "0.1.0",
+  "claude_code": "2.1.286",
+  "agent_sdk": "0.3.286"
+}

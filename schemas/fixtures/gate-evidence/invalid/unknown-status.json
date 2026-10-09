@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "gate": "G0",
+  "generated_at": "2026-10-22T16:00:00Z",
+  "release": {
+    "sha": "4a0757250aa77bd37294c842d4ab4c13463c5c64",
+    "tag": "v0.1.0",
+    "files_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+  },
+  "passed": true,
+  "criteria": [
+    {
+      "id": "G0-2",
+      "criterion": "At least 20 bypass variants all exit 2",
+      "status": "skipped",
+      "detail": "58 of 58 variants exit 2 through the released guard hook",
+      "evidence": [
+        "plugin/hooks/bypass-cases.ts from the release"
+      ]
+    }
+  ]
+}

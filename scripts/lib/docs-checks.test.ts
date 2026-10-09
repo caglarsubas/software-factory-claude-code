@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { checkIdConsistency, checkLinks, checkModelIds, definedIds, headingSlugs } from "./docs-checks.ts";
+import { checkIdConsistency, checkLinks, checkModelIds, checkThreatModel, definedIds, headingSlugs, THREAT_IDS } from "./docs-checks.ts";
 
 const roadmap = ["| ID | Deliverable |", "|---|---|", "| P0-01 | scaffold |", "| P0-02 | schemas |", "| G0-1 | gate |"].join("\n");
 const status = ["| ID | Status |", "|---|---|", "| P0-01 | todo |", "| P0-02 | todo |", "| G0-1 | todo |"].join("\n");
@@ -56,11 +56,31 @@ describe("checkModelIds", () => {
   });
 });
 
+describe("checkThreatModel", () => {
+  const row = (id: string, controls = "the guard") => `| ${id} | risk | ${controls} | residual |`;
+  const full = THREAT_IDS.map((id) => row(id)).join("\n");
+
+  it("accepts one row with controls for each of the 20 risks", () => {
+    expect(THREAT_IDS).toHaveLength(20);
+    expect(checkThreatModel(full)).toEqual([]);
+  });
+
+  it("reports a missing, duplicated, empty or unknown risk", () => {
+    const doc = [full.replace(`${row("LLM07")}\n`, "").replace(row("ASI05"), row("ASI05", "")), row("ASI03"), row("ASI11")].join("\n");
+    const messages = checkThreatModel(doc).map((f) => f.message);
+    expect(messages).toEqual(["LLM07 has no row", "ASI03 has more than one row", "ASI05 names no controls", "ASI11 is not an OWASP LLM 2025 or Agentic 2026 risk"]);
+  });
+});
+
 describe("repository docs", () => {
   it("ROADMAP and STATUS are consistent", () => {
     const real = (path: string) => readFileSync(path, "utf8");
     const roadmapText = real("docs/factory/ROADMAP.md");
     expect(checkIdConsistency(roadmapText, real("docs/factory/STATUS.md"))).toEqual([]);
     expect(checkModelIds(roadmapText)).toEqual([]);
+  });
+
+  it("the threat model maps every OWASP risk to controls", () => {
+    expect(checkThreatModel(readFileSync("docs/factory/threat-model.md", "utf8"))).toEqual([]);
   });
 });

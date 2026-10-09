@@ -13,8 +13,15 @@ export interface Home {
   sessions: string;
   /** Operator-provided credentials (the API key file); denied to every session. */
   secrets: string;
+  /** Installed, read-only factory releases (`releases/<sha>`), and the operator's pin to one of them. */
   releases: string;
+  current: string;
+  bin: string;
   lock: string;
+  /** The kill switch (halt.ts): while this file exists, no session acts and no run starts. */
+  halt: string;
+  /** Gate evidence drafted by `factoryctl gate` (`gates/<gate>/`). */
+  gates: string;
 }
 
 export function factoryHome(env: NodeJS.ProcessEnv = process.env): Home {
@@ -28,7 +35,11 @@ export function factoryHome(env: NodeJS.ProcessEnv = process.env): Home {
     sessions: join(root, "sessions"),
     secrets: join(root, "secrets"),
     releases: join(root, "releases"),
+    current: join(root, "current"),
+    bin: join(root, "bin"),
     lock: join(root, "run.lock"),
+    halt: join(root, "HALT"),
+    gates: join(root, "gates"),
   };
 }
 

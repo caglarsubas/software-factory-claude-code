@@ -2,7 +2,7 @@
 // in place of a model. The run to a merge gate with real container gates is in
 // factoryctl.int.test.ts.
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -88,6 +88,52 @@ describe("factoryctl", { timeout: 30_000 }, () => {
     expect(factoryctl(["cancel", "T-0001"]).stdout.trim()).toBe("T-0001 CANCELLED");
     expect(factoryctl(["resume", "T-0001", "--replay", transcriptsDir()]).stdout.trim()).toBe("T-0001 CANCELLED");
     expect(factoryctl(["cancel", "T-0001"]).stderr).toContain("already ended");
+  });
+
+  it("halts every run until the operator lifts the halt (kill switch v0)", () => {
+    const halted = factoryctl(["halt", "--reason", "drill"]);
+    expect(halted.status, halted.stderr).toBe(0);
+    expect(halted.stdout).toMatch(/^factory halted since \S+ by \S+: drill$/m);
+    expect(halted.stdout).toContain("no task was running");
+    expect(factoryctl(["status"]).stdout).toMatch(/^HALTED {2}halted since .*: drill$/m);
+    expect(factoryctl(["doctor"]).stdout).toMatch(/^warn {2}kill switch: halted since .*: drill; lift with/m);
+    const run = factoryctl(["run", "T-0001"]);
+    expect(run.status).toBe(2);
+    expect(run.stderr).toContain("the factory is halted since");
+
+    expect(factoryctl(["unhalt", "--reason", "over"], { CLAUDECODE: "1" }).stderr).toContain("unhalt refuses to run inside a Claude Code session");
+    expect(factoryctl(["unhalt"]).stderr).toContain("--reason is required");
+    const lifted = factoryctl(["unhalt", "--reason", "drill over"]);
+    expect(lifted.status, lifted.stderr).toBe(0);
+    expect(lifted.stdout).toContain("factory running again (was halted since");
+    expect(factoryctl(["unhalt", "--reason", "again"]).stderr).toContain("the factory is not halted");
+    const log = readFileSync(join(home, "halt.log"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as { command: string; reason: string });
+    expect(log.map((l) => `${l.command}: ${l.reason}`)).toEqual(["halt: drill", "unhalt: drill over"]);
+  });
+
+  it("installs releases only from the operator, and only from a version tag", () => {
+    expect(factoryctl(["release", "status"]).stdout.trim()).toBe("no release installed");
+    expect(factoryctl(["release", "install", "v0.1.0"], { CLAUDECODE: "1" }).stderr).toContain("release install refuses to run inside a Claude Code session");
+    expect(factoryctl(["release", "use", "v0.1.0"], { CLAUDECODE: "1" }).stderr).toContain("release use refuses to run inside a Claude Code session");
+    expect(factoryctl(["release", "install", "main", "--source", seed]).stderr).toContain("a release is a version tag like v0.1.0");
+    expect(factoryctl(["release", "install", "v0.1.0", "--source", seed]).stderr).toContain("v0.1.0 is not a tag");
+    expect(factoryctl(["release", "frobnicate"]).status).toBe(2);
+  });
+
+  it("opens the G0 evidence window on a checkout and drafts the evidence", { timeout: 120_000 }, () => {
+    expect(factoryctl(["gate", "G1"]).status).toBe(2);
+    const begin = factoryctl(["gate", "G0", "--begin", "--checkout", seed]);
+    expect(begin.status, begin.stderr).toBe(0);
+    expect(begin.stdout).toMatch(/^snapshot .*seed: [0-9]+ files, sha256:[0-9a-f]{64}$/m);
+    expect(begin.stdout).toContain("(development checkout, not an installed release)");
+    const gate = factoryctl(["gate", "G0"]);
+    // From a development checkout with no dry runs, only the bypass suite can pass.
+    expect(gate.status).toBe(1);
+    expect(gate.stdout).toMatch(/^fail {3}G0-1 {2}py-mini: no dry run in the evidence window/m);
+    expect(gate.stdout).toMatch(/^pass {3}G0-2 {2}[0-9]+ of [0-9]+ variants exit 2 through the released guard hook$/m);
+    expect(gate.stdout).toMatch(/^human {2}G0-5 /m);
+    expect(existsSync(join(home, "gates/G0/evidence.json"))).toBe(true);
+    expect(readFileSync(join(home, "gates/G0/evidence.md"), "utf8")).toContain("## Gate G0 evidence");
   });
 
   it("rejects unknown tasks and commands", () => {
