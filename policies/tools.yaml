@@ -1,15 +1,16 @@
 # Tool allowlists per agent. factoryctl passes `allow` as allowedTools under dontAsk,
-# so anything not listed is denied. `forbidden` applies to every session.
+# so anything not listed is denied; the plugin's agent files must match these lists exactly
+# (checked in CI). `forbidden` applies to every session.
 schema_version: 1
 agents:
-  triager: {allow: [], deny: ["*"]}
+  triager: {allow: [Glob], deny: [Read, Grep, Bash, Edit, Write, WebFetch, WebSearch]}
   spec-writer: {allow: [Read, Grep, Glob], deny: [Bash, Edit, Write, WebFetch, WebSearch]}
   builder: {allow: [Read, Grep, Glob, Edit, Write, Bash], deny: [WebFetch, WebSearch]}
   code-reviewer: {allow: [Read, Grep, Glob], deny: [Bash, Edit, Write, WebFetch, WebSearch]}
   security-reviewer: {allow: [Read, Grep, Glob], deny: [Bash, Edit, Write, WebFetch, WebSearch]}
   refuter: {allow: [Read, Grep, Glob], deny: [Bash, Edit, Write, WebFetch, WebSearch]}
-  approver: {allow: [Read], deny: [Bash, Edit, Write, Grep, Glob, WebFetch, WebSearch]}
-  summarizer: {allow: [], deny: ["*"]}
+  approver: {allow: [Read], deny: [Grep, Glob, Bash, Edit, Write, WebFetch, WebSearch]}
+  summarizer: {allow: [Read], deny: [Grep, Glob, Bash, Edit, Write, WebFetch, WebSearch]}
 forbidden:
   - {pattern: "Bash(git push*)", reason: agents never push; factoryctl pushes from its mirror}
   - {pattern: "Bash(graphify * --mode deep*)", reason: deep graph extraction spends tokens on every rebuild}

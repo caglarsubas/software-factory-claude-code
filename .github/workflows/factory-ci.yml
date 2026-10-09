@@ -34,6 +34,11 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm check:docs
+      # The version matches config/factory.yaml's claude_code.version (checked by the conformance test).
+      - name: Validate plugin and marketplace
+        run: |
+          npx --yes @anthropic-ai/claude-code@2.1.286 plugin validate plugin --strict
+          npx --yes @anthropic-ai/claude-code@2.1.286 plugin validate . --strict
 
   workflow-lint:
     name: workflow-lint

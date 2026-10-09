@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0042",
+  "stage": "review",
+  "worktree": "/home/op/.factory/worktrees/T-0042",
+  "task_dir": "/home/op/.factory/runs/T-0042",
+  "protected_paths": [],
+  "scope": null,
+  "writable_task_files": [],
+  "secret_paths": [],
+  "allowed_tools": ["Read", "Grep", "Glob"],
+  "readable_roots": ["/home/op/.factory/runs/T-0042/bundle"]
+}

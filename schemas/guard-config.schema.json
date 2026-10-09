@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/guard-config.schema.json",
+  "title": "Guard config",
+  "description": "Written by factoryctl for each factory session; read by the plugin's hooks. Its presence turns on factory-mode enforcement.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "task_id": {
+      "$ref": "defs.schema.json#/$defs/taskId"
+    },
+    "stage": {
+      "$ref": "defs.schema.json#/$defs/stage"
+    },
+    "worktree": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "task_dir": {
+      "type": "string",
+      "pattern": "^/"
+    },
+    "protected_paths": {
+      "type": "array",
+      "items": {
+        "$ref": "defs.schema.json#/$defs/glob"
+      }
+    },
+    "scope": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "include": {
+              "type": "array",
+              "items": {
+                "$ref": "defs.schema.json#/$defs/glob"
+              },
+              "minItems": 1
+            },
+            "exclude": {
+              "type": "array",
+              "items": {
+                "$ref": "defs.schema.json#/$defs/glob"
+              }
+            }
+          },
+          "required": [
+            "include",
+            "exclude"
+          ]
+        }
+      ]
+    },
+    "writable_task_files": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9._-]+$"
+      }
+    },
+    "secret_paths": {
+      "type": "array",
+      "items": {
+        "$ref": "defs.schema.json#/$defs/glob"
+      }
+    },
+    "allowed_tools": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+      }
+    },
+    "readable_roots": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^/"
+      }
+    },
+    "post_edit": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "argv": {
+            "type": "array",
+            "items": {
+              "$ref": "defs.schema.json#/$defs/text"
+            },
+            "minItems": 1
+          },
+          "append_path": {
+            "type": "boolean"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 600000
+          }
+        },
+        "required": [
+          "argv",
+          "append_path",
+          "timeout_ms"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "stage",
+    "worktree",
+    "task_dir",
+    "protected_paths",
+    "scope",
+    "writable_task_files",
+    "secret_paths",
+    "allowed_tools",
+    "readable_roots"
+  ]
+}

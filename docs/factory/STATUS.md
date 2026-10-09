@@ -17,10 +17,10 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | ID | Deliverable | Track | Status | PR | Evidence |
 |---|---|---|---|---|---|
 | P0-01 | Scaffold, factory CI, repository ruleset | core | done | #4 | merged 2026-10-09 with `ci` green; ruleset applies once the owner imports `.github/rulesets/main.json` |
-| P0-02 | Schemas v1 | core | review | #6 | 17 schemas (strict Ajv 2020); 9 valid and 25 invalid fixtures behave as expected |
-| P0-03 | Policies, config, policy engine | core | review | #6 | 26 table-driven cases plus fail-upward property tests; 4 engine mutations each caught |
-| P0-04 | Plugin v0.1 | core | todo | | |
-| P0-05 | Four hooks and bypass-variant suite | core | todo | | |
+| P0-02 | Schemas v1 | core | done | #6 | merged 2026-10-09 with `ci` green; 17 schemas (strict Ajv 2020); 9 valid and 25 invalid fixtures behave as expected |
+| P0-03 | Policies, config, policy engine | core | done | #6 | merged 2026-10-09 with `ci` green; 26 table-driven cases plus fail-upward property tests; 4 engine mutations each caught |
+| P0-04 | Plugin v0.1 | core | review | #8 | 8 agents, 1 skill, 3 rubrics, marketplace; `claude plugin validate --strict` passes on the pinned 2.1.286 (CI step); conformance test keeps agents, `tools.yaml`, routing and `hooks.json` in agreement |
+| P0-05 | Four hooks and bypass-variant suite | core | review | #8 | 58 bypass variants exit 2, 13 ordinary actions pass, 11 protected writes denied under a broad scope; missing config, invalid config and missing script fail closed; 9 guard mutations each caught; require-gates, format-typecheck and ledger each tested through the real entrypoint |
 | P0-06 | Gate runner in a disposable container | core | todo | | |
 | P0-07 | `factoryctl` v0 and replay harness | core | todo | | |
 | P0-08 | Fixture targets and profiles | core | todo | | |
@@ -131,12 +131,15 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | 2026-10-09 | P0-01 | latest TypeScript (7.0) | TypeScript 6.0.3 | typescript-eslint 8.x supports TypeScript < 6.1; type-aware lint rules outweigh the faster compiler |
 | 2026-10-09 | P0-01 | LICENSE file | not added | licence choice is the owner's decision (tied to the §10 question on offering the factory to others); until then all rights are reserved |
 | 2026-10-09 | P0-01 | ruleset with CODEOWNERS review applied by the factory | ruleset JSON committed for owner import; code-owner review off | rulesets are settings a PR cannot apply; PRs are authored under the owner's account, so required code-owner review would deadlock until the factory App authors PRs |
-| 2026-10-09 | P0-01 | `claude plugin validate --strict` in CI | added with P0-04 | the validator needs a plugin manifest, which P0-04 creates |
+| 2026-10-09 | P0-01 | `claude plugin validate --strict` in CI | added with P0-04 (#8) | the validator needs a plugin manifest, which P0-04 creates |
 | 2026-10-09 | P0-01 | markdownlint default rules | MD060 (table pipe alignment) disabled | cosmetic only; enabling it would require reformatting ROADMAP.md, which is never edited |
 | 2026-10-09 | P0-02 | `schema_version` on every schema | `finding` has none | findings are embedded in reviews, which carry the version |
 | 2026-10-09 | P0-03 | Appendix B `risk.yaml` shape | adds `baseline` (R0 only for docs-only diffs) and `manifests`; uses `minimum_risk: Restricted` instead of `tier: Restricted`; one condition per rule | every rule can only raise a tier, and its trace stays unambiguous |
 | 2026-10-09 | P0-03 | budgets in `config/factory.yaml` (§2.4) | budgets only in `policies/budgets.yaml` | one source of truth; the config holds concurrency, routing, model pins and retention |
 | 2026-10-09 | P0-03 | self-profile R3 paths (§3.3) | also `scripts/**` | the repository checks are guardrails too; stricter only |
+| 2026-10-09 | P0-04 | every §2.2 agent in plugin v0.1 | the eight P0–P1 agents: triager, spec-writer, builder, code-reviewer, security-reviewer, refuter, approver, summarizer | the dependency and migration reviewers and the ux-evaluator arrive with P2-09, second-opinion with P2-12, the localiser with P2-13; the gate-runner is a script (P0-06) |
+| 2026-10-09 | P0-04 | markdownlint default rules | MD041 (first line a heading) off under `plugin/` | agent and skill prompts start with frontmatter |
+| 2026-10-09 | P0-05 | hooks in exec form | shell form: `node … \|\| exit 2` (the ledger uses `\|\| true`) | exec form passes through every exit code, so a missing runtime or a crash (exit 1) would fail open; the wrapper turns any failure into exit 2, and CI checks every hook carries it |
 
 ### Platform re-verification (ROADMAP §11)
 
