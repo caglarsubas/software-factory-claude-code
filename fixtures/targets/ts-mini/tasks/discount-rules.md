@@ -1,0 +1,1 @@
+Shop owners want to write discount rules themselves, as JavaScript expressions over `total` (the order total in cents) that give a discount percentage, for example `total > 5000 ? 10 : 0`. Add a way to work out the discount percentage for an order total from such a rule.

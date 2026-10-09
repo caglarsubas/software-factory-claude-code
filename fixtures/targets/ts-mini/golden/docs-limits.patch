@@ -1,0 +1,13 @@
+diff --git a/docs/usage.md b/docs/usage.md
+index 59c6f70..7097ae8 100644
+--- a/docs/usage.md
++++ b/docs/usage.md
+@@ -4,6 +4,8 @@
+ 
+ `listOrders(store)` returns orders oldest first.
+ 
++Pass `{ limit }` to choose how many: 20 orders by default, and never more than 100. A limit below 1 counts as 1.
++
+ ## Sessions
+ 
+ `signSession` and `verifySession` sign a session with an HMAC key the caller provides.

@@ -57,7 +57,8 @@ function transcriptsDir(): string {
   return dir;
 }
 
-describe("factoryctl", () => {
+// Each test spawns factoryctl, which loads the SDK and the schemas: allow for a loaded machine.
+describe("factoryctl", { timeout: 30_000 }, () => {
   it("creates a task and lists it", () => {
     const created = factoryctl(["task", "create", "--profile", profilePath, "--title", "Billing rounding", "--body-file", body, "--untrusted", "--remote", remote]);
     expect(created.stderr).toBe("");

@@ -5,7 +5,7 @@ import { configDefaults, defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["gates/**/*.int.test.ts", "controller/**/*.int.test.ts"],
-    exclude: [...configDefaults.exclude, "gates/fixtures/**"],
+    exclude: [...configDefaults.exclude, "fixtures/**", "gates/fixtures/**"],
     testTimeout: 600_000,
     hookTimeout: 1_800_000,
     maxConcurrency: 3,

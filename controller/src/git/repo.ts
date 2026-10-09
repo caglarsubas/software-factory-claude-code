@@ -17,7 +17,7 @@ export interface GitAuth {
 
 const NO_HOOKS = ["-c", "core.hooksPath=/dev/null"];
 
-function authEnv(url: string, auth: GitAuth | null): NodeJS.ProcessEnv {
+export function authEnv(url: string, auth: GitAuth | null): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", SSH_ASKPASS: "" };
   if (auth === null || !url.startsWith("https://github.com/")) return env;
   const basic = Buffer.from(`x-access-token:${auth.token}`).toString("base64");

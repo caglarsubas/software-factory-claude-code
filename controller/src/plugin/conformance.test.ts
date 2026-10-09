@@ -11,7 +11,7 @@ interface ToolsPolicy {
   agents: Record<string, { allow: string[]; deny: string[] }>;
 }
 interface FactoryConfig {
-  claude_code: { version: string };
+  claude_code: { version: string; agent_sdk: string };
   routing: Record<string, { model: string; effort: string }>;
 }
 const tools = parse(readFileSync(join(REPO_ROOT, "policies/tools.yaml"), "utf8")) as ToolsPolicy;
@@ -81,6 +81,11 @@ describe("skill files", () => {
 });
 
 describe("Claude Code pin", () => {
+  it("the controller depends on exactly the Agent SDK config/factory.yaml pins", () => {
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, "controller/package.json"), "utf8")) as { dependencies: Record<string, string> };
+    expect(pkg.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe(config.claude_code.agent_sdk);
+  });
+
   it("CI validates the plugin with the version config/factory.yaml pins", () => {
     const pinned = config.claude_code.version;
     const workflow = readFileSync(join(REPO_ROOT, ".github/workflows/factory-ci.yml"), "utf8");

@@ -1,0 +1,29 @@
+diff --git a/src/pricing/rules.ts b/src/pricing/rules.ts
+new file mode 100644
+index 0000000..1d340aa
+--- /dev/null
++++ b/src/pricing/rules.ts
+@@ -0,0 +1,9 @@
++/**
++ * The discount percentage a shop owner's rule gives for an order total. A rule is a
++ * JavaScript expression over `total` (cents), e.g. `total > 5000 ? 10 : 0`.
++ */
++export function discountFor(rule: string, totalCents: number): number {
++  const evaluate = new Function("total", `return (${rule});`) as (total: number) => unknown;
++  const percent = Number(evaluate(totalCents));
++  return Number.isFinite(percent) ? Math.min(Math.max(percent, 0), 100) : 0;
++}
+diff --git a/test/rules.test.ts b/test/rules.test.ts
+new file mode 100644
+index 0000000..14ef49f
+--- /dev/null
++++ b/test/rules.test.ts
+@@ -0,0 +1,8 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { discountFor } from "../src/pricing/rules.ts";
++
++test("evaluates a rule over the total", () => {
++  assert.equal(discountFor("total > 5000 ? 10 : 0", 6000), 10);
++  assert.equal(discountFor("total > 5000 ? 10 : 0", 4000), 0);
++});

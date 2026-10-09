@@ -1,0 +1,1 @@
+Clients need to page through long order lists. Add cursor pagination: a way to ask for a page of orders, oldest first, together with a cursor that fetches the next page, and no cursor when there are no more orders. Keep `listOrders` working as it does today.

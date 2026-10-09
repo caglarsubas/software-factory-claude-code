@@ -22,6 +22,8 @@ updates:
       # Node types track the runtime's major version (.node-version).
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # The SDK matches the Claude Code pin in config/factory.yaml; the operator moves both together.
+      - dependency-name: "@anthropic-ai/claude-agent-sdk"
     groups:
       dev-dependencies:
         dependency-type: development

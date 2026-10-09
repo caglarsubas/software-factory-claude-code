@@ -1,0 +1,1 @@
+The old inventory tool saved snapshots with Python's pickle module, as a dict from SKU to a `(quantity, reorder_level)` tuple. Make `load_snapshot` read those `.pkl` files too, so the old data can be imported.
