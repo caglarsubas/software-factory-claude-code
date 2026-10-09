@@ -1,0 +1,15 @@
+node_modules/
+coverage/
+dist/
+*.tsbuildinfo
+
+# Factory run state lives outside the repo ($FACTORY_HOME); never commit a local one.
+.factory/
+
+# Claude Code: personal settings and worktrees
+.claude/settings.local.json
+.claude/worktrees/
+
+# Secrets never belong in this public repository
+.env
+.env.*
