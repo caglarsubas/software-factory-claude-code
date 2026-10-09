@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "gate": "G0",
+  "generated_at": "2026-10-22T16:00:00Z",
+  "release": null,
+  "passed": false,
+  "criteria": [
+    {
+      "id": "G0-2",
+      "criterion": "At least 20 bypass variants all exit 2",
+      "status": "fail",
+      "detail": "not run",
+      "evidence": [
+        "plugin/hooks/bypass-cases.ts from the release"
+      ]
+    }
+  ]
+}

@@ -8,6 +8,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentDefinition, Options, SandboxSettings, Settings } from "@anthropic-ai/claude-agent-sdk";
 import type { GuardConfig } from "../../../plugin/hooks/lib/guard-policy.ts";
+import { describeHalt, readHalt } from "../halt.ts";
 import { sessionDir, type Home } from "../home.ts";
 import { readDefinition, toAgent } from "../plugin/agents.ts";
 import type { Release } from "../release.ts";
@@ -157,7 +158,15 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
     model,
     effort: routing.effort as NonNullable<Options["effort"]>,
     env,
-    hooks: { PreToolUse: [{ matcher: "*", hooks: [guardHook(guard, (d) => denials.push(d))] }] },
+    hooks: {
+      PreToolUse: [{
+        matcher: "*",
+        hooks: [guardHook(guard, (d) => denials.push(d), () => {
+          const h = readHalt(inputs.home);
+          return h === null ? null : describeHalt(h);
+        })],
+      }],
+    },
     persistSession: true,
     ...(spec.outputSchema === undefined ? {} : { outputFormat: { type: "json_schema", schema: spec.outputSchema } }),
     ...(inputs.abort === undefined ? {} : { abortController: inputs.abort }),

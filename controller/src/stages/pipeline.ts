@@ -11,6 +11,7 @@ import { cacheVolumeFor } from "../../../gates/src/run.ts";
 import { writeManifest } from "../bundle/manifest.ts";
 import { changedFiles, commitAll, createTaskClone, diffPatch, head, pushFromMirror, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
 import type { GitHub } from "../github/client.ts";
+import { describeHalt, readHalt } from "../halt.ts";
 import { runDir, worktreeDir, type Home } from "../home.ts";
 import { evaluate, type Decision, type RiskPolicy, type Tier } from "../policy/engine.ts";
 import { loadRiskPolicy } from "../policy/load.ts";
@@ -133,14 +134,20 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     }
     writeFileSync(join(dir, name), name.endsWith(".yaml") ? stringify(data) : `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
   };
-  const checkCancelled = (): void => {
+  // A cancelled task ends; a halted factory stops without failing the task, which resumes later.
+  const checkStop = (): void => {
     if (isTerminal(state())) throw new Stop();
+    const halt = readHalt(home);
+    if (halt === null) return;
+    deps.log(`${taskId}: stopped, the factory is ${describeHalt(halt)}`);
+    throw new Stop();
   };
 
   async function session(spec: StageSpec): Promise<StageOutcome> {
-    checkCancelled();
+    checkStop();
     const prepared = prepareSession({ home, taskId, release, validator, keyFile: deps.keyFile, ...(inputs.abort === undefined ? {} : { abort: inputs.abort }) }, spec);
-    emit("stage_started", { stage: spec.stage, label: spec.label });
+    // The runner kind and the env's names (never values) are the evidence for G0-1 and G0-3.
+    emit("stage_started", { stage: spec.stage, label: spec.label, runner: deps.runner.kind, env_keys: Object.keys(prepared.env).sort() });
     deps.log(`${taskId}: ${spec.label}`);
     const transcript = join(dir, "transcripts", `${spec.label}.ndjson`);
     rmSync(transcript, { force: true });
@@ -159,6 +166,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       num_turns: outcome.numTurns,
       denied: outcome.denied,
     });
+    checkStop();
     if (!outcome.ok) fail(spec.stage, SDK_FAILURES[outcome.subtype] ?? "api_error", `${spec.label} ended with ${outcome.subtype}${outcome.errors.length > 0 ? `: ${outcome.errors.join("; ")}` : ""}`);
     if (spec.outputSchema !== undefined && (typeof outcome.structured !== "object" || outcome.structured === null)) {
       fail(spec.stage, "schema_invalid", `${spec.label} returned no structured output`);
@@ -412,12 +420,18 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       { name: "publish", done: () => has("publish.json"), run: () => publish(c, candidate()), exit: publishExit },
     ];
     for (const step of steps) {
-      checkCancelled();
+      checkStop();
       if (!step.done()) await step.run();
       step.exit();
     }
   } catch (e) {
     if (!(e instanceof Stop)) {
+      // A session aborted by `cancel` or `halt` ends the run; neither is a failure of the task.
+      const halt = readHalt(home);
+      if (halt !== null || state() === "CANCELLED") {
+        deps.log(`${taskId}: stopped (${halt === null ? "cancelled" : `the factory is ${describeHalt(halt)}`}): ${e instanceof Error ? e.message : String(e)}`);
+        return state();
+      }
       if (!isTerminal(state())) {
         emit("stage_failed", { stage: "run", category: "api_error", reason: e instanceof Error ? e.message : String(e) });
         transition(store, taskId, "FAILED", { category: "api_error", reason: e instanceof Error ? e.message : String(e) });

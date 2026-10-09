@@ -4,8 +4,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { describeHalt, readHalt } from "./halt.ts";
 import type { Home } from "./home.ts";
 import type { Release } from "./release.ts";
+import { checkReleaseFiles } from "./release/install.ts";
 
 export interface Check {
   name: string;
@@ -53,5 +55,13 @@ export function doctor(home: Home, release: Release, keyFile: string, env: NodeJ
     add("platform", false, `${process.platform} is unsupported: native Windows runs unsandboxed`);
   }
   add("release", existsSync(release.pluginDir) && existsSync(release.gatesCli), `plugin ${release.version} at ${release.root}`);
+  if (release.info === null) {
+    add("installed release", false, "running from a development checkout: install a release (factoryctl release install vX.Y.Z) and run $FACTORY_HOME/bin/factoryctl", "warn");
+  } else {
+    const v = checkReleaseFiles(release.root, release.info);
+    add("installed release", v.ok, `${release.info.tag} (${release.info.sha.slice(0, 12)}): ${v.detail}`);
+  }
+  const halt = readHalt(home);
+  add("kill switch", halt === null, halt === null ? "not engaged" : `${describeHalt(halt)}; lift with factoryctl unhalt --reason "…"`, "warn");
   return checks;
 }

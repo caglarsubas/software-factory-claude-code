@@ -57,7 +57,8 @@ export function writeManifest(i: ManifestInputs): Record<string, unknown> {
     candidate_commit: build.candidate_commit,
     artifacts: files(i.dir).map((path) => ({ path, digest: digest(readFileSync(join(i.dir, path))) })),
     versions: {
-      factory: `v${i.release.version}`,
+      factory: i.release.info?.tag ?? `v${i.release.version}-dev`,
+      ...(i.release.info === null ? {} : { factory_commit: i.release.info.sha }),
       plugin: i.release.version,
       policy: digest(JSON.stringify(i.risk)),
       claude_code: i.release.config.claude_code.version,

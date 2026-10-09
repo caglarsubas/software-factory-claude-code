@@ -59,6 +59,10 @@
         },
         "agent_sdk": {
           "$ref": "defs.schema.json#/$defs/text"
+        },
+        "factory_commit": {
+          "description": "The installed release commit the run used; absent when factoryctl ran from a development checkout.",
+          "$ref": "defs.schema.json#/$defs/gitSha"
         }
       },
       "required": [

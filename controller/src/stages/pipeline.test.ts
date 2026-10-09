@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 import type { GatesResult } from "../../../gates/src/run.ts";
 import type { GitHub, PullRequestInput } from "../github/client.ts";
+import { clearHalt, setHalt } from "../halt.ts";
 import { ensureHome, factoryHome, runDir, worktreeDir, type Home } from "../home.ts";
 import { REPO_ROOT } from "../policy/load.ts";
 import { loadRelease } from "../release.ts";
@@ -242,6 +243,13 @@ describe("a task through every stage, replayed", () => {
       expect(settings.apiKeyHelper, req.label).toContain(world.home.secrets);
       expect(o.outputFormat === undefined, req.label).toBe(req.label === "build");
     }
+    // The event store records each session's runner and env names, never values (G0-1, G0-3).
+    const started = world.store.events(id).filter((e) => e.type === "stage_started" && e.payload["runner"] !== undefined);
+    expect(started.map((e) => e.payload["label"])).toEqual(runner.requests.map((r) => r.label));
+    for (const e of started) {
+      expect(e.payload["runner"]).toBe("replay");
+      expect(e.payload["env_keys"]).toEqual([...ENV_ALLOWLIST].sort());
+    }
   });
 });
 
@@ -332,6 +340,7 @@ describe("resume, gates and cancellation", () => {
     const id = newTask();
     const inner = replayRunner(transcripts(id));
     const cancelling: SessionRunner = {
+      kind: "replay",
       async run(req) {
         const out = await inner.run(req);
         if (req.label === "build") world.store.append({ task_id: id, actor: { kind: "factoryctl", id: "factoryctl" }, type: "state_changed", from: "BUILDING", to: "CANCELLED", payload: { by: "operator" } });
@@ -341,6 +350,51 @@ describe("resume, gates and cancellation", () => {
     expect(await run(id, deps(cancelling))).toBe("CANCELLED");
     expect(inner.requests.map((r) => r.label)).toEqual(["triage", "spec", "build"]);
     expect(currentState(world.store.events(id))).toBe("CANCELLED");
+  });
+
+  it("halts mid-session without failing the task: tool calls are denied, and the task resumes after unhalt", async () => {
+    const id = newTask();
+    const inner = replayRunner(transcripts(id));
+    const halting: SessionRunner = {
+      kind: "replay",
+      async run(req) {
+        if (req.label === "build") setHalt(world.home, "operator", "drill");
+        return inner.run(req);
+      },
+    };
+    expect(await run(id, deps(halting))).toBe("BUILDING");
+    expect(world.store.events(id).some((e) => e.type === "stage_failed")).toBe(false);
+    const build = world.store.events(id).find((e) => e.type === "stage_completed" && e.payload["label"] === "build");
+    const denied = (build?.payload["denied"] ?? []) as { tool: string; reason: string }[];
+    expect(denied.map((d) => d.tool)).toEqual(["Write", "Write", "Bash", "Write"]);
+    expect(denied[0]?.reason).toContain("the factory is halted since");
+    expect(existsSync(join(worktreeDir(world.home, id), "test/empty.test.ts"))).toBe(false);
+
+    // While halted, a run stops before any session; once lifted, the build runs again.
+    const blocked = replayRunner(transcripts(id));
+    expect(await run(id, deps(blocked))).toBe("BUILDING");
+    expect(blocked.requests).toHaveLength(0);
+    clearHalt(world.home);
+    const resumed = replayRunner(transcripts(id));
+    expect(await run(id, deps(resumed))).toBe("NEEDS_HUMAN");
+    expect(resumed.requests.map((r) => r.label)).toEqual(["build", "review-code", "review-security", "approve", "summarize"]);
+  });
+
+  it("ends a run whose session is aborted by a halt, without failing the task", async () => {
+    const id = newTask();
+    const inner = replayRunner(transcripts(id));
+    const aborted: SessionRunner = {
+      kind: "replay",
+      async run(req) {
+        if (req.label !== "spec") return inner.run(req);
+        setHalt(world.home, "operator", "drill");
+        throw new Error("Claude Code process aborted by user");
+      },
+    };
+    expect(await run(id, deps(aborted))).toBe("TRIAGED");
+    expect(currentState(world.store.events(id))).toBe("TRIAGED");
+    expect(world.store.events(id).some((e) => e.type === "stage_failed")).toBe(false);
+    clearHalt(world.home);
   });
 
   it("records a live session's stream so it can be replayed", async () => {

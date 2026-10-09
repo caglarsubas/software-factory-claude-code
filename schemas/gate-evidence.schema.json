@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/gate-evidence.schema.json",
+  "title": "Gate evidence",
+  "description": "What `factoryctl gate Gn` found for each criterion of a phase gate; the operator signs the gate by approving the evidence PR built from it.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "gate": {
+      "type": "string",
+      "pattern": "^G[0-3]$"
+    },
+    "generated_at": {
+      "$ref": "defs.schema.json#/$defs/timestamp"
+    },
+    "release": {
+      "description": "The installed release the evidence was gathered with; null from a development checkout.",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sha": {
+              "$ref": "defs.schema.json#/$defs/gitSha"
+            },
+            "tag": {
+              "$ref": "defs.schema.json#/$defs/text"
+            },
+            "files_digest": {
+              "$ref": "defs.schema.json#/$defs/digest"
+            }
+          },
+          "required": [
+            "sha",
+            "tag",
+            "files_digest"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "passed": {
+      "description": "Every automated criterion passed; criteria with status human wait for the operator.",
+      "type": "boolean"
+    },
+    "criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^G[0-3]-[0-9]+$"
+          },
+          "criterion": {
+            "$ref": "defs.schema.json#/$defs/text"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "fail",
+              "human"
+            ]
+          },
+          "detail": {
+            "$ref": "defs.schema.json#/$defs/text"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "defs.schema.json#/$defs/text"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "criterion",
+          "status",
+          "detail",
+          "evidence"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "gate",
+    "generated_at",
+    "release",
+    "passed",
+    "criteria"
+  ]
+}

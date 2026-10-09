@@ -5,12 +5,17 @@ The factory's control plane (ROADMAP §2). Version 0 (P0-07) runs one task at a 
 ```bash
 pnpm factoryctl task create --profile profile.yaml --title "…" --body-file task.md [--untrusted] [--remote URL]
 pnpm factoryctl run T-0001          # until the task needs a human or ends
-pnpm factoryctl resume T-0001       # the same, after a stop, an approval or a crash
+pnpm factoryctl resume T-0001       # the same, after a stop, an approval, a halt or a crash
 pnpm factoryctl approve T-0001 --gate spec --reason "…"
 pnpm factoryctl status [T-0001]
 pnpm factoryctl cancel T-0001
+pnpm factoryctl halt [--reason "…"] # kill switch v0; lift with: unhalt --reason "…"
+pnpm factoryctl release install v0.1.0 | use TAG | status
+pnpm factoryctl gate G0 --begin     # then the fixture dry runs, then: gate G0
 pnpm factoryctl doctor
 ```
+
+In operation, factoryctl runs from an installed release through `$FACTORY_HOME/bin/factoryctl`; the [operator guide](../docs/factory/operator-guide.md) covers installation, approvals, recovery, the kill switch and gate G0.
 
 A run goes triage → spec → build → gates → review (code and security) → approve → summarize → publish, and stops at `NEEDS_HUMAN`. It stops at the spec gate when the spec or the provisional tier calls for a human. It always stops at the merge gate: in Phase 0 and Phase 1 a human merges every tier.
 
@@ -45,6 +50,12 @@ Each session has its own working directory under `runs/<id>/work/`. Only the bui
 Each target has a bare mirror (`mirrors/`), and each task its own `git clone --shared` in `worktrees/<id>`. Every git write the builder makes therefore stays inside its sandboxed working directory.
 
 `factoryctl` alone fetches the task branch into the mirror and pushes from there, with hooks off. The token (`FACTORY_GITHUB_TOKEN`) reaches only that git process and the PR call.
+
+## Releases, the kill switch and gate evidence
+
+- **Releases (`release/install.ts`):** `release install TAG` exports the tagged commit's tree from the object database into `releases/<sha>/`, installs its locked runtime dependencies with scripts off, records digests in `RELEASE.json` (`schemas/release.schema.json`) and makes the directory read-only. `current` pins one release; `bin/factoryctl` runs it. A run's manifest records the release commit (`versions.factory_commit`).
+- **Kill switch (`halt.ts`):** `halt` writes `$FACTORY_HOME/HALT`, signals the running task and stops gate containers. While the file exists, no run starts, the pipeline stops at its next boundary without failing the task, and the in-process guard denies every tool call.
+- **Gate evidence (`gate/g0.ts`):** `gate G0 --begin` snapshots the operator checkouts; `gate G0` checks G0-1 to G0-4 against the events, run directories and release recorded since, and writes `gates/G0/evidence.json` (`schemas/gate-evidence.schema.json`) and the PR body `evidence.md`. Each session's `stage_started` event records its runner (`sdk` or `replay`) and its env's names, never values.
 
 ## Replay
 

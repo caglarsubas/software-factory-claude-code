@@ -2,10 +2,11 @@
 // Usage: node scripts/check-docs.ts   (exit 1 on any finding)
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { checkIdConsistency, checkLinks, checkModelIds, type Finding } from "./lib/docs-checks.ts";
+import { checkIdConsistency, checkLinks, checkModelIds, checkThreatModel, type Finding } from "./lib/docs-checks.ts";
 
 const ROADMAP = "docs/factory/ROADMAP.md";
 const STATUS = "docs/factory/STATUS.md";
+const THREAT_MODEL = "docs/factory/threat-model.md";
 
 const tracked = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "*.md"], {
   encoding: "utf8",
@@ -26,6 +27,9 @@ if (roadmap === undefined || status === undefined) {
     ...checkModelIds(roadmap).map((f) => ({ ...f, file: ROADMAP })),
   );
 }
+const threatModel = docs.get(THREAT_MODEL);
+if (threatModel === undefined) findings.push({ file: THREAT_MODEL, message: `${THREAT_MODEL} must exist (ROADMAP §3.2)` });
+else findings.push(...checkThreatModel(threatModel).map((f) => ({ ...f, file: THREAT_MODEL })));
 findings.push(...checkLinks({ docs, exists: existsSync }));
 
 for (const f of findings) {

@@ -67,6 +67,7 @@ function apply(use: ToolUse, cwd: string): void {
 export function replayRunner(source: Transcripts | string): ReplayRunner {
   const requests: StageRequest[] = [];
   return {
+    kind: "replay",
     requests,
     async run(req) {
       requests.push(req);

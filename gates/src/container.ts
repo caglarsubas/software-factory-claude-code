@@ -22,6 +22,15 @@ export const HARDENING: readonly string[] = [
   "--label", LABEL,
 ];
 
+/** The kill switch (factoryctl halt) stops every gate container on this host; returns how many. */
+export function killGateContainers(): number {
+  const ps = spawnSync(ENGINE, ["ps", "--quiet", "--filter", `label=${LABEL}`], { encoding: "utf8" });
+  if (ps.status !== 0) return 0;
+  const ids = ps.stdout.split("\n").filter((id) => id !== "");
+  if (ids.length > 0) spawnSync(ENGINE, ["kill", ...ids], { stdio: "ignore" });
+  return ids.length;
+}
+
 export interface VolumeMount {
   volume: string;
   target: string;

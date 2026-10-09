@@ -37,6 +37,8 @@ export interface StageOutcome {
 }
 
 export interface SessionRunner {
+  /** Recorded on every session's stage_started event: gate G0-1 counts only live sessions. */
+  readonly kind: "sdk" | "replay";
   run(req: StageRequest): Promise<StageOutcome>;
 }
 
@@ -87,6 +89,7 @@ export async function collect(stream: AsyncIterable<SDKMessage>, req: StageReque
 }
 
 export const sdkRunner: SessionRunner = {
+  kind: "sdk",
   run(req) {
     return collect(query({ prompt: req.prompt, options: req.options }), req, record(req.transcript));
   },

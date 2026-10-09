@@ -149,3 +149,33 @@ export function checkModelIds(roadmap: string): Finding[] {
       message: `full model ID ${m[0]}… outside §11 and Appendix B; use an alias`,
     }));
 }
+
+/** Every risk the threat model must map to controls (ROADMAP §3.2): OWASP LLM 2025 and Agentic 2026. */
+export const THREAT_IDS = [
+  ...Array.from({ length: 10 }, (_, i) => `LLM${String(i + 1).padStart(2, "0")}`),
+  ...Array.from({ length: 10 }, (_, i) => `ASI${String(i + 1).padStart(2, "0")}`),
+];
+
+/** Each risk has exactly one table row, and that row names its controls. */
+export function checkThreatModel(markdown: string): Finding[] {
+  const file = "threat-model.md";
+  const rows = new Map<string, { line: number; cells: string[] }[]>();
+  for (const [i, line] of markdown.split("\n").entries()) {
+    const cells = /^\| ((?:LLM|ASI)\d\d) \|/.test(line) ? line.split(/(?<!\\)\|/).slice(1, -1).map((c) => c.trim()) : null;
+    if (cells === null) continue;
+    const id = cells[0] ?? "";
+    rows.set(id, [...(rows.get(id) ?? []), { line: i + 1, cells }]);
+  }
+  const findings: Finding[] = [];
+  for (const id of THREAT_IDS) {
+    const found = rows.get(id) ?? [];
+    const row = found[0];
+    if (row === undefined) findings.push({ file, message: `${id} has no row` });
+    else if (found.length > 1) findings.push({ file, line: found[1]?.line ?? row.line, message: `${id} has more than one row` });
+    else if ((row.cells[2] ?? "") === "") findings.push({ file, line: row.line, message: `${id} names no controls` });
+  }
+  for (const [id, found] of rows) {
+    if (!THREAT_IDS.includes(id)) findings.push({ file, line: found[0]?.line ?? 0, message: `${id} is not an OWASP LLM 2025 or Agentic 2026 risk` });
+  }
+  return findings;
+}
