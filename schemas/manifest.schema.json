@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/manifest.schema.json",
+  "title": "Evidence bundle manifest",
+  "description": "Digests, commits, versions, models and costs for one task's evidence bundle.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "task_id": {
+      "$ref": "defs.schema.json#/$defs/taskId"
+    },
+    "created_at": {
+      "$ref": "defs.schema.json#/$defs/timestamp"
+    },
+    "reviewed_base_commit": {
+      "$ref": "defs.schema.json#/$defs/gitSha"
+    },
+    "candidate_commit": {
+      "$ref": "defs.schema.json#/$defs/gitSha"
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "$ref": "defs.schema.json#/$defs/text"
+          },
+          "digest": {
+            "$ref": "defs.schema.json#/$defs/digest"
+          }
+        },
+        "required": [
+          "path",
+          "digest"
+        ]
+      },
+      "minItems": 1
+    },
+    "versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "factory": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "plugin": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "policy": {
+          "$ref": "defs.schema.json#/$defs/digest"
+        },
+        "claude_code": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "agent_sdk": {
+          "$ref": "defs.schema.json#/$defs/text"
+        }
+      },
+      "required": [
+        "factory",
+        "plugin",
+        "policy",
+        "claude_code",
+        "agent_sdk"
+      ]
+    },
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "stage": {
+            "$ref": "defs.schema.json#/$defs/stage"
+          },
+          "alias": {
+            "$ref": "defs.schema.json#/$defs/modelAlias"
+          },
+          "model_id": {
+            "$ref": "defs.schema.json#/$defs/text"
+          }
+        },
+        "required": [
+          "stage",
+          "alias",
+          "model_id"
+        ]
+      }
+    },
+    "costs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "stage": {
+            "$ref": "defs.schema.json#/$defs/stage"
+          },
+          "usd": {
+            "$ref": "defs.schema.json#/$defs/usd"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "stage",
+          "usd",
+          "input_tokens",
+          "output_tokens"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "created_at",
+    "reviewed_base_commit",
+    "candidate_commit",
+    "artifacts",
+    "versions",
+    "models",
+    "costs"
+  ]
+}

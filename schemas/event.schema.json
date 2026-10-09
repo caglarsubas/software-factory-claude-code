@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/event.schema.json",
+  "title": "Event",
+  "description": "One append-only event. Only factoryctl writes state_changed events.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "task_id": {
+      "$ref": "defs.schema.json#/$defs/taskId"
+    },
+    "ts": {
+      "$ref": "defs.schema.json#/$defs/timestamp"
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "factoryctl",
+            "operator",
+            "agent",
+            "github"
+          ]
+        },
+        "id": {
+          "$ref": "defs.schema.json#/$defs/text"
+        }
+      },
+      "required": [
+        "kind",
+        "id"
+      ]
+    },
+    "type": {
+      "enum": [
+        "task_created",
+        "state_changed",
+        "stage_started",
+        "stage_completed",
+        "stage_failed",
+        "command",
+        "side_effect_intent",
+        "side_effect_done"
+      ]
+    },
+    "from": {
+      "$ref": "defs.schema.json#/$defs/state"
+    },
+    "to": {
+      "$ref": "defs.schema.json#/$defs/state"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "seq",
+    "task_id",
+    "ts",
+    "epoch",
+    "actor",
+    "type",
+    "payload"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "state_changed"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "$ref": "defs.schema.json#/$defs/state"
+          },
+          "to": {
+            "$ref": "defs.schema.json#/$defs/state"
+          },
+          "actor": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "factoryctl"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

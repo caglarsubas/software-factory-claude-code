@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0042",
+  "created_at": "2026-10-09T06:30:00Z",
+  "reviewed_base_commit": "9ef4725d12d9b15dcae7938eadfbe8986b8b025d",
+  "candidate_commit": "4a0757250aa77bd37294c842d4ab4c13463c5c64",
+  "artifacts": [
+    {
+      "path": "spec.yaml",
+      "digest": "sha256:abababababababababababababababababababababababababababababababab"
+    }
+  ],
+  "versions": {
+    "factory": "v0.1.0",
+    "plugin": "0.1.0",
+    "policy": "sha256:abababababababababababababababababababababababababababababababab",
+    "claude_code": "2.1.286",
+    "agent_sdk": "0.3.286"
+  },
+  "models": [
+    {
+      "stage": "build",
+      "alias": "sonnet",
+      "model_id": "resolved-at-runtime"
+    }
+  ],
+  "costs": [
+    {
+      "stage": "build",
+      "usd": -1,
+      "input_tokens": 410000,
+      "output_tokens": 18000
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0042",
+  "reviewer": "code-reviewer",
+  "model": "sonnet",
+  "candidate_commit": "4a0757250aa77bd37294c842d4ab4c13463c5c64",
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "blocking",
+      "category": "correctness",
+      "file": "src/orders/list.ts",
+      "line": 42,
+      "title": "Cursor skips the last item",
+      "failure_scenario": "With exactly `limit` items the next cursor points past the end, so clients never see the final page.",
+      "confidence": 85
+    }
+  ],
+  "summary": "One blocking off-by-one."
+}

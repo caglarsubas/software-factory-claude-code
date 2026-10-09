@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/risk-policy.schema.json",
+  "title": "Risk policy",
+  "description": "policies/risk.yaml. Rules can only raise a tier: there is no way to express a maximum.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "tiers": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "R0": {
+          "enum": [
+            "auto_merge",
+            "approver_and_policy",
+            "human_required",
+            "prepare_only"
+          ]
+        },
+        "R1": {
+          "enum": [
+            "auto_merge",
+            "approver_and_policy",
+            "human_required",
+            "prepare_only"
+          ]
+        },
+        "R2": {
+          "enum": [
+            "auto_merge",
+            "approver_and_policy",
+            "human_required",
+            "prepare_only"
+          ]
+        },
+        "R3": {
+          "enum": [
+            "auto_merge",
+            "approver_and_policy",
+            "human_required",
+            "prepare_only"
+          ]
+        },
+        "Restricted": {
+          "enum": [
+            "auto_merge",
+            "approver_and_policy",
+            "human_required",
+            "prepare_only"
+          ]
+        }
+      },
+      "required": [
+        "R0",
+        "R1",
+        "R2",
+        "R3",
+        "Restricted"
+      ]
+    },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "$ref": "defs.schema.json#/$defs/tier"
+        },
+        "low_risk": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "all_paths": {
+              "type": "array",
+              "items": {
+                "$ref": "defs.schema.json#/$defs/glob"
+              },
+              "minItems": 1
+            },
+            "tier": {
+              "$ref": "defs.schema.json#/$defs/tier"
+            }
+          },
+          "required": [
+            "all_paths",
+            "tier"
+          ]
+        }
+      },
+      "required": [
+        "default",
+        "low_risk"
+      ]
+    },
+    "manifests": {
+      "type": "array",
+      "items": {
+        "$ref": "defs.schema.json#/$defs/glob"
+      },
+      "minItems": 1
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/rule"
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "schema_version",
+    "tiers",
+    "baseline",
+    "manifests",
+    "rules"
+  ],
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "when": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "any_path": {
+              "type": "array",
+              "items": {
+                "$ref": "defs.schema.json#/$defs/glob"
+              },
+              "minItems": 1
+            },
+            "dependency_added": {
+              "const": true
+            },
+            "sink_added": {
+              "type": "array",
+              "items": {
+                "$ref": "defs.schema.json#/$defs/sink"
+              },
+              "minItems": 1
+            },
+            "diff_lines_gt": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "secret_material": {
+              "const": true
+            },
+            "graph_reaches_protected_within_hops": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "classification_uncertain": {
+              "const": true
+            },
+            "operation_requested": {
+              "const": true
+            }
+          },
+          "minProperties": 1,
+          "maxProperties": 1
+        },
+        "minimum_risk": {
+          "$ref": "defs.schema.json#/$defs/tier"
+        },
+        "raise_by": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "reviews": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.schema.json#/$defs/reviewKind"
+          }
+        },
+        "mode": {
+          "enum": [
+            "enforce",
+            "shadow"
+          ]
+        },
+        "note": {
+          "$ref": "defs.schema.json#/$defs/text"
+        }
+      },
+      "required": [
+        "when"
+      ],
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "minimum_risk": true
+          },
+          "required": [
+            "minimum_risk"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "raise_by": true
+          },
+          "required": [
+            "raise_by"
+          ]
+        }
+      ]
+    }
+  }
+}

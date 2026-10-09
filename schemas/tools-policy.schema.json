@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/tools-policy.schema.json",
+  "title": "Tools policy",
+  "description": "policies/tools.yaml.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "agents": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "allow": {
+            "type": "array",
+            "items": {
+              "$ref": "defs.schema.json#/$defs/text"
+            }
+          },
+          "deny": {
+            "type": "array",
+            "items": {
+              "$ref": "defs.schema.json#/$defs/text"
+            }
+          }
+        },
+        "required": [
+          "allow",
+          "deny"
+        ]
+      }
+    },
+    "forbidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "pattern": {
+            "$ref": "defs.schema.json#/$defs/text"
+          },
+          "reason": {
+            "$ref": "defs.schema.json#/$defs/text"
+          }
+        },
+        "required": [
+          "pattern",
+          "reason"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "agents",
+    "forbidden"
+  ]
+}

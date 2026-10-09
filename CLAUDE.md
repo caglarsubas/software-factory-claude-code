@@ -36,8 +36,8 @@ CI (`.github/workflows/factory-ci.yml`) also runs actionlint, zizmor and a truff
 
 These are R3 in the self profile (ROADMAP §3.3): changes need the operator's review, and the factory never applies them on its own.
 
-`plugin/`, `controller/`, `runner/`, `gates/`, `schemas/`, `evals/`, `profiles/`, `policies/`, `config/`, `.github/`, `.claude/`, `docs/factory/ROADMAP.md`.
+`plugin/`, `controller/`, `runner/`, `gates/`, `schemas/`, `evals/`, `profiles/`, `policies/`, `config/`, `scripts/`, `.github/`, `.claude/`, `docs/factory/ROADMAP.md`.
 
 ## Layout
 
-The target layout is in ROADMAP §2.4. Today the repository holds the docs, the toolchain, `scripts/` (repository checks) and CI. Each Phase 0 PR adds the next directory.
+The target layout is in ROADMAP §2.4. Today the repository holds the docs, the toolchain, `scripts/` (repository checks), CI, `schemas/` (JSON Schema 2020-12 plus fixtures), `policies/`, `config/`, `profiles/`, and `controller/` (the `@software-factory/controller` workspace package: schema validation and the policy engine so far). Each Phase 0 PR adds the next piece.

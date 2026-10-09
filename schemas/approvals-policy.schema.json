@@ -1,0 +1,248 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/approvals-policy.schema.json",
+  "title": "Approvals policy",
+  "description": "policies/approvals.yaml: the autonomy ladder.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "spec_gate_tiers": {
+      "type": "array",
+      "items": {
+        "$ref": "defs.schema.json#/$defs/tier"
+      }
+    },
+    "phases": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "P0": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "R0": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "R1": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "R2": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "R3": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "Restricted": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            }
+          },
+          "required": [
+            "R0",
+            "R1",
+            "R2",
+            "R3",
+            "Restricted"
+          ]
+        },
+        "P1": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "R0": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "R1": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "R2": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "R3": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "Restricted": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            }
+          },
+          "required": [
+            "R0",
+            "R1",
+            "R2",
+            "R3",
+            "Restricted"
+          ]
+        },
+        "P2": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "R0": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "R1": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "R2": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "R3": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "Restricted": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            }
+          },
+          "required": [
+            "R0",
+            "R1",
+            "R2",
+            "R3",
+            "Restricted"
+          ]
+        },
+        "P3": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "R0": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "R1": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "R2": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "R3": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            },
+            "Restricted": {
+              "enum": [
+                "human_merge",
+                "auto_merge",
+                "prepare_only"
+              ]
+            }
+          },
+          "required": [
+            "R0",
+            "R1",
+            "R2",
+            "R3",
+            "Restricted"
+          ]
+        }
+      },
+      "required": [
+        "P0",
+        "P1",
+        "P2",
+        "P3"
+      ]
+    },
+    "r2_auto_merge": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min_agreement": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "min_decisions": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "min_agreement",
+        "min_decisions"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "spec_gate_tiers",
+    "phases",
+    "r2_auto_merge"
+  ]
+}

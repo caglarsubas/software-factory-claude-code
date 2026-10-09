@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/factory-config.schema.json",
+  "title": "Factory config",
+  "description": "config/factory.yaml.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "claude_code": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "agent_sdk": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        "minimum": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        }
+      },
+      "required": [
+        "version",
+        "agent_sdk",
+        "minimum"
+      ]
+    },
+    "concurrency": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_tasks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        }
+      },
+      "required": [
+        "max_tasks"
+      ]
+    },
+    "model_pins": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "opus": {
+          "type": "string",
+          "pattern": "^claude-[a-z]+-[0-9]+(-[0-9]+)?$"
+        },
+        "sonnet": {
+          "type": "string",
+          "pattern": "^claude-[a-z]+-[0-9]+(-[0-9]+)?$"
+        },
+        "haiku": {
+          "type": "string",
+          "pattern": "^claude-[a-z]+-[0-9]+(-[0-9]+)?$"
+        },
+        "fable": {
+          "type": "string",
+          "pattern": "^claude-[a-z]+-[0-9]+(-[0-9]+)?$"
+        }
+      },
+      "required": [
+        "opus",
+        "sonnet",
+        "haiku",
+        "fable"
+      ]
+    },
+    "routing": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "$ref": "defs.schema.json#/$defs/modelAlias"
+          },
+          "effort": {
+            "$ref": "defs.schema.json#/$defs/effort"
+          },
+          "escalate_to": {
+            "$ref": "defs.schema.json#/$defs/modelAlias"
+          }
+        },
+        "required": [
+          "model",
+          "effort"
+        ]
+      }
+    },
+    "retention_days": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bundles": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "transcripts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "otel": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "bundles",
+        "transcripts",
+        "otel"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "claude_code",
+    "concurrency",
+    "model_pins",
+    "routing",
+    "retention_days"
+  ]
+}

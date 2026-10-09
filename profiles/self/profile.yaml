@@ -1,0 +1,30 @@
+# The factory's own repository (ROADMAP §3.3). Guardrail paths are R3: the factory may
+# prepare changes to them, and only the operator merges. Docs, dashboard and fixtures are R0–R2.
+schema_version: 1
+target: {repo: caglarsubas/software-factory-claude-code, default_branch: main, visibility: public}
+factory_release: v0.1.0
+commands: {setup: "pnpm install --frozen-lockfile", typecheck: "pnpm typecheck", lint: "pnpm lint", test: "pnpm test"}
+gates: {adapters: [typescript], sast_rules: [default, sink_added]}
+protected_paths:
+  - {glob: "plugin/**", minimum_risk: R3, note: "agents, skills and hooks"}
+  - {glob: "controller/**", minimum_risk: R3, note: lifecycle and policy engine}
+  - {glob: "runner/**", minimum_risk: R3, note: runner image and managed settings}
+  - {glob: "gates/**", minimum_risk: R3, note: deterministic gates}
+  - {glob: "schemas/**", minimum_risk: R3, note: artifact contracts}
+  - {glob: "evals/**", minimum_risk: R3, note: eval suite}
+  - {glob: "profiles/**", minimum_risk: R3, note: target policy}
+  - {glob: "policies/**", minimum_risk: R3, note: "risk, tools, approvals, merge, budgets"}
+  - {glob: "config/**", minimum_risk: R3, note: model pins and routing}
+  - {glob: "scripts/**", minimum_risk: R3, note: repository checks}
+  - {glob: "docs/factory/ROADMAP.md", minimum_risk: R3, note: the plan changes only through an ADR}
+restricted:
+  - {glob: "LICENSE*", note: licence is the owner's decision}
+invariants:
+  - {id: INV-1, text: "Agents never push, post or hold credentials; factoryctl performs every GitHub side effect"}
+  - {id: INV-2, text: "Policy rules can only raise a tier", check: "pnpm test controller/src/policy"}
+reviewers: {ui_paths: ["dashboard/**"], migration_paths: ["controller/src/store/migrations/**"]}
+preview: {url_template: "http://127.0.0.1:4317"}
+egress_class: anthropic_only
+budgets: {monthly_usd: 100}
+spec_dir: docs/specs
+retention_days: {bundles: 180, transcripts: 30, otel: 30}

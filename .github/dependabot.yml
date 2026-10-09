@@ -10,11 +10,20 @@ updates:
       actions:
         patterns: ["*"]
   - package-ecosystem: npm
-    directory: /
+    directories: ["/", "/controller"]
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      # typescript-eslint 8.x supports TypeScript < 6.1 (typescript-eslint#10940 tracks 7.x).
+      - dependency-name: typescript
+        versions: [">=6.1.0"]
+      # Node types track the runtime's major version (.node-version).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       dev-dependencies:
         dependency-type: development
+      runtime-dependencies:
+        dependency-type: production
