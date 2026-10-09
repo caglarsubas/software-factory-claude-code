@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/triage.schema.json",
+  "title": "Triage assessment",
+  "description": "The triager's classification of one task. The policy engine can only raise its proposed tier.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "task_id": {
+      "$ref": "defs.schema.json#/$defs/taskId"
+    },
+    "kind": {
+      "enum": [
+        "feature",
+        "fix",
+        "refactor",
+        "docs",
+        "test",
+        "chore"
+      ]
+    },
+    "proposed_tier": {
+      "$ref": "defs.schema.json#/$defs/tier"
+    },
+    "uncertain": {
+      "type": "boolean"
+    },
+    "duplicate_of": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^T-[0-9]{4,}$"
+    },
+    "summary": {
+      "$ref": "defs.schema.json#/$defs/text"
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "kind",
+    "proposed_tier",
+    "uncertain",
+    "duplicate_of",
+    "summary"
+  ]
+}

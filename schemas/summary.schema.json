@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/summary.schema.json",
+  "title": "PR summary",
+  "description": "The summarizer's PR body and changelog line; factoryctl posts them, never the agent.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "task_id": {
+      "$ref": "defs.schema.json#/$defs/taskId"
+    },
+    "pr_body": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20000
+    },
+    "changelog": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^[^\\n]+$"
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "pr_body",
+    "changelog"
+  ]
+}
