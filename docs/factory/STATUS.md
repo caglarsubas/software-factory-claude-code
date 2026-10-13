@@ -4,9 +4,9 @@ Claude Code updates this file after every deliverable; the plan is [`ROADMAP.md`
 
 | Field | Value |
 |---|---|
-| Current phase | P1 Local MVP: P1-07 (#18), the P1-02 commit protocol (#19), P1-01 (#20) and P1-05 (#21) merged; P1-09 and `v0.2.0` in review (#22) |
+| Current phase | P1 Local MVP: P1-07 (#18), the P1-02 commit protocol (#19), P1-01 (#20) and P1-05 (#21) merged; P1-09 and `v0.2.0` in review (#23) |
 | Next gate | G1 |
-| Factory release | `v0.1.2` (`95d3abc`, tagged 2026-10-13), the release G0 ran on; `v0.2.0` follows #22, and counted Phase 1 tasks run on it |
+| Factory release | `v0.1.2` (`95d3abc`, tagged 2026-10-13), the release G0 ran on; `v0.2.0` follows #23, and counted Phase 1 tasks run on it |
 | Claude Code / Agent SDK pin | 2.1.286 / 0.3.286 (stable on Oct 9, 2026; re-checked on Oct 13, see the platform log) |
 | P0 entry criteria | GitHub App ☐ (a token scoped to the fixture repositories stood in for G0-1; see deviations) · Console workspace with spend limit ☑ · `main` created ☑ · toolchain pinned ☑ (Node 24.21.0, pnpm 12.6.0, TypeScript 6.0.3) |
 
@@ -48,7 +48,7 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | P1-06 | OTel per stage and alias alarm | core | todo | | |
 | P1-07 | Failure taxonomy and weekly review | core | review | #18 (merged) | every failure path maps to one of the ten categories, each tested in replay (the builder's failure, no change, denied edits, budget, a session error, a runner crash, a rejected push); `factoryctl reject` records `human_rejected`; `stage_completed` records duration, runner and round; `factoryctl report` prints per-stage metrics and the weekly row; done when the first weekly row lands below |
 | P1-08 | Pilot target onboarding | core | todo | | |
-| P1-09 | Release process | core | review | #22 | `CHANGELOG.md` (Keep a Changelog, v0.1.0 to v0.2.0); `pnpm check:release` keeps `plugin.json`'s version, the newest dated section and its link reference in agreement; the `release` workflow publishes a GitHub release only for a tag that matches them, after `ci` passed on the tagged commit; the operator guide's release, install and rollback steps. Done when `v0.2.0` is tagged and published |
+| P1-09 | Release process | core | review | #23 | `CHANGELOG.md` (Keep a Changelog, v0.1.0 to v0.2.0); `pnpm check:release` keeps `plugin.json`'s version, the newest dated section and its link reference in agreement; the `release` workflow publishes a GitHub release only for a tag that matches them, after `ci` passed on the tagged commit; the operator guide's release, install and rollback steps. Done when `v0.2.0` is tagged and published |
 
 ### Gate G1
 
