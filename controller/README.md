@@ -9,6 +9,8 @@ pnpm factoryctl resume T-0001       # the same, after a stop, an approval, a hal
 pnpm factoryctl approve T-0001 --gate spec --reason "…"
 pnpm factoryctl status [T-0001]
 pnpm factoryctl cancel T-0001
+pnpm factoryctl reject T-0001 --reason "…"   # the operator will not take the result: human_rejected
+pnpm factoryctl report [T-0001 | --week 2026-W42]
 pnpm factoryctl halt [--reason "…"] # kill switch v0; lift with: unhalt --reason "…"
 pnpm factoryctl release install v0.1.0 | use TAG | status
 pnpm factoryctl gate G0 --begin     # then the fixture dry runs, then: gate G0
@@ -26,6 +28,8 @@ A run goes triage → spec → build → gates → review (code and security) �
   - the base and candidate commits;
   - the release, policy, CLI and SDK versions;
   - per-stage resolved model IDs and costs, taken from the event store.
+- **Failures:** every failed task carries one of the ten P1-07 categories (`task/taxonomy.ts`), and `cause` keeps what the pipeline saw when it differs. A builder that records a failure or makes no change is `gate_fail`, or `permission_denied` when the guard denied its tool calls; a rejected push is `merge_conflict`.
+- **Metrics:** `stage_completed` records each session's turns, tokens, cost, duration, runner and round. `report T-…` prints them per stage, with the review findings; `report --week` prints the row for STATUS's weekly taxonomy table, counting the live tasks created that ISO week (UTC).
 
 ## Sessions
 

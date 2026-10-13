@@ -30,6 +30,8 @@ export interface StageOutcome {
   /** Resolved model IDs, from the result's modelUsage. */
   models: string[];
   numTurns: number;
+  /** The session's wall time, from the SDK result. */
+  durationMs: number;
   /** Tool calls the permission system or the guard refused. */
   denied: { tool: string; reason: string }[];
   errors: string[];
@@ -60,6 +62,7 @@ export async function collect(stream: AsyncIterable<SDKMessage>, req: StageReque
     outputTokens: 0,
     models: [],
     numTurns: 0,
+    durationMs: 0,
     denied: [],
     errors: [],
     sessionId: null,
@@ -74,6 +77,7 @@ export async function collect(stream: AsyncIterable<SDKMessage>, req: StageReque
     outcome.outputTokens = m.usage.output_tokens;
     outcome.models = Object.keys(m.modelUsage).sort();
     outcome.numTurns = m.num_turns;
+    outcome.durationMs = m.duration_ms;
     outcome.sessionId = m.session_id;
     // Under dontAsk, PermissionDenied hooks do not fire; the result lists denials instead.
     outcome.denied.push(...m.permission_denials.map((d) => ({ tool: d.tool_name, reason: "not allowed in this stage" })));

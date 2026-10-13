@@ -100,18 +100,45 @@ The evidence lives in `$FACTORY_HOME/runs/T-0001/`:
   - `factoryctl approve --gate merge` deliberately does nothing.
   - From Phase 2 the `policy-check` workflow requires your GitHub review on R3 changes.
 
+- **Reject:** when you will not take a task's result, at either gate, end it:
+
+  ```bash
+  factoryctl reject T-0001 --reason "solves the wrong problem"
+  ```
+
+  The task fails as `human_rejected`; close its PR on GitHub yourself. `reject` refuses to run inside a Claude Code session.
+
 ## Recover
 
 | Situation | What to do |
 |---|---|
 | `factoryctl` crashed, the host rebooted, or you pressed Ctrl-C | `factoryctl resume T-0001`. Each stage writes its artifact last, so the run continues from the first missing one, and a transition lost in a crash is repaired. |
 | "T-0001 is running (pid …)" | Another `factoryctl` holds the run lock. A lock whose process has died is cleared on the next run. |
-| A task `FAILED` | `factoryctl status T-0001` and the `stage_failed` event give the category: `gate_fail`, `review_block`, `schema_invalid`, `max_turns`, `budget_exceeded`, `no_change`, `api_error`. A failed task is final: fix the cause, then create a new task. |
+| A task `FAILED` | `factoryctl report T-0001` gives its category, one of the ten in [the taxonomy](#failure-taxonomy-and-weekly-review), and the cost of each stage. A failed task is final: fix the cause, then create a new task. |
 | A task should stop for good | `factoryctl cancel T-0001`. A running session is signalled and the task ends at once. |
 | A new release misbehaves | `factoryctl release use v0.1.0` pins an earlier installed release; `factoryctl release status` lists them and verifies each one's files. |
 | `release status` or `doctor` says a release was modified | Do not use it. Remove it with `chmod -R u+w` and `rm -rf`, then install the tag again. |
 
 The event store (`$FACTORY_HOME/factory.db`) is append-only. Never edit it. To keep a copy, back up the whole `$FACTORY_HOME` while no task runs.
+
+## Failure taxonomy and weekly review
+
+Every failed task carries exactly one category (P1-07):
+
+| Category | Cause |
+|---|---|
+| `gate_fail` | the gates failed, or the builder recorded a failure or made no change |
+| `review_block` | the approver rejected the change |
+| `budget_exceeded` | a session reached its budget |
+| `max_turns` | a session reached its turn limit |
+| `schema_invalid` | a stage's answer did not match its schema |
+| `permission_denied` | the builder failed or made no change while the guard denied its tool calls |
+| `api_error` | a session or `factoryctl` itself failed |
+| `merge_conflict` | the task's branch moved on the remote |
+| `wall_clock` | the task ran out of time (P1-01) |
+| `human_rejected` | you rejected it with `factoryctl reject` |
+
+Once a week, run `factoryctl report --week 2026-W42` (the ISO week, in UTC) and add the row it prints to the weekly table in STATUS. It counts the live tasks created that week by outcome: aggregates only, which is all the public repository may hold. Replayed tasks never count.
 
 ## Kill switch v0
 

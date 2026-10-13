@@ -4,10 +4,10 @@ Claude Code updates this file after every deliverable; the plan is [`ROADMAP.md`
 
 | Field | Value |
 |---|---|
-| Current phase | P0 Foundation: G0-1 to G0-4 pass; awaiting the operator's signature (#17) |
-| Next gate | G0 · target Oct 23, 2026; [evidence](gates/G0.md) in #17 |
+| Current phase | P1 Local MVP: P1-07 in review (#18) |
+| Next gate | G1 |
 | Factory release | `v0.1.2` (`95d3abc`, tagged 2026-10-13), the release G0 ran on; `v0.1.0` (#14) and `v0.1.1` (#15) were superseded after their live runs found three bugs (#15, #16) |
-| Claude Code / Agent SDK pin | 2.1.286 / 0.3.286 (stable on Oct 9, 2026; re-check at P0 start) |
+| Claude Code / Agent SDK pin | 2.1.286 / 0.3.286 (stable on Oct 9, 2026; re-checked on Oct 13, see the platform log) |
 | P0 entry criteria | GitHub App ☐ (a token scoped to the fixture repositories stood in for G0-1; see deviations) · Console workspace with spend limit ☑ · `main` created ☑ · toolchain pinned ☑ (Node 24.21.0, pnpm 12.6.0, TypeScript 6.0.3) |
 
 Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliverable is `done` only when its "done when" check in the roadmap passes and the evidence link proves it.
@@ -34,7 +34,7 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | G0-2 | At least 20 bypass variants all exit 2 | done | 58 of 58 variants exit 2 through the released guard hook | 2026-10-13 | |
 | G0-3 | Operator checkout unchanged; session `env` equals the allowlist | done | the operator checkout (12,814 files) and the release (7,487 files) byte-identical; 14 sessions, each env exactly the 17-name allowlist | 2026-10-13 | |
 | G0-4 | Factory CI green; `doctor` confirms pins | done | `ci` green on `95d3abc`; `doctor`: Node 24.21.0, Claude Code 2.1.286, Agent SDK 0.3.286 | 2026-10-13 | |
-| G0-5 | Operator signs; globs and budgets confirmed | review | awaiting the operator's approval of #17, which confirms the protected globs and tier budgets in [the evidence](gates/G0.md) | | |
+| G0-5 | Operator signs; globs and budgets confirmed | done | the operator merged #17, confirming the protected globs and tier budgets in [the evidence](gates/G0.md) | 2026-10-13 | caglarsubas |
 
 ## Phase 1 · Local MVP
 
@@ -46,7 +46,7 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | P1-04 | `run --attach` and `takeover` | core | todo | | |
 | P1-05 | Eval capture and component evals | core | todo | | |
 | P1-06 | OTel per stage and alias alarm | core | todo | | |
-| P1-07 | Failure taxonomy and weekly review | core | todo | | |
+| P1-07 | Failure taxonomy and weekly review | core | review | #18 | every failure path maps to one of the ten categories, each tested in replay (the builder's failure, no change, denied edits, budget, a session error, a runner crash, a rejected push); `factoryctl reject` records `human_rejected`; `stage_completed` records duration, runner and round; `factoryctl report` prints per-stage metrics and the weekly row; done when the first weekly row lands below |
 | P1-08 | Pilot target onboarding | core | todo | | |
 | P1-09 | Release process | core | todo | | |
 
@@ -149,6 +149,8 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | 2026-10-09 | P0-09 | `factoryctl gate G<n>` drafts and opens the evidence PR | it writes the PR body (`evidence.md`) and the STATUS rows; the operator opens the `gates/G0` PR | opening a PR on the factory repository needs a token `factoryctl` must never hold for its own repository; the operator's approval of that PR is the signature |
 | 2026-10-13 | G0 | gate run on `v0.1.0` | on `v0.1.2` | the first live runs found three bugs, each fixed with a test that reproduces the live failure: judgment stages could not call the SDK's `StructuredOutput` tool past the tool allowlist and guard (#15); the `factoryctl` shim's default `FACTORY_HOME` (#15); the build preflight built the gate image inside the session's stripped environment (#16) |
 | 2026-10-13 | G0-1 | the GitHub App for the dry runs | a fine-grained token scoped to the two fixture repositories (contents and pull requests) | the App is still an owner action; the token reached only `factoryctl`'s push and PR calls, never a session; the App replaces it before Phase 1 runs on other targets |
+| 2026-10-13 | G0-5 | the operator approves the evidence PR | the operator merged #17 | GitHub does not let a PR's author approve it; the PRs are authored under the operator's account until the factory App authors them |
+| 2026-10-13 | P1-07 | categories mapped from SDK result subtypes and guard events | also from the pipeline's own checks: a builder that records a failure or makes no change is `gate_fail`, or `permission_denied` when the guard denied its tool calls; a rejected push is `merge_conflict`; the pipeline's raw cause stays in the event as `cause` | the builder's own outcomes have no SDK subtype; `factoryctl report` maps v0.1.x events the same way |
 | 2026-10-13 | G0 | the evidence PR from a `gates/G0` branch | from this session's branch, with the evidence in [`gates/G0.md`](gates/G0.md) | the session can push only its own branch |
 
 ### Platform re-verification (ROADMAP §11)
@@ -157,3 +159,4 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 |---|---|---|---|---|---|---|
 | plan | 2026-10-09 | 2.1.286 / 0.3.286 | none beyond §11 | — | — | baseline |
 | G0 | 2026-10-13 | 2.1.286 / 0.3.286 | not re-checked | not re-checked | not re-checked | pins confirmed by `doctor`; the advisory, feature and price re-check is due before Phase 1 starts |
+| P1 start | 2026-10-13 | 2.1.286 / 0.3.286 (npm `stable` is now 2.1.287, `latest` 2.1.296 and SDK 0.3.296) | [GHSA-pq7j-f95f-qfcv](https://github.com/anthropics/claude-code/security/advisories/GHSA-pq7j-f95f-qfcv) (plugin SHA pin bypass, fixed in 2.1.179), [GHSA-5j29-h97v-84ch](https://github.com/anthropics/claude-code/security/advisories/GHSA-5j29-h97v-84ch) (fixed in 2.1.129) and [GHSA-gfvf-j8jh-jxxw](https://github.com/anthropics/claude-code/security/advisories/GHSA-gfvf-j8jh-jxxw) (fixed in 2.1.260): none affects the pin; no SDK advisory; the [2.1.292 changelog](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md) fixes a permission bypass for Windows UNC paths, without an advisory | [dynamic workflows](https://code.claude.com/docs/en/workflows.md) are now GA; the other §11 statuses are unchanged | [none](https://platform.claude.com/docs/en/about-claude/pricing); from 2.1.296 the CLI prices Sonnet 5.5 cache reads at $0.10 per million (was $0.20), so the pin's `maxBudgetUsd` estimate overcounts them | pins kept: no advisory affects them, native Windows is unsupported, sessions keep `disableWorkflows`, and an overcounting budget estimate errs safe |

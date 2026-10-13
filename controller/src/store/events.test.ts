@@ -25,6 +25,10 @@ describe("EventStore", () => {
     expect(store.nextTaskId()).toBe("T-0003");
   });
 
+  it("reads every task's events, grouped by task in seq order", () => {
+    expect(store.allEvents().map((e) => `${e.task_id}#${String(e.seq)}`)).toEqual(["T-0001#1", "T-0001#2", "T-0002#1"]);
+  });
+
   it("rejects events that do not match event.schema.json, and writes nothing", () => {
     expect(() => store.append({ task_id: "T-0001", actor, type: "state_changed", payload: {} })).toThrow(EventError);
     expect(() => store.append({ task_id: "T-0001", actor: { kind: "agent", id: "builder" }, type: "state_changed", from: "TRIAGED", to: "DONE", payload: {} })).toThrow(EventError);

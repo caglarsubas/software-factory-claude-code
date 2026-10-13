@@ -103,6 +103,12 @@ export class EventStore {
     return rows.map((r) => JSON.parse(r.body) as FactoryEvent);
   }
 
+  /** Every task's events, grouped by task in seq order (reports read the whole store). */
+  allEvents(): FactoryEvent[] {
+    const rows = this.#db.prepare("SELECT body FROM events ORDER BY task_id, seq").all() as { body: string }[];
+    return rows.map((r) => JSON.parse(r.body) as FactoryEvent);
+  }
+
   taskIds(): string[] {
     const rows = this.#db.prepare("SELECT DISTINCT task_id FROM events ORDER BY task_id").all() as { task_id: string }[];
     return rows.map((r) => r.task_id);

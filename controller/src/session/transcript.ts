@@ -20,12 +20,12 @@ export function assistant(model: string, content: Record<string, unknown>[]): SD
 export const text = (t: string): Record<string, unknown> => ({ type: "text", text: t });
 export const toolUse = (name: string, input: Record<string, unknown>): Record<string, unknown> => ({ type: "tool_use", id: `toolu_${uuid()}`, name, input });
 
-export function result(model: string, opts: { structured?: unknown; text?: string; costUsd?: number; subtype?: "success" | "error_max_turns" } = {}): SDKMessage {
+export function result(model: string, opts: { structured?: unknown; text?: string; costUsd?: number; durationMs?: number; subtype?: "success" | "error_max_turns" | "error_max_budget_usd" | "error_during_execution" } = {}): SDKMessage {
   const subtype = opts.subtype ?? "success";
   const base = {
     type: "result",
     subtype,
-    duration_ms: 1000,
+    duration_ms: opts.durationMs ?? 1000,
     duration_api_ms: 900,
     is_error: subtype !== "success",
     num_turns: 3,
@@ -37,7 +37,7 @@ export function result(model: string, opts: { structured?: unknown; text?: strin
     uuid: uuid(),
     session_id: "replay-session",
   };
-  return (subtype === "success" ? { ...base, result: opts.text ?? "done", structured_output: opts.structured } : { ...base, errors: ["max turns reached"] }) as unknown as SDKMessage;
+  return (subtype === "success" ? { ...base, result: opts.text ?? "done", structured_output: opts.structured } : { ...base, errors: [subtype === "error_max_turns" ? "max turns reached" : subtype] }) as unknown as SDKMessage;
 }
 
 /** A judgment stage that answers the way a live session does: through the SDK's StructuredOutput tool. */

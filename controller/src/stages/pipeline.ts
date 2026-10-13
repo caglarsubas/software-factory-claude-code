@@ -9,7 +9,7 @@ import { parse, stringify } from "yaml";
 import type { GatesResult, RunOptions as GateRunOptions } from "../../../gates/src/run.ts";
 import { cacheVolumeFor } from "../../../gates/src/run.ts";
 import { writeManifest } from "../bundle/manifest.ts";
-import { changedFiles, commitAll, createTaskClone, diffPatch, head, pushFromMirror, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
+import { changedFiles, commitAll, createTaskClone, diffPatch, GitError, head, pushFromMirror, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
 import type { GitHub } from "../github/client.ts";
 import { describeHalt, readHalt } from "../halt.ts";
 import { runDir, worktreeDir, type Home } from "../home.ts";
@@ -22,6 +22,7 @@ import type { SessionRunner, StageOutcome } from "../session/runner.ts";
 import type { EventStore, State } from "../store/events.ts";
 import { currentState, currentStatePayload, isTerminal, transition } from "../task/lifecycle.ts";
 import { loadProfile, readTask, type Profile, type Task } from "../task/task.ts";
+import { buildCategory, sdkCategory, type Category } from "../task/taxonomy.ts";
 import { OUTPUTS } from "./outputs.ts";
 import { approvePrompt, buildPrompt, reviewPrompt, specPrompt, summarizePrompt, triagePrompt, type TaskText } from "./prompts.ts";
 
@@ -82,13 +83,8 @@ const FORWARD: readonly State[] = ["RECEIVED", "TRIAGED", "SPECIFIED", "NEEDS_HU
 const DIFF_LIMIT = 400_000;
 const CLAUDE_MD_LIMIT = 20_000;
 const PREFLIGHT_MS = 1_500_000;
-const SDK_FAILURES: Record<string, string> = {
-  error_max_turns: "max_turns",
-  error_max_budget_usd: "budget_exceeded",
-  error_max_structured_output_retries: "schema_invalid",
-  error_during_execution: "api_error",
-  no_result: "api_error",
-};
+/** Phase 1 runs one round; remediation rounds arrive with P1-01. */
+const ROUND = 1;
 
 export async function runTask(inputs: PipelineInputs): Promise<State> {
   const { home, store, validator, release, deps, taskId } = inputs;
@@ -122,9 +118,11 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     if (now === to || (!isTerminal(now) && rank(now, currentStatePayload(events)["gate"]) >= rank(to, payload["gate"]) && rank(to, payload["gate"]) >= 0)) return;
     transition(store, taskId, to, payload);
   };
-  const fail = (stage: string, category: string, reason: string): never => {
-    emit("stage_failed", { stage, category, reason });
-    if (!isTerminal(state())) transition(store, taskId, "FAILED", { stage, category, reason });
+  // `cause` keeps what the pipeline saw when it differs from the category (P1-07).
+  const fail = (stage: string, category: Category, reason: string, cause?: string): never => {
+    const detail = { stage, category, reason, ...(cause === undefined ? {} : { cause }) };
+    emit("stage_failed", detail);
+    if (!isTerminal(state())) transition(store, taskId, "FAILED", detail);
     deps.log(`${taskId}: ${stage} failed (${category}): ${reason}`);
     throw new Stop();
   };
@@ -167,15 +165,20 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       input_tokens: outcome.inputTokens,
       output_tokens: outcome.outputTokens,
       num_turns: outcome.numTurns,
+      duration_ms: outcome.durationMs,
+      runner: deps.runner.kind,
+      round: ROUND,
       denied: outcome.denied,
     });
     checkStop();
-    if (!outcome.ok) fail(spec.stage, SDK_FAILURES[outcome.subtype] ?? "api_error", `${spec.label} ended with ${outcome.subtype}${outcome.errors.length > 0 ? `: ${outcome.errors.join("; ")}` : ""}`);
+    if (!outcome.ok) fail(spec.stage, sdkCategory(outcome.subtype), `${spec.label} ended with ${outcome.subtype}${outcome.errors.length > 0 ? `: ${outcome.errors.join("; ")}` : ""}`, outcome.subtype);
     if (spec.outputSchema !== undefined && (typeof outcome.structured !== "object" || outcome.structured === null)) {
       fail(spec.stage, "schema_invalid", `${spec.label} returned no structured output`);
     }
     return outcome;
   }
+
+  const denials = (o: StageOutcome): string => (o.denied.length === 0 ? "" : `; ${String(o.denied.length)} tool call(s) denied`);
 
   const readOnlyGuard = (root: string, taskDir: string, readable: string[] = []): StageSpec["guard"] => ({
     worktree: root,
@@ -272,7 +275,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     ];
     const engine = Object.entries(deps.engineEnv?.() ?? {}).map(([k, v]) => `${k}=${v}`);
     const preflight = { argv: engine.length === 0 ? gateRun : ["/usr/bin/env", ...engine, ...gateRun], timeout_ms: PREFLIGHT_MS };
-    await session({
+    const outcome = await session({
       stage: "build", agent: "builder", label: "build", cwd: worktree,
       prompt: buildPrompt({ specYaml: readFileSync(join(dir, "spec.yaml"), "utf8"), taskDir: work, findings: null }),
       extraDirs: [work],
@@ -281,17 +284,18 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     });
     if (existsSync(join(work, "build-failure.json"))) {
       const reason = (JSON.parse(readFileSync(join(work, "build-failure.json"), "utf8")) as { reason?: string }).reason ?? "no reason given";
-      fail("build", "build_failed", `the builder recorded a failure: ${reason}`);
+      fail("build", buildCategory(outcome.denied.length), `the builder recorded a failure: ${reason}${denials(outcome)}`, "build_failed");
     }
     commitAll(worktree, `factory: ${taskId} changes the builder left uncommitted`);
     const candidate = head(worktree);
-    if (candidate === c.base_commit) fail("build", "no_change", "the builder made no change");
+    if (candidate === c.base_commit) fail("build", buildCategory(outcome.denied.length), `the builder made no change${denials(outcome)}`, "no_change");
     writeArtifact("build.json", { base_commit: c.base_commit, candidate_commit: candidate }, null);
   };
 
   const gates = async (c: Checkout): Promise<void> => {
     moveTo("VERIFYING");
     emit("stage_started", { stage: "gates", label: "gates" });
+    const started = Date.now();
     const result = await deps.runGates({
       worktree, base: c.base_commit, taskId, profile, image: deps.gateImage(), cacheVolume: cacheVolumeFor(task.target.repo), osvVolume: "sf-gates-osv",
       ...(deps.gatesFetchNetwork === undefined ? {} : { fetchNetwork: deps.gatesFetchNetwork }),
@@ -301,7 +305,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       },
     });
     writeArtifact("gates.json", result, "gates.schema.json");
-    emit("stage_completed", { stage: "gates", label: "gates", ok: result.passed, failing: result.gates.filter((g) => g.status !== "pass").map((g) => g.name) });
+    emit("stage_completed", { stage: "gates", label: "gates", ok: result.passed, failing: result.gates.filter((g) => g.status !== "pass").map((g) => g.name), duration_ms: Date.now() - started, round: ROUND });
   };
 
   const gatesExit = (): void => {
@@ -383,7 +387,16 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   const publish = async (c: Checkout, candidate: string): Promise<void> => {
     const decision = readJson("policy.json") as Decision;
     emit("side_effect_intent", { kind: "push", branch: c.branch, commit: candidate });
-    const pushed = pushFromMirror(c.mirror, worktree, c.branch, c.remote, deps.auth);
+    const push = (): string => {
+      try {
+        return pushFromMirror(c.mirror, worktree, c.branch, c.remote, deps.auth);
+      } catch (e) {
+        // The branch moved on the remote: someone else's commits, never overwritten.
+        if (e instanceof GitError && /\[rejected\]|non-fast-forward|fetch first/.test(e.message)) fail("publish", "merge_conflict", `the remote's ${c.branch} has commits the candidate lacks`, "push_rejected");
+        throw e;
+      }
+    };
+    const pushed = push();
     if (pushed !== candidate) fail("publish", "merge_conflict", `the mirror holds ${pushed} for ${c.branch}, not ${candidate}`);
     emit("side_effect_done", { kind: "push", branch: c.branch, commit: pushed });
     let pr: { number: number; url: string } | null = null;
