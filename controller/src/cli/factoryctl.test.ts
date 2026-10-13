@@ -209,5 +209,13 @@ describe("factoryctl", { timeout: 30_000 }, () => {
     expect(r.stdout).toMatch(/^ok {4}agent sdk pin: installed 0\.3\.286, pinned 0\.3\.286$/m);
     expect(r.stdout).toMatch(/^ok {4}claude code pin:/m);
     expect(r.stdout).toMatch(/^fail {2}api key file:/m);
+    expect(r.stdout).toMatch(/^ok {4}telemetry: off;/m);
+    expect(r.stdout).toMatch(/^ok {4}model alarms: no alias alarm in 30 days$/m);
+    expect(factoryctl(["doctor"], { FACTORY_OTEL_ENDPOINT: "http://127.0.0.1:4318" }).stdout).toMatch(/^ok {4}telemetry: OTLP http\/protobuf to http:\/\/127\.0\.0\.1:4318$/m);
+    expect(factoryctl(["doctor"], { FACTORY_OTEL_ENDPOINT: "https://otel.example.com" }).stdout).toMatch(/^fail {2}telemetry: FACTORY_OTEL_ENDPOINT must be a collector on this machine's loopback address/m);
+    // A run refuses a telemetry endpoint off this machine before it starts.
+    const remote = factoryctl(["run", "T-0001"], { FACTORY_OTEL_ENDPOINT: "https://otel.example.com" });
+    expect(remote.status).toBe(2);
+    expect(remote.stderr).toContain("FACTORY_OTEL_ENDPOINT must be a collector");
   });
 });

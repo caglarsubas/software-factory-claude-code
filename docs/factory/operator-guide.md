@@ -189,6 +189,26 @@ A gate that errored, rather than failed, is an infrastructure problem: the task 
   - a pull request may not change an agent or rubric together with the evals that judge it.
 - **Capture:** `factoryctl eval capture T-0001` writes a run's judgment stages as candidate cases under `$FACTORY_HOME/evals/captured/`, each with the answer the run observed. Decide whether that answer was right, set `expect:`, and move a `target:fixture` or `target:self` case into `plugin/evals/`. A `target:private` case holds a private target's code: it never enters this repository.
 
+## Telemetry and the alias alarm
+
+`factoryctl report T-0001` shows each stage's cost, tokens and minutes from the event store, telemetry or not. A session killed before it reported shows as `✗ killed`, charged its cap.
+
+To also export Claude Code's OpenTelemetry metrics and events, run a collector on this machine and point the factory at it:
+
+```bash
+export FACTORY_OTEL_ENDPOINT=http://127.0.0.1:4318   # loopback only; the collector forwards with its own credentials
+export FACTORY_OTEL_PROTOCOL=http/protobuf           # or grpc, http/json
+```
+
+Every session then exports metrics and events. Resource attributes name its task, stage, label, round, tier, agent and release (`factory.task_id`, `factory.stage`, …). Prompt and response text stay redacted. A remote endpoint or one with credentials in it is refused: a session must never hold a credential or send data off the host. `doctor` shows the setting.
+
+**The alias alarm** needs no telemetry. Every session reports the model IDs it ran on. An `alarm` event is recorded, and printed as `ALARM`, when either is true:
+
+- the ID is not one that `config/factory.yaml` pins;
+- an alias now resolves to an ID its earlier live sessions never ran on.
+
+The task continues. `report T-0001` lists its alarms, and `doctor` warns for 30 days. Check whether the change was yours (a new pin) before you trust the run's reviews.
+
 ## Failure taxonomy and weekly review
 
 Every failed task carries exactly one category (P1-07):

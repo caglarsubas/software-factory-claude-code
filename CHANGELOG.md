@@ -18,6 +18,12 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 - **Reaping (P1-02).** Sessions run in their own process groups and are registered while they live; a run that starts after one died stops the processes and gate containers it left behind.
 - **The merge gate follows the PR.** `resume` ends a task `DONE` once its PR is merged, and `human_rejected` once it is closed unmerged.
 - **Kill-point suite (G1-1).** The CLI is killed at 26 points, in every stage, around both side effects and inside a remediation round; each resumes without a re-run or a duplicate.
+- **Telemetry per stage (P1-06).**
+  - With `FACTORY_OTEL_ENDPOINT` set to a local collector, every session exports Claude Code's OpenTelemetry metrics and events.
+  - Resource attributes name its task, stage, label, round, tier, agent and release.
+  - `doctor` shows the setting.
+- **Alias alarm (P1-06).** A session that runs on a model ID no pin names, or whose alias resolves to a new ID, records an `alarm`. `report` lists alarms, and `doctor` warns about them.
+- `report T-…` lists a session killed before it reported, charged its cap, so every run's cost adds up to what the budget counted.
 - `FACTORY_GITHUB_API_URL` points `factoryctl` at GitHub Enterprise: https only, or http on loopback.
 
 ### Changed

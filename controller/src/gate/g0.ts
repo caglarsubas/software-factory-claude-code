@@ -20,7 +20,7 @@ import { runDir, type Home } from "../home.ts";
 import type { Release } from "../release.ts";
 import { verifyRelease } from "../release/install.ts";
 import type { Validator } from "../schemas/validate.ts";
-import { ENV_ALLOWLIST } from "../session/env.ts";
+import { allowedEnvKeys, ENV_ALLOWLIST } from "../session/env.ts";
 import { latestRound, roundPath } from "../stages/rounds.ts";
 import type { EventStore, FactoryEvent } from "../store/events.ts";
 import { currentState, currentStatePayload } from "../task/lifecycle.ts";
@@ -208,12 +208,11 @@ function g03(i: G0Inputs, begin: Begin | null, tasks: string[]): Criterion {
     if (v.ok) evidence.push(`release ${v.info.tag} unchanged since install (${v.detail})`);
     else failures.push(`the installed release was modified: ${v.detail}`);
   }
-  const allowlist = JSON.stringify([...ENV_ALLOWLIST].sort());
   const sessions = tasks.flatMap((id) => sessionsOf(i.store.events(id)));
-  const leaky = sessions.filter((e) => JSON.stringify(e.payload["env_keys"]) !== allowlist);
+  const leaky = sessions.filter((e) => !allowedEnvKeys(e.payload["env_keys"]));
   if (sessions.length === 0) failures.push("no sessions recorded in the evidence window");
   else if (leaky.length > 0) failures.push(`${String(leaky.length)} of ${String(sessions.length)} sessions had an env other than the allowlist`);
-  else evidence.push(`${String(sessions.length)} sessions, each env exactly the ${String(ENV_ALLOWLIST.length)}-name allowlist`);
+  else evidence.push(`${String(sessions.length)} sessions, each env exactly the ${String(ENV_ALLOWLIST.length)}-name allowlist (plus the telemetry names when telemetry is on)`);
   return {
     id: "G0-3",
     criterion: "Operator checkout unchanged; session env equals the allowlist",

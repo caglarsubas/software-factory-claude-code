@@ -8,6 +8,10 @@ import { describeHalt, readHalt } from "./halt.ts";
 import type { Home } from "./home.ts";
 import type { Release } from "./release.ts";
 import { checkReleaseFiles } from "./release/install.ts";
+import { EventStore } from "./store/events.ts";
+import { describeAlarm, telemetryConfig, TelemetryError, type ModelAlarm } from "./telemetry.ts";
+
+const ALARM_DAYS = 30;
 
 export interface Check {
   name: string;
@@ -63,5 +67,20 @@ export function doctor(home: Home, release: Release, keyFile: string, env: NodeJ
   }
   const halt = readHalt(home);
   add("kill switch", halt === null, halt === null ? "not engaged" : `${describeHalt(halt)}; lift with factoryctl unhalt --reason "…"`, "warn");
+  try {
+    const t = telemetryConfig(env);
+    add("telemetry", true, t === null ? "off; set FACTORY_OTEL_ENDPOINT to a local OTLP collector to export per-stage metrics" : `OTLP ${t.protocol} to ${t.endpoint}`);
+  } catch (e) {
+    add("telemetry", false, e instanceof TelemetryError ? e.message : String(e));
+  }
+  if (existsSync(home.db)) {
+    // The alias alarm (P1-06): a model ID that drifted from its pin shows here until it is a month old.
+    const since = new Date(Date.now() - ALARM_DAYS * 86_400_000).toISOString();
+    const store = EventStore.open(home.db);
+    const alarms = store.allEvents().filter((e) => e.type === "alarm" && e.ts >= since);
+    store.close();
+    const latest = alarms.reduce<(typeof alarms)[number] | undefined>((a, e) => (a === undefined || e.ts > a.ts ? e : a), undefined);
+    add("model alarms", latest === undefined, latest === undefined ? `no alias alarm in ${String(ALARM_DAYS)} days` : `${String(alarms.length)} alias alarm(s) in ${String(ALARM_DAYS)} days; latest ${latest.task_id} ${String(latest.payload["label"])}: ${describeAlarm(latest.payload as unknown as ModelAlarm)}`, "warn");
+  }
   return checks;
 }

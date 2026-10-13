@@ -18,7 +18,9 @@ import { ensureHome, factoryHome, runDir, worktreeDir, type Home } from "../home
 import { REPO_ROOT } from "../policy/load.ts";
 import { loadRelease } from "../release.ts";
 import { createValidator } from "../schemas/validate.ts";
-import { ENV_ALLOWLIST } from "../session/env.ts";
+import { allowedEnvKeys, ENV_ALLOWLIST } from "../session/env.ts";
+import { OTEL_ENV } from "../telemetry.ts";
+import { taskReport } from "../report/report.ts";
 import { replayRunner, type Transcripts } from "../session/replay.ts";
 import type { SessionRunner } from "../session/runner.ts";
 import { answer, assistant, result, text, toolUse } from "../session/transcript.ts";
@@ -584,6 +586,45 @@ describe("the refuter pass (P1-03)", () => {
     await run(id, deps(runner));
     expect(runner.requests.some((r) => r.label.startsWith("refute"))).toBe(false);
     expect(existsSync(join(runDir(world.home, id), "refutations.json"))).toBe(false);
+  });
+});
+
+describe("telemetry and the alias alarm (P1-06)", () => {
+  it("exports every session's telemetry to the local collector, tagged with its task, stage, tier and agent", async () => {
+    const id = newTask();
+    const runner = replayRunner(transcripts(id));
+    await run(id, deps(runner, { telemetry: { endpoint: "http://127.0.0.1:4318", protocol: "http/protobuf" } }));
+    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "spec", "build", "review-code", "review-security", "approve", "summarize"]);
+    for (const req of runner.requests) {
+      const env = req.options.env ?? {};
+      expect(Object.keys(env).sort(), req.label).toEqual([...ENV_ALLOWLIST, ...OTEL_ENV].sort());
+      expect(env["OTEL_EXPORTER_OTLP_ENDPOINT"]).toBe("http://127.0.0.1:4318");
+      const attrs = Object.fromEntries((env["OTEL_RESOURCE_ATTRIBUTES"] ?? "").split(",").map((kv) => kv.split("=") as [string, string]));
+      expect(attrs, req.label).toMatchObject({ "factory.task_id": id, "factory.label": req.label, "factory.agent_id": req.options.agent, "factory.round": "1", "factory.release": "dev" });
+      expect(["R0", "R1", "R2", "R3", "Restricted"]).toContain(attrs["factory.tier"]);
+    }
+    // Each session's env names stay evidence that G0-3 and G1-3 accept; stage_started also names the agent.
+    const started = world.store.events(id).filter((e) => e.type === "stage_started" && e.payload["runner"] !== undefined);
+    for (const e of started) expect(allowedEnvKeys(e.payload["env_keys"])).toBe(true);
+    expect(started.map((e) => e.payload["agent"])).toEqual(["triager", "spec-writer", "builder", "code-reviewer", "security-reviewer", "approver", "summarizer"]);
+  });
+
+  it("raises an alarm, without stopping the task, when a session runs on an unpinned model or its alias moves to a new ID", async () => {
+    // An earlier live review ran its alias on another ID than the pin resolves to now.
+    world.store.append({ task_id: "T-0900", actor: { kind: "factoryctl", id: "factoryctl" }, type: "stage_completed", payload: { stage: "review", label: "review-code", runner: "sdk", alias: "sonnet", models: ["claude-sonnet-5-4"], cost_usd: 0.1 } });
+    const id = newTask();
+    const logs: string[] = [];
+    const runner = replayRunner(transcripts(id, { "review-security": answer("claude-opus-5-6", { findings: [], summary: "No security-relevant change." }) }));
+    expect(await run(id, deps(runner, { log: (l) => logs.push(l) }))).toBe("NEEDS_HUMAN");
+    const alarms = world.store.events(id).filter((e) => e.type === "alarm").map((e) => e.payload);
+    expect(alarms).toEqual([
+      expect.objectContaining({ kind: "alias_new_id", label: "build", alias: "sonnet", resolved: pins["sonnet"], seen: ["claude-sonnet-5-4"] }),
+      expect.objectContaining({ kind: "alias_new_id", label: "review-code", alias: "sonnet", resolved: pins["sonnet"] }),
+      expect.objectContaining({ kind: "unpinned_model", label: "review-security", alias: "opus", pinned: pins["opus"], resolved: "claude-opus-5-6" }),
+    ]);
+    expect(logs.filter((l) => l.includes("ALARM"))).toHaveLength(3);
+    const report = taskReport(world.store.events(id));
+    expect(report.alarms.map((a) => a.label)).toEqual(["build", "review-code", "review-security"]);
   });
 });
 

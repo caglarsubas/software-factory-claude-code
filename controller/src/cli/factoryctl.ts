@@ -41,6 +41,7 @@ import { loadRelease } from "../release.ts";
 import { checkReleaseFiles, findRelease, installRelease, listReleases, pinnedSha, pinRelease, writeShim } from "../release/install.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { isLocalRemote, killAt, readInjection, replayedGates } from "../session/injection.ts";
+import { describeAlarm, telemetryConfig, TelemetryError, type ModelAlarm } from "../telemetry.ts";
 import { replayRunner } from "../session/replay.ts";
 import { sdkRunner } from "../session/runner.ts";
 import { calibrate, completedRuns, monthOf, monthSpend, TIERS } from "../budget/budget.ts";
@@ -112,9 +113,11 @@ function printTaskReport(r: TaskReport): void {
     out(cells.map((c, i) => (i < 2 ? c.padEnd(i === 0 ? 16 : 7) : c.padStart(i === 2 ? 5 : 10))).join(" "));
   };
   row(["stage", "runner", "round", "turns", "in tokens", "out tokens", "minutes", "cost $"]);
-  for (const s of r.stages) row([`${s.label}${s.ok ? "" : " ✗"}`, s.runner, String(s.round), n(s.numTurns), n(s.inputTokens), n(s.outputTokens), min(s.durationMs), s.costUsd.toFixed(2)]);
+  for (const s of r.stages) row([`${s.label}${s.unreported ? " ✗ killed" : s.ok ? "" : " ✗"}`, s.runner, String(s.round), n(s.numTurns), n(s.inputTokens), n(s.outputTokens), min(s.durationMs), s.costUsd.toFixed(2)]);
   row(["total", "", "", "", n(r.totals.inputTokens), n(r.totals.outputTokens), min(r.totals.durationMs), r.totals.costUsd.toFixed(2)]);
   if (r.findings !== null) out(`findings: ${Object.entries(r.findings).map(([k, v]) => `${k} ${String(v)}`).join(", ")}`);
+  if (r.stages.some((s) => s.unreported)) out("✗ killed: the session never reported; it is charged its cap");
+  for (const a of r.alarms) out(`ALARM ${a.label}: ${describeAlarm(a.payload as unknown as ModelAlarm)}`);
 }
 
 function apiUrl(): string {
@@ -132,6 +135,12 @@ async function drive(home: Home, store: EventStore, taskId: string, replay: stri
   const release = loadRelease(validator);
   const token = process.env["FACTORY_GITHUB_TOKEN"];
   const api = apiUrl();
+  let telemetry;
+  try {
+    telemetry = telemetryConfig();
+  } catch (e) {
+    fail(e instanceof TelemetryError ? e.message : String(e));
+  }
   const injection = replay === undefined ? {} : readInjection(replay);
   if (injection.gates !== undefined) {
     const created = store.events(taskId).find((e) => e.type === "task_created");
@@ -179,6 +188,7 @@ async function drive(home: Home, store: EventStore, taskId: string, replay: stri
         ...(process.env["FACTORY_GATES_FETCH_NETWORK"] === undefined ? {} : { gatesFetchNetwork: process.env["FACTORY_GATES_FETCH_NETWORK"] }),
         ...(process.env["FACTORY_GATES_CA_FILE"] === undefined ? {} : { gatesCaFile: process.env["FACTORY_GATES_CA_FILE"] }),
         log,
+        telemetry,
         ...(probe === undefined ? {} : { probe }),
       },
     });

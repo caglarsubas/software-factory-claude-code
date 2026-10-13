@@ -33,6 +33,7 @@ import type { EventStore, FactoryEvent, State } from "../store/events.ts";
 import { canMove, currentState, currentStatePayload, isTerminal, transition } from "../task/lifecycle.ts";
 import { loadProfile, readTask, type Profile, type Task } from "../task/task.ts";
 import { buildCategory, sdkCategory, type Category } from "../task/taxonomy.ts";
+import { describeAlarm, modelAlarms, type Telemetry } from "../telemetry.ts";
 import { commitArtifacts, freshness, inputsOf, isCommitted, recover, specDigest, type Output } from "./commit.ts";
 import { findingFingerprint, gateFingerprint } from "./fingerprint.ts";
 import { OUTPUTS } from "./outputs.ts";
@@ -56,6 +57,8 @@ export interface Deps {
   log: (line: string) => void;
   /** The clock for the wall-clock limit (tests); defaults to the system clock. */
   now?: () => Date;
+  /** OTel export for every session (P1-06); absent or null when the operator has not turned it on. */
+  telemetry?: Telemetry | null;
   /** Test-only kill points (`--replay` with `kill_at`): called at named instants of a run; absent in a real run. */
   probe?: (point: string) => void;
 }
@@ -287,14 +290,17 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     const tier = tierNow();
     const cap = Math.round(sessionCap(tierBudgets[tier].budget, taskSpend(store.events(taskId)), release.budgets.stage_fraction[spec.stage]) * 1e4) / 1e4;
     if (cap <= 0) fail(spec.stage, "budget_exceeded", `no budget left for ${spec.label}`);
-    const prepared = prepareSession({ home, taskId, release, validator, keyFile: deps.keyFile, abort }, { ...spec, budgetUsd: cap });
+    const telemetry = deps.telemetry === undefined || deps.telemetry === null ? {} : { telemetry: { config: deps.telemetry, tier, round } };
+    const prepared = prepareSession({ home, taskId, release, validator, keyFile: deps.keyFile, abort, ...telemetry }, { ...spec, budgetUsd: cap });
     // The runner kind and the env's names (never values) are the evidence for G0-1 and G0-3; the cap is charged if the session never reports (D4).
-    emit("stage_started", { stage: spec.stage, label: spec.label, runner: deps.runner.kind, env_keys: Object.keys(prepared.env).sort(), cap_usd: cap, tier, round });
+    emit("stage_started", { stage: spec.stage, label: spec.label, agent: spec.agent, runner: deps.runner.kind, env_keys: Object.keys(prepared.env).sort(), cap_usd: cap, tier, round });
     deps.log(`${taskId}: ${spec.label} (cap ${usd(cap)})`);
     const transcript = join(dir, "transcripts", `${spec.label}.ndjson`);
     rmSync(transcript, { force: true });
     const outcome = await deps.runner.run({ label: spec.label, prompt: spec.prompt, options: prepared.options, transcript, denials: prepared.denials });
     const routing = release.config.routing[spec.agent];
+    // The alias alarm (P1-06): against the pins, and against what earlier live sessions of the alias ran on.
+    const alarms = modelAlarms(routing?.model ?? "", outcome.models, release.config.model_pins, store.allEvents());
     emit("stage_completed", {
       stage: spec.stage,
       label: spec.label,
@@ -311,6 +317,10 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       round,
       denied: outcome.denied,
     });
+    for (const a of alarms) {
+      store.append({ task_id: taskId, actor: { kind: "factoryctl", id: "factoryctl" }, type: "alarm", payload: { label: spec.label, ...a } });
+      deps.log(`${taskId}: ALARM ${spec.label}: ${describeAlarm(a)}`);
+    }
     checkStop();
     if (clock.expired) fail(spec.stage, "wall_clock", `the ${String(release.budgets.wall_clock_minutes)}-minute wall clock ran out during ${spec.label}`);
     if (!outcome.ok) fail(spec.stage, sdkCategory(outcome.subtype), `${spec.label} ended with ${outcome.subtype}${outcome.errors.length > 0 ? `: ${outcome.errors.join("; ")}` : ""}`, outcome.subtype);

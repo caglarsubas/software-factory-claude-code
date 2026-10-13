@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
+import { taskSpend } from "../budget/budget.ts";
 import { REPO_ROOT } from "../policy/load.ts";
 import { EventStore, type State } from "../store/events.ts";
 import { CATEGORIES, sdkCategory, type Category } from "../task/taxonomy.ts";
@@ -47,6 +48,25 @@ function seed(store: EventStore, at: (iso: string) => void, s: Seed): void {
     from = to;
   }
 }
+
+describe("per-stage cost for every run (P1-06)", () => {
+  it("lists a session killed before it reported, charged its cap as the budget charges it", () => {
+    const { store, at } = seededStore();
+    seed(store, at, { id: "T-0001", created: "2026-10-12T09:00:00Z", runner: "sdk", path: [], costs: [0.05] });
+    // The spec session started, the run was killed, and the next run's spec session completed.
+    store.append({ task_id: "T-0001", actor: op, type: "stage_started", payload: { stage: "spec", label: "spec", runner: "sdk", env_keys: [], cap_usd: 1.8, round: 1 } });
+    store.append({ task_id: "T-0001", actor: op, type: "command", payload: { command: "run_ended", reason: "killed", reconstructed: true } });
+    store.append({ task_id: "T-0001", actor: op, type: "stage_started", payload: { stage: "spec", label: "spec", runner: "sdk", env_keys: [], cap_usd: 1.75, round: 1 } });
+    store.append({ task_id: "T-0001", actor: op, type: "stage_completed", payload: { stage: "spec", label: "spec", ok: true, cost_usd: 0.3, round: 1, runner: "sdk" } });
+    // A build in flight, or killed with nothing after it.
+    store.append({ task_id: "T-0001", actor: op, type: "stage_started", payload: { stage: "build", label: "build", runner: "sdk", env_keys: [], cap_usd: 6, round: 1 } });
+    const r = taskReport(store.events("T-0001"));
+    expect(r.stages.map((s) => [s.label, s.unreported, s.costUsd])).toEqual([["triage", false, 0.05], ["spec", true, 1.8], ["spec", false, 0.3], ["build", true, 6]]);
+    expect(r.totals.costUsd).toBeCloseTo(8.15);
+    expect(r.totals.costUsd).toBeCloseTo(taskSpend(store.events("T-0001")));
+    store.close();
+  });
+});
 
 describe("ISO weeks", () => {
   it("names the week of a time, across year boundaries", () => {
