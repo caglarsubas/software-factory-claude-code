@@ -22,6 +22,7 @@ pnpm test                        #   Vitest
 pnpm test:gates                  # container suites: gate runner and factoryctl end to end (needs Docker; CI's gates job)
 pnpm factoryctl doctor           # factoryctl v0 (controller/README.md)
 pnpm check:docs                  #   ROADMAP/STATUS ID parity, links, model-ID placement
+pnpm check:evals                 #   the eval suite's rules (plugin/evals, plugin/evals-holdout)
 ```
 
 CI (`.github/workflows/factory-ci.yml`) also runs actionlint, zizmor and a trufflehog secret scan; the `ci` job is the single required check.

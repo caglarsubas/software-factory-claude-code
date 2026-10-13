@@ -15,8 +15,9 @@
     "test": "vitest run",
     "test:gates": "vitest run --config vitest.gates.config.ts",
     "check:docs": "node scripts/check-docs.ts",
+    "check:evals": "node scripts/check-evals.ts",
     "factoryctl": "node --disable-warning=ExperimentalWarning controller/src/cli/factoryctl.ts",
-    "check": "pnpm lint && pnpm lint:md && pnpm typecheck && pnpm test && pnpm check:docs"
+    "check": "pnpm lint && pnpm lint:md && pnpm typecheck && pnpm test && pnpm check:docs && pnpm check:evals"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

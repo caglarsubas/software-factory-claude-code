@@ -12,6 +12,7 @@ pnpm factoryctl cancel T-0001
 pnpm factoryctl reject T-0001 --reason "…"   # the operator will not take the result: human_rejected
 pnpm factoryctl report [T-0001 | --week 2026-W42]
 pnpm factoryctl budgets             # tier budgets as calibrated, month spend per target (G1-5)
+pnpm factoryctl eval capture T-0001 # a run's judgment stages as candidate eval cases ($FACTORY_HOME/evals/captured/)
 pnpm factoryctl halt [--reason "…"] # kill switch v0; lift with: unhalt --reason "…"
 pnpm factoryctl release install v0.1.0 | use TAG | status
 pnpm factoryctl gate G0 --begin     # then the fixture dry runs, then: gate G0

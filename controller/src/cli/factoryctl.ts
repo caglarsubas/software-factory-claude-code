@@ -11,6 +11,7 @@
 //   factoryctl reject T-0001 --reason TEXT   end a task the operator will not merge (human_rejected)
 //   factoryctl report [T-0001 | --week YYYY-Www]  per-stage metrics, or the weekly taxonomy row
 //   factoryctl budgets                       tier budgets as calibrated, and each target's month spend
+//   factoryctl eval capture T-0001           a run's judgment stages as candidate eval cases
 //   factoryctl halt [--reason TEXT]          kill switch v0: stop every session and run now
 //   factoryctl unhalt --reason TEXT
 //   factoryctl release install TAG [--source DIR] | use TAG|SHA | status
@@ -39,6 +40,7 @@ import { createValidator } from "../schemas/validate.ts";
 import { replayRunner } from "../session/replay.ts";
 import { sdkRunner } from "../session/runner.ts";
 import { calibrate, completedRuns, monthOf, monthSpend, TIERS } from "../budget/budget.ts";
+import { captureTask } from "../evals/capture.ts";
 import { writeAtomic } from "../fsutil.ts";
 import { isoWeek, taskReport, WEEK_HEADER, weekRow, weekRowMarkdown, type TaskReport } from "../report/report.ts";
 import { specDigest } from "../stages/commit.ts";
@@ -361,6 +363,17 @@ async function main(): Promise<void> {
         out(weekRowMarkdown(row));
         return;
       }
+      case "eval": {
+        if (positionals[1] !== "capture") fail("usage: factoryctl eval capture T-0001");
+        const id = taskArg(positionals, 2, store);
+        const release = loadRelease(createValidator());
+        const captured = captureTask(home, id, release.info?.repository ?? "caglarsubas/software-factory-claude-code");
+        if (captured.length === 0) fail(`${id} has no judgment stage to capture yet`);
+        for (const c of captured) out(`captured ${c.label} (${c.role}) at ${c.dir}`);
+        if (captured.some((c) => c.target === "private")) out("target:private: these cases hold a private target's code and must never be committed to the factory repository");
+        out("each case's expect tag is TODO: decide whether the observed answer was right, then move a fixture or self case into plugin/evals");
+        return;
+      }
       case "budgets": {
         // G1-5: the tier budgets the P1-01 rule sets, recorded with their evidence.
         const validator = createValidator();
@@ -426,7 +439,7 @@ async function main(): Promise<void> {
         return;
       }
       default:
-        fail("usage: factoryctl task create | run | resume | status | cancel | approve | reject | report | budgets | halt | unhalt | release | gate | doctor");
+        fail("usage: factoryctl task create | run | resume | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor");
     }
   } finally {
     store.close();

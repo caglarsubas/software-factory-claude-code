@@ -1,0 +1,91 @@
+name: factory-evals
+
+# The component evals and the nightly smoke run (ROADMAP P1-05). They spend the
+# software-factory-ci Console workspace's key, so they run only on pushes to main, on the
+# schedule and on manual dispatch: never on a pull request, so no fork ever reaches the secret.
+# Budget (about $50 a month): the visible suite costs about $1.50 a run, capped at $3; the
+# holdout suite about $0.40; the smoke task is capped at $1.50.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "plugin/**"
+      - "policies/**"
+      - "config/**"
+      - ".github/workflows/factory-evals.yml"
+  schedule:
+    # Weekday nights: holdout and smoke; on Mondays the visible suite as well.
+    - cron: "17 3 * * 1-5"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    name: evals
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      # The version matches config/factory.yaml's claude_code.version (checked by the conformance test).
+      - name: Component evals
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then echo "::error::the ANTHROPIC_API_KEY secret (software-factory-ci workspace) is not set"; exit 1; fi
+          suite() {
+            npx --yes @anthropic-ai/claude-code@2.1.286 plugin eval plugin --eval-dir "$1" \
+              --ablation none --runs 1 --threshold 0.8 --max-cost-usd "$2" --judge-model haiku \
+              --allow-tools Read --trust-plugin --no-publish -j 4 --json "$RUNNER_TEMP/$1.json"
+          }
+          summary() {
+            node scripts/eval-summary.ts "$RUNNER_TEMP/$1.json" "$1" >> "$GITHUB_STEP_SUMMARY"
+          }
+          printf '| Suite | Cases passed | Score | Cost |\n|---|---|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          if [ "$EVENT" != "schedule" ] || [ "$(date -u +%u)" = "1" ]; then suite evals 3 || status=1; summary evals; fi
+          if [ "$EVENT" != "push" ]; then suite evals-holdout 1 || status=1; summary evals-holdout; fi
+          exit "$status"
+
+  # One live fixture task from a fresh FACTORY_HOME to the merge gate: real sessions, the real
+  # guard and sandbox, container gates. The target is a local copy, so nothing is pushed.
+  smoke:
+    name: smoke
+    if: github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Sandbox prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q bubblewrap socat
+          # Ubuntu 24.04 restricts unprivileged user namespaces, which bubblewrap needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Smoke run (capped at $1.50)
+        env:
+          SMOKE_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node scripts/nightly-smoke.ts --cap-usd 1.5

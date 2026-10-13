@@ -132,11 +132,14 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
   const tmpDir = join(dir, "tmp");
   for (const d of [home, configDir, tmpDir]) mkdirSync(d, { recursive: true, mode: 0o700 });
 
+  // The agents' rubrics (`${CLAUDE_PLUGIN_ROOT}/rubrics/*.md`) are part of the release: every session may read them.
+  const rubrics = join(release.pluginDir, "rubrics");
   const guard: GuardConfig & { preflight?: { argv: string[]; timeout_ms: number }; post_edit: never[] } = {
     schema_version: 1,
     task_id: inputs.taskId,
     stage: spec.stage,
     ...spec.guard,
+    readable_roots: [...spec.guard.readable_roots, rubrics],
     allowed_tools: allow,
     // No host-side post-edit commands: formatters and linters load config the builder can edit.
     post_edit: [],
@@ -153,7 +156,7 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
   if (!(spec.budgetUsd > 0)) throw new Error(`${spec.label}: no budget left for a session`);
   const options: Options = {
     cwd: spec.cwd,
-    additionalDirectories: spec.extraDirs,
+    additionalDirectories: [...spec.extraDirs, rubrics],
     agent: spec.agent,
     agents: { [spec.agent]: agent },
     plugins: [{ type: "local", path: release.pluginDir }],
