@@ -19,10 +19,17 @@ pnpm factoryctl doctor
 
 In operation, factoryctl runs from an installed release through `$FACTORY_HOME/bin/factoryctl`; the [operator guide](../docs/factory/operator-guide.md) covers installation, approvals, recovery, the kill switch and gate G0.
 
-A run goes triage → spec → build → gates → review (code and security) → approve → summarize → publish, and stops at `NEEDS_HUMAN`. It stops at the spec gate when the spec or the provisional tier calls for a human. It always stops at the merge gate: in Phase 0 and Phase 1 a human merges every tier.
+A run goes checkout → triage → spec → build → gates → review (code and security) → policy → approve → summarize → publish, and stops at `NEEDS_HUMAN`. It stops at the spec gate when the spec or the provisional tier calls for a human. It always stops at the merge gate: in Phase 0 and Phase 1 a human merges every tier.
 
 - **State:** `factory.db` is SQLite with append-only events, guarded by triggers and validated against `schemas/event.schema.json`. A task's state is a fold over its events, and only `factoryctl` writes `state_changed`.
-- **Artifacts:** each stage writes its artifact last, into `runs/<id>/`. A stage whose artifact exists is done, so `resume` continues from the first missing one.
+- **Artifacts:** each step commits its artifacts into `runs/<id>/` through the commit protocol (`stages/commit.ts`, P1-02):
+  1. The files are staged as `<name>.pending`, each written atomically.
+  2. One `artifact_committed` event records their digests and the digests of the step's inputs. **The event is the commit point.**
+  3. The files are moved into place.
+
+  A step is done while its latest commit was made from the inputs it has now and its files are intact. So `resume` continues from the first step that is not done, and a changed input re-runs every step downstream of it. At the start of every run, recovery rolls a committed `.pending` forward and deletes any other. A re-run build starts from the base commit with an empty work directory.
+- **Spec approvals** are bound to the spec they were given on (`spec_digest`): a spec that runs again reopens the gate, through `BLOCKED` when the build had already started.
+- **Older tasks:** a task that a `factoryctl` without the commit protocol (v0.1.x) started is refused; finish it on that release.
 - **Manifest:** `manifest.json` records:
   - every artifact's digest;
   - the base and candidate commits;

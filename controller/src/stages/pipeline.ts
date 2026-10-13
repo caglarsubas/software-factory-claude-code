@@ -1,15 +1,15 @@
-// factoryctl run: one task through triage → spec → build → gates → review → approve →
-// summarize → publish (ROADMAP §2.1, P0 subset: one round, humans merge every tier). Each
-// stage writes its artifact last, so a stage whose artifact exists is done and `resume`
-// continues from the first missing one; each stage's exit transition is idempotent, so a
-// crash between an artifact and its transition is repaired on resume.
+// factoryctl run: one task through triage → spec → build → gates → review → policy → approve →
+// summarize → publish (ROADMAP §2.1; one round, humans merge every tier). Each step commits its
+// artifacts through the commit protocol (commit.ts), so a crash leaves a step committed or not,
+// and `resume` continues from the first step whose commit is missing or stale; each step's exit
+// transition is idempotent, so a crash between a commit and its transition is repaired on resume.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse, stringify } from "yaml";
 import type { GatesResult, RunOptions as GateRunOptions } from "../../../gates/src/run.ts";
 import { cacheVolumeFor } from "../../../gates/src/run.ts";
 import { writeManifest } from "../bundle/manifest.ts";
-import { changedFiles, commitAll, createTaskClone, diffPatch, GitError, head, pushFromMirror, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
+import { changedFiles, commitAll, createTaskClone, diffPatch, GitError, head, pushFromMirror, resetClone, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
 import type { GitHub } from "../github/client.ts";
 import { describeHalt, readHalt } from "../halt.ts";
 import { runDir, worktreeDir, type Home } from "../home.ts";
@@ -17,12 +17,13 @@ import { evaluate, type Decision, type RiskPolicy, type Tier } from "../policy/e
 import { loadRiskPolicy } from "../policy/load.ts";
 import type { Release } from "../release.ts";
 import type { Validator } from "../schemas/validate.ts";
-import { prepareSession, type SessionStage, type StageSpec } from "../session/options.ts";
+import { prepareSession, type StageSpec } from "../session/options.ts";
 import type { SessionRunner, StageOutcome } from "../session/runner.ts";
 import type { EventStore, State } from "../store/events.ts";
-import { currentState, currentStatePayload, isTerminal, transition } from "../task/lifecycle.ts";
+import { canMove, currentState, currentStatePayload, isTerminal, transition } from "../task/lifecycle.ts";
 import { loadProfile, readTask, type Profile, type Task } from "../task/task.ts";
 import { buildCategory, sdkCategory, type Category } from "../task/taxonomy.ts";
+import { commitArtifacts, freshness, inputsOf, recover, specDigest, type Output } from "./commit.ts";
 import { OUTPUTS } from "./outputs.ts";
 import { approvePrompt, buildPrompt, reviewPrompt, specPrompt, summarizePrompt, triagePrompt, type TaskText } from "./prompts.ts";
 
@@ -78,6 +79,19 @@ interface Spec {
 /** Thrown to end a run after the task reached a terminal or waiting state. */
 class Stop extends Error {}
 
+/** Thrown before a run for a task an earlier factoryctl started without the commit protocol. */
+export class ProtocolError extends Error {}
+
+interface Step {
+  label: string;
+  stage: string;
+  /** Committed files, relative to the run directory, whose digests key the step. */
+  inputs: string[];
+  run: () => Promise<Output[]>;
+  /** The step's transition; idempotent and forward-only, so it is re-applied on every run. */
+  exit: () => void;
+}
+
 /** The P0 forward path; NEEDS_HUMAN ranks by its gate (spec 3, merge 8). */
 const FORWARD: readonly State[] = ["RECEIVED", "TRIAGED", "SPECIFIED", "NEEDS_HUMAN", "BUILDING", "VERIFYING", "REVIEWING", "POLICY"];
 const DIFF_LIMIT = 400_000;
@@ -104,6 +118,9 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   const remote = typeof created?.payload["remote"] === "string" ? created.payload["remote"] : "";
   const protectedGlobs = [...profile.protected_paths.map((p) => p.glob), ...profile.restricted.map((r) => r.glob)];
   const text: TaskText = { title: task.title, body: readFileSync(join(dir, "task.md"), "utf8"), trust: task.text_trust };
+  if (created?.payload["commit_protocol"] !== 1 && store.events(taskId).some((e) => e.type === "stage_started")) {
+    throw new ProtocolError(`${taskId} was started by a factoryctl without the commit protocol (v0.1.x); finish it on that release (factoryctl release use v0.1.2) or create a new task`);
+  }
 
   // --- small helpers -------------------------------------------------------------------
   const state = (): State => currentState(store.events(taskId));
@@ -128,12 +145,14 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   };
   const has = (name: string): boolean => existsSync(join(dir, name));
   const readJson = (name: string): unknown => JSON.parse(readFileSync(join(dir, name), "utf8"));
-  const writeArtifact = (name: string, data: unknown, schema: string | null): void => {
+  let currentStage = "run";
+  /** A validated artifact, serialized; nothing is written until the step commits. */
+  const out = (path: string, data: unknown, schema: string | null): Output => {
     if (schema !== null) {
       const check = validator.validate(schema, data);
-      if (!check.valid) fail(name, "schema_invalid", `${name}: ${check.errors.slice(0, 5).join("; ")}`);
+      if (!check.valid) fail(currentStage, "schema_invalid", `${path}: ${check.errors.slice(0, 5).join("; ")}`);
     }
-    writeFileSync(join(dir, name), name.endsWith(".yaml") ? stringify(data) : `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
+    return { path, content: path.endsWith(".yaml") ? stringify(data) : `${JSON.stringify(data, null, 2)}\n` };
   };
   // A cancelled task ends; a halted factory stops without failing the task, which resumes later.
   const checkStop = (): void => {
@@ -191,25 +210,26 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   });
 
   // --- checkout: the bare mirror and the task's own clone -------------------------------
-  const checkout = (): Checkout => {
-    if (has("checkout.json")) return readJson("checkout.json") as Checkout;
+  const checkoutInfo = (): Checkout => readJson("checkout.json") as Checkout;
+  const candidate = (): string => (readJson("build.json") as { candidate_commit: string }).candidate_commit;
+
+  const checkout = (): Promise<Output[]> => {
     const mirror = syncMirror(home.mirrors, task.target.repo, remote, deps.auth);
     const baseBranch = task.target.base_branch ?? profile.target.default_branch;
     const base = resolveCommit(mirror, `refs/heads/${baseBranch}`);
     rmSync(worktree, { recursive: true, force: true });
     createTaskClone(mirror, worktree, `factory/${taskId}`, base);
     const c: Checkout = { remote, mirror, branch: `factory/${taskId}`, base_branch: baseBranch, base_commit: base };
-    writeArtifact("checkout.json", c, null);
-    return c;
+    return Promise.resolve([out("checkout.json", c, null)]);
   };
 
   // --- stages ----------------------------------------------------------------------------
-  const triage = async (): Promise<void> => {
+  const triage = async (): Promise<Output[]> => {
     const outcome = await session({
       stage: "triage", agent: "triager", label: "triage", cwd: worktree, prompt: triagePrompt(text), outputSchema: OUTPUTS.triage(),
       extraDirs: [], guard: readOnlyGuard(worktree, workDir("triage")),
     });
-    writeArtifact("triage.json", { schema_version: 1, task_id: taskId, ...(outcome.structured as object) }, "triage.schema.json");
+    return [out("triage.json", { schema_version: 1, task_id: taskId, ...(outcome.structured as object) }, "triage.schema.json")];
   };
 
   const provisionalTier = (spec: Spec, t: Triage): Decision =>
@@ -226,7 +246,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       risk,
     );
 
-  const spec = async (): Promise<void> => {
+  const spec = async (): Promise<Output[]> => {
     const t = readJson("triage.json") as Triage;
     const claudeMdPath = join(worktree, "CLAUDE.md");
     const claudeMd = existsSync(claudeMdPath) ? readFileSync(claudeMdPath, "utf8").slice(0, CLAUDE_MD_LIMIT) : null;
@@ -236,11 +256,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       outputSchema: OUTPUTS.spec(), extraDirs: [], guard: readOnlyGuard(worktree, workDir("spec")),
     });
     const { markdown, ...fields } = outcome.structured as { markdown: string } & Record<string, unknown>;
-    const full = { schema_version: 1, id: taskId, ...fields };
-    const check = validator.validate("spec.schema.json", full);
-    if (!check.valid) fail("spec", "schema_invalid", `spec.yaml: ${check.errors.slice(0, 5).join("; ")}`);
-    writeFileSync(join(dir, "spec.md"), `${markdown.trimEnd()}\n`, { mode: 0o600 });
-    writeArtifact("spec.yaml", full, "spec.schema.json");
+    return [out("spec.yaml", { schema_version: 1, id: taskId, ...fields }, "spec.schema.json"), { path: "spec.md", content: `${markdown.trimEnd()}\n` }];
   };
 
   const specExit = (): void => {
@@ -253,18 +269,29 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       ...(tier === "R3" || tier === "Restricted" ? [`provisional tier ${tier}`] : []),
     ];
     if (reasons.length === 0) return;
-    const events = store.events(taskId);
-    const gateIndex = events.findLastIndex((e) => e.type === "state_changed" && e.to === "NEEDS_HUMAN" && e.payload["gate"] === "spec");
-    const approved = gateIndex >= 0 && events.slice(gateIndex).some((e) => e.type === "command" && e.payload["command"] === "approve" && e.payload["gate"] === "spec");
+    // An approval holds for the spec it was given on: a spec that ran again needs a new one.
+    const digest = specDigest(dir);
+    const approved = store.events(taskId).some((e) => e.type === "command" && e.payload["command"] === "approve" && e.payload["gate"] === "spec" && e.payload["spec_digest"] === digest);
     if (approved) return;
-    moveTo("NEEDS_HUMAN", { gate: "spec", reasons });
+    const gate = { gate: "spec", reasons };
+    const now = state();
+    // A spec that changed after the build started goes back to the gate through BLOCKED.
+    if (now !== "NEEDS_HUMAN" && !canMove(now, "NEEDS_HUMAN")) {
+      transition(store, taskId, "BLOCKED", gate);
+      transition(store, taskId, "SPECIFIED", {});
+    }
+    moveTo("NEEDS_HUMAN", gate);
     deps.log(`${taskId}: waiting for a human at the spec gate (${reasons.join("; ")}); approve with: factoryctl approve ${taskId} --gate spec --reason "…"`);
     throw new Stop();
   };
 
-  const build = async (c: Checkout): Promise<void> => {
+  const build = async (): Promise<Output[]> => {
     moveTo("BUILDING");
+    const c = checkoutInfo();
     const s = parse(readFileSync(join(dir, "spec.yaml"), "utf8")) as Spec;
+    // A re-run build starts where the first one did: at the base, with an empty work directory.
+    resetClone(worktree, c.base_commit);
+    rmSync(join(dir, "work", "build"), { recursive: true, force: true });
     const work = workDir("build");
     // The preflight runs from the builder's Stop hook, in the session's stripped environment
     // (per-task HOME, allowlisted env), so it gets a ready image and the engine's endpoint
@@ -287,13 +314,14 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       fail("build", buildCategory(outcome.denied.length), `the builder recorded a failure: ${reason}${denials(outcome)}`, "build_failed");
     }
     commitAll(worktree, `factory: ${taskId} changes the builder left uncommitted`);
-    const candidate = head(worktree);
-    if (candidate === c.base_commit) fail("build", buildCategory(outcome.denied.length), `the builder made no change${denials(outcome)}`, "no_change");
-    writeArtifact("build.json", { base_commit: c.base_commit, candidate_commit: candidate }, null);
+    const built = head(worktree);
+    if (built === c.base_commit) fail("build", buildCategory(outcome.denied.length), `the builder made no change${denials(outcome)}`, "no_change");
+    return [out("build.json", { base_commit: c.base_commit, candidate_commit: built }, null)];
   };
 
-  const gates = async (c: Checkout): Promise<void> => {
+  const gates = async (): Promise<Output[]> => {
     moveTo("VERIFYING");
+    const c = checkoutInfo();
     emit("stage_started", { stage: "gates", label: "gates" });
     const started = Date.now();
     const result = await deps.runGates({
@@ -304,8 +332,9 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
         deps.log(`${taskId}: gates: ${l}`);
       },
     });
-    writeArtifact("gates.json", result, "gates.schema.json");
+    const artifact = out("gates.json", result, "gates.schema.json");
     emit("stage_completed", { stage: "gates", label: "gates", ok: result.passed, failing: result.gates.filter((g) => g.status !== "pass").map((g) => g.name), duration_ms: Date.now() - started, round: ROUND });
+    return [artifact];
   };
 
   const gatesExit = (): void => {
@@ -313,11 +342,14 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     if (!result.passed) fail("gates", "gate_fail", `gates failed: ${result.gates.filter((g) => g.status !== "pass").map((g) => g.name).join(", ")}`);
   };
 
-  const prepareBundle = (c: Checkout, candidate: string): void => {
+  /** The judges' read-only bundle: derived from committed artifacts, rebuilt before every judging session. */
+  const prepareBundle = (copies: readonly string[]): void => {
+    const c = checkoutInfo();
+    const cand = candidate();
     mkdirSync(bundleDir, { recursive: true, mode: 0o700 });
-    writeFileSync(join(bundleDir, "diff.patch"), diffPatch(worktree, c.base_commit, candidate, DIFF_LIMIT));
-    writeFileSync(join(bundleDir, "changed-files.txt"), changedFiles(worktree, c.base_commit, candidate).map((f) => `${f.path}\t+${String(f.additions)}\t-${String(f.deletions)}`).join("\n") + "\n");
-    for (const f of ["spec.yaml", "spec.md", "gates.json"]) copyFileSync(join(dir, f), join(bundleDir, f));
+    writeFileSync(join(bundleDir, "diff.patch"), diffPatch(worktree, c.base_commit, cand, DIFF_LIMIT));
+    writeFileSync(join(bundleDir, "changed-files.txt"), changedFiles(worktree, c.base_commit, cand).map((f) => `${f.path}\t+${String(f.additions)}\t-${String(f.deletions)}`).join("\n") + "\n");
+    for (const f of ["spec.yaml", "spec.md", "gates.json", ...copies]) copyFileSync(join(dir, f), join(bundleDir, f));
   };
 
   const REVIEWERS = [
@@ -325,27 +357,26 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     { label: "review-security", agent: "security-reviewer", focus: "authorization, injection, secrets and data exposure; try to construct an exploit before you report one" },
   ] as const;
 
-  const review = async (c: Checkout, candidate: string): Promise<void> => {
+  const review = (r: (typeof REVIEWERS)[number]) => async (): Promise<Output[]> => {
     moveTo("REVIEWING");
-    prepareBundle(c, candidate);
-    for (const r of REVIEWERS) {
-      if (has(`${r.label}.json`)) continue;
-      const outcome = await session({
-        stage: "review", agent: r.agent, label: r.label, cwd: worktree, prompt: reviewPrompt({ bundleDir, focus: r.focus }),
-        outputSchema: OUTPUTS.review(), extraDirs: [bundleDir], guard: readOnlyGuard(worktree, workDir(r.label), [bundleDir]),
-      });
-      const model = outcome.models[0] ?? release.config.model_pins[release.config.routing[r.agent]?.model ?? ""] ?? "unknown";
-      writeArtifact(`${r.label}.json`, { schema_version: 1, task_id: taskId, reviewer: r.agent, model, candidate_commit: candidate, ...(outcome.structured as object) }, "review.schema.json");
-    }
+    prepareBundle([]);
+    const outcome = await session({
+      stage: "review", agent: r.agent, label: r.label, cwd: worktree, prompt: reviewPrompt({ bundleDir, focus: r.focus }),
+      outputSchema: OUTPUTS.review(), extraDirs: [bundleDir], guard: readOnlyGuard(worktree, workDir(r.label), [bundleDir]),
+    });
+    const model = outcome.models[0] ?? release.config.model_pins[release.config.routing[r.agent]?.model ?? ""] ?? "unknown";
+    return [out(`${r.label}.json`, { schema_version: 1, task_id: taskId, reviewer: r.agent, model, candidate_commit: candidate(), ...(outcome.structured as object) }, "review.schema.json")];
   };
 
-  const policyDecision = (c: Checkout, candidate: string): Decision => {
+  // The policy engine, not a model, decides the tier: a deterministic step of its own.
+  const policy = (): Promise<Output[]> => {
+    const c = checkoutInfo();
     const g = readJson("gates.json") as GatesResult;
     const t = readJson("triage.json") as Triage;
     const s = parse(readFileSync(join(dir, "spec.yaml"), "utf8")) as Spec;
-    return evaluate(
+    const decision = evaluate(
       {
-        files: changedFiles(worktree, c.base_commit, candidate),
+        files: changedFiles(worktree, c.base_commit, candidate()),
         sinksAdded: g.signals.sink_added,
         secretMaterial: g.signals.secret_material,
         classificationUncertain: t.uncertain,
@@ -355,18 +386,17 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       },
       risk,
     );
+    return Promise.resolve([out("policy.json", decision, null)]);
   };
 
-  const approve = async (c: Checkout, candidate: string): Promise<void> => {
-    const decision = policyDecision(c, candidate);
-    writeArtifact("policy.json", decision, null);
-    mkdirSync(bundleDir, { recursive: true, mode: 0o700 });
-    for (const f of ["policy.json", ...REVIEWERS.map((r) => `${r.label}.json`)]) copyFileSync(join(dir, f), join(bundleDir, f));
+  const approve = async (): Promise<Output[]> => {
+    const decision = readJson("policy.json") as Decision;
+    prepareBundle(["policy.json", ...REVIEWERS.map((r) => `${r.label}.json`)]);
     const outcome = await session({
       stage: "approve", agent: "approver", label: "approve", cwd: bundleDir, prompt: approvePrompt({ bundleDir }),
       outputSchema: OUTPUTS.verdict(), extraDirs: [], guard: readOnlyGuard(bundleDir, workDir("approve")),
     });
-    writeArtifact("verdict.json", { schema_version: 1, task_id: taskId, candidate_commit: candidate, tier: decision.tier, ...(outcome.structured as object) }, "verdict.schema.json");
+    return [out("verdict.json", { schema_version: 1, task_id: taskId, candidate_commit: candidate(), tier: decision.tier, ...(outcome.structured as object) }, "verdict.schema.json")];
   };
 
   const approveExit = (): void => {
@@ -375,18 +405,20 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     moveTo("POLICY");
   };
 
-  const summarize = async (): Promise<void> => {
-    copyFileSync(join(dir, "verdict.json"), join(bundleDir, "verdict.json"));
+  const summarize = async (): Promise<Output[]> => {
+    prepareBundle(["policy.json", ...REVIEWERS.map((r) => `${r.label}.json`), "verdict.json"]);
     const outcome = await session({
       stage: "summarize", agent: "summarizer", label: "summarize", cwd: bundleDir, prompt: summarizePrompt({ bundleDir }),
       outputSchema: OUTPUTS.summary(), extraDirs: [], guard: readOnlyGuard(bundleDir, workDir("summarize")),
     });
-    writeArtifact("summary.json", { schema_version: 1, task_id: taskId, ...(outcome.structured as object) }, "summary.schema.json");
+    return [out("summary.json", { schema_version: 1, task_id: taskId, ...(outcome.structured as object) }, "summary.schema.json")];
   };
 
-  const publish = async (c: Checkout, candidate: string): Promise<void> => {
+  const publish = async (): Promise<Output[]> => {
+    const c = checkoutInfo();
+    const cand = candidate();
     const decision = readJson("policy.json") as Decision;
-    emit("side_effect_intent", { kind: "push", branch: c.branch, commit: candidate });
+    emit("side_effect_intent", { kind: "push", branch: c.branch, commit: cand });
     const push = (): string => {
       try {
         return pushFromMirror(c.mirror, worktree, c.branch, c.remote, deps.auth);
@@ -397,19 +429,19 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       }
     };
     const pushed = push();
-    if (pushed !== candidate) fail("publish", "merge_conflict", `the mirror holds ${pushed} for ${c.branch}, not ${candidate}`);
+    if (pushed !== cand) fail("publish", "merge_conflict", `the mirror holds ${pushed} for ${c.branch}, not ${cand}`);
     emit("side_effect_done", { kind: "push", branch: c.branch, commit: pushed });
     let pr: { number: number; url: string } | null = null;
     if (deps.github !== null) {
       const summary = readJson("summary.json") as { pr_body: string };
-      const footer = `\n\n---\nFactory task ${taskId} · tier ${decision.tier} · candidate ${candidate.slice(0, 12)} · the policy engine, not a model, decides what may merge.`;
+      const footer = `\n\n---\nFactory task ${taskId} · tier ${decision.tier} · candidate ${cand.slice(0, 12)} · the policy engine, not a model, decides what may merge.`;
       emit("side_effect_intent", { kind: "pull_request", branch: c.branch });
       pr = (await deps.github.findPullRequest(task.target.repo, c.branch)) ?? (await deps.github.createPullRequest({
         repo: task.target.repo, head: c.branch, base: c.base_branch, title: `[factory] ${taskId}: ${task.title}`, body: summary.pr_body + footer, draft: decision.tier === "Restricted",
       }));
       emit("side_effect_done", { kind: "pull_request", number: pr.number, url: pr.url });
     }
-    writeArtifact("publish.json", { branch: c.branch, head_commit: pushed, pr_number: pr?.number ?? null, pr_url: pr?.url ?? null }, null);
+    return [out("publish.json", { branch: c.branch, head_commit: pushed, pr_number: pr?.number ?? null, pr_url: pr?.url ?? null }, null)];
   };
 
   const publishExit = (): void => {
@@ -421,28 +453,42 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   };
 
   // --- the run loop ----------------------------------------------------------------------
+  // Each step names the committed files it reads: a step is done while its latest commit was
+  // made from those inputs and its own files are intact (commit.ts).
+  const noExit = (): void => undefined;
+  const steps: Step[] = [
+    { label: "checkout", stage: "checkout", inputs: ["task.json"], run: checkout, exit: noExit },
+    { label: "triage", stage: "triage", inputs: ["task.json", "task.md"], run: triage, exit: () => {
+      moveTo("TRIAGED");
+    } },
+    { label: "spec", stage: "spec", inputs: ["task.md", "triage.json"], run: spec, exit: specExit },
+    { label: "build", stage: "build", inputs: ["checkout.json", "spec.yaml"], run: build, exit: noExit },
+    { label: "gates", stage: "gates", inputs: ["build.json"], run: gates, exit: gatesExit },
+    ...REVIEWERS.map((r): Step => ({ label: r.label, stage: "review", inputs: ["build.json", "gates.json", "spec.yaml", "spec.md"], run: review(r), exit: noExit })),
+    { label: "policy", stage: "policy", inputs: ["build.json", "gates.json", "triage.json", "spec.yaml"], run: policy, exit: noExit },
+    { label: "approve", stage: "approve", inputs: ["policy.json", ...REVIEWERS.map((r) => `${r.label}.json`)], run: approve, exit: approveExit },
+    { label: "summarize", stage: "summarize", inputs: ["verdict.json"], run: summarize, exit: noExit },
+    { label: "publish", stage: "publish", inputs: ["summary.json", "policy.json", "build.json"], run: publish, exit: publishExit },
+  ];
+
   try {
     const initial = state();
     if (isTerminal(initial)) return initial;
     if (initial === "NEEDS_HUMAN" && currentStatePayload(store.events(taskId))["gate"] === "merge") return initial;
+    const recovered = recover(dir, store.events(taskId));
+    for (const p of recovered.rolledForward) deps.log(`${taskId}: recovered ${p}, committed before an interruption`);
+    for (const p of recovered.removed) deps.log(`${taskId}: removed ${p}, never committed`);
 
-    const c = checkout();
-    const candidate = (): string => (readJson("build.json") as { candidate_commit: string }).candidate_commit;
-    const steps: { name: SessionStage | "gates" | "publish"; done: () => boolean; run: () => Promise<void>; exit: () => void }[] = [
-      { name: "triage", done: () => has("triage.json"), run: triage, exit: () => {
-        moveTo("TRIAGED");
-      } },
-      { name: "spec", done: () => has("spec.yaml"), run: spec, exit: specExit },
-      { name: "build", done: () => has("build.json"), run: () => build(c), exit: () => undefined },
-      { name: "gates", done: () => has("gates.json"), run: () => gates(c), exit: gatesExit },
-      { name: "review", done: () => REVIEWERS.every((r) => has(`${r.label}.json`)), run: () => review(c, candidate()), exit: () => undefined },
-      { name: "approve", done: () => has("verdict.json"), run: () => approve(c, candidate()), exit: approveExit },
-      { name: "summarize", done: () => has("summary.json"), run: summarize, exit: () => undefined },
-      { name: "publish", done: () => has("publish.json"), run: () => publish(c, candidate()), exit: publishExit },
-    ];
     for (const step of steps) {
       checkStop();
-      if (!step.done()) await step.run();
+      currentStage = step.stage;
+      const stepInputs = inputsOf(dir, step.inputs);
+      const fresh = freshness(dir, store.events(taskId), step.label, stepInputs);
+      if (fresh !== "done") {
+        if (fresh !== "never") deps.log(`${taskId}: ${step.label} runs again (${fresh === "inputs_changed" ? "its inputs changed" : "a committed file changed on disk"})`);
+        const outputs = await step.run();
+        commitArtifacts(store, dir, { taskId, stage: step.stage, label: step.label, round: ROUND }, stepInputs, outputs);
+      }
       step.exit();
     }
   } catch (e) {

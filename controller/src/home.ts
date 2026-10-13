@@ -1,5 +1,5 @@
 // $FACTORY_HOME (default ~/.factory): run state lives outside every repository (ROADMAP §2.4).
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -64,24 +64,32 @@ function alive(pid: number): boolean {
 
 export class LockError extends Error {}
 
-/** One task at a time (P0): an exclusive lock file holding the runner's pid and task. A dead holder's lock is stale. */
+/**
+ * One task at a time: a lock file holding the runner's pid and task. It is written in full under a
+ * private name and then hard-linked into place, so it appears atomically and a reader never sees
+ * a half-written lock. A dead holder's lock is stale.
+ */
 export function acquireRunLock(home: Home, taskId: string): () => void {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const fd = openSync(home.lock, "wx", 0o600);
-      writeSync(fd, JSON.stringify({ pid: process.pid, task_id: taskId }));
-      closeSync(fd);
-      return () => {
+  const mine = `${home.lock}.${String(process.pid)}`;
+  writeFileSync(mine, JSON.stringify({ pid: process.pid, task_id: taskId }), { mode: 0o600 });
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        linkSync(mine, home.lock);
+        return () => {
+          rmSync(home.lock, { force: true });
+        };
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+        const holder = readLock(home);
+        if (holder !== null && alive(holder.pid)) throw new LockError(`${holder.task_id} is running (pid ${String(holder.pid)}); one task at a time`);
         rmSync(home.lock, { force: true });
-      };
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      const holder = readLock(home);
-      if (holder !== null && alive(holder.pid)) throw new LockError(`${holder.task_id} is running (pid ${String(holder.pid)}); one task at a time`);
-      rmSync(home.lock, { force: true });
+      }
     }
+    throw new LockError("could not take the run lock");
+  } finally {
+    rmSync(mine, { force: true });
   }
-  throw new LockError("could not take the run lock");
 }
 
 export function readLock(home: Home): { pid: number; task_id: string } | null {

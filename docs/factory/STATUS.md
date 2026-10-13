@@ -4,7 +4,7 @@ Claude Code updates this file after every deliverable; the plan is [`ROADMAP.md`
 
 | Field | Value |
 |---|---|
-| Current phase | P1 Local MVP: P1-07 in review (#18) |
+| Current phase | P1 Local MVP: P1-07 merged (#18), waiting for its first weekly row; P1-02 commit protocol in review (#19) |
 | Next gate | G1 |
 | Factory release | `v0.1.2` (`95d3abc`, tagged 2026-10-13), the release G0 ran on; `v0.1.0` (#14) and `v0.1.1` (#15) were superseded after their live runs found three bugs (#15, #16) |
 | Claude Code / Agent SDK pin | 2.1.286 / 0.3.286 (stable on Oct 9, 2026; re-checked on Oct 13, see the platform log) |
@@ -41,12 +41,12 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | ID | Deliverable | Track | Status | PR | Evidence |
 |---|---|---|---|---|---|
 | P1-01 | Budgets and limits | core | todo | | |
-| P1-02 | Restart invariant and outbox | core | todo | | |
+| P1-02 | Restart invariant and outbox | core | doing | #19 | part 1 of 2, the commit protocol: every step's artifacts are staged as `.pending`, committed by an `artifact_committed` event carrying their digests and the step's input digests, then moved into place. A step is done only while its commit matches its current inputs and its files are intact; recovery rolls committed `.pending` files forward and removes the rest. Tested in replay: a lost transition after a commit is repaired, a changed file re-runs its step, a changed input re-runs every step downstream, and a changed spec reopens the spec gate (through `BLOCKED` once the build started). Tasks begun on v0.1.x are refused. Part 2 (outbox, reconcile, reaping, the kill-point suite) follows the budgets |
 | P1-03 | Refuter pass | core | todo | | |
 | P1-04 | `run --attach` and `takeover` | core | todo | | |
 | P1-05 | Eval capture and component evals | core | todo | | |
 | P1-06 | OTel per stage and alias alarm | core | todo | | |
-| P1-07 | Failure taxonomy and weekly review | core | review | #18 | every failure path maps to one of the ten categories, each tested in replay (the builder's failure, no change, denied edits, budget, a session error, a runner crash, a rejected push); `factoryctl reject` records `human_rejected`; `stage_completed` records duration, runner and round; `factoryctl report` prints per-stage metrics and the weekly row; done when the first weekly row lands below |
+| P1-07 | Failure taxonomy and weekly review | core | review | #18 (merged) | every failure path maps to one of the ten categories, each tested in replay (the builder's failure, no change, denied edits, budget, a session error, a runner crash, a rejected push); `factoryctl reject` records `human_rejected`; `stage_completed` records duration, runner and round; `factoryctl report` prints per-stage metrics and the weekly row; done when the first weekly row lands below |
 | P1-08 | Pilot target onboarding | core | todo | | |
 | P1-09 | Release process | core | todo | | |
 
@@ -151,6 +151,7 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | 2026-10-13 | G0-1 | the GitHub App for the dry runs | a fine-grained token scoped to the two fixture repositories (contents and pull requests) | the App is still an owner action; the token reached only `factoryctl`'s push and PR calls, never a session; the App replaces it before Phase 1 runs on other targets |
 | 2026-10-13 | G0-5 | the operator approves the evidence PR | the operator merged #17 | GitHub does not let a PR's author approve it; the PRs are authored under the operator's account until the factory App authors them |
 | 2026-10-13 | P1-07 | categories mapped from SDK result subtypes and guard events | also from the pipeline's own checks: a builder that records a failure or makes no change is `gate_fail`, or `permission_denied` when the guard denied its tool calls; a rejected push is `merge_conflict`; the pipeline's raw cause stays in the event as `cause` | the builder's own outcomes have no SDK subtype; `factoryctl report` maps v0.1.x events the same way |
+| 2026-10-13 | P1-02 | one deliverable | two PRs: the commit protocol (#19), then the outbox, reconcile, reaping and the kill-point suite | budgets and remediation rounds (P1-01) build on the commit protocol, and the kill-point suite needs the rounds to cover them |
 | 2026-10-13 | G0 | the evidence PR from a `gates/G0` branch | from this session's branch, with the evidence in [`gates/G0.md`](gates/G0.md) | the session can push only its own branch |
 
 ### Platform re-verification (ROADMAP §11)

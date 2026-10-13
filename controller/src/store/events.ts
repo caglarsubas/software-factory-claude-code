@@ -10,7 +10,8 @@ export type State =
   | "CANCELLED" | "SUPERSEDED";
 
 export type EventType =
-  | "task_created" | "state_changed" | "stage_started" | "stage_completed" | "stage_failed" | "command" | "side_effect_intent" | "side_effect_done";
+  | "task_created" | "state_changed" | "stage_started" | "stage_completed" | "stage_failed" | "command" | "side_effect_intent" | "side_effect_done"
+  | "artifact_committed";
 
 export interface Actor {
   kind: "factoryctl" | "operator" | "agent" | "github";
