@@ -4,9 +4,9 @@ Claude Code updates this file after every deliverable; the plan is [`ROADMAP.md`
 
 | Field | Value |
 |---|---|
-| Current phase | P1 Local MVP: P1-07 (#18), the P1-02 commit protocol (#19) and P1-01 (#20) merged; P1-05 in review (#21) |
+| Current phase | P1 Local MVP: P1-07 (#18), the P1-02 commit protocol (#19), P1-01 (#20) and P1-05 (#21) merged; P1-09 and `v0.2.0` in review (#23) |
 | Next gate | G1 |
-| Factory release | `v0.1.2` (`95d3abc`, tagged 2026-10-13), the release G0 ran on; `v0.1.0` (#14) and `v0.1.1` (#15) were superseded after their live runs found three bugs (#15, #16) |
+| Factory release | `v0.1.2` (`95d3abc`, tagged 2026-10-13), the release G0 ran on; `v0.2.0` follows #23, and counted Phase 1 tasks run on it |
 | Claude Code / Agent SDK pin | 2.1.286 / 0.3.286 (stable on Oct 9, 2026; re-checked on Oct 13, see the platform log) |
 | P0 entry criteria | GitHub App ☐ (a token scoped to the fixture repositories stood in for G0-1; see deviations) · Console workspace with spend limit ☑ · `main` created ☑ · toolchain pinned ☑ (Node 24.21.0, pnpm 12.6.0, TypeScript 6.0.3) |
 
@@ -44,11 +44,11 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | P1-02 | Restart invariant and outbox | core | doing | #19 (merged) | part 1 of 2, the commit protocol: every step's artifacts are staged as `.pending`, committed by an `artifact_committed` event carrying their digests and the step's input digests, then moved into place. A step is done only while its commit matches its current inputs and its files are intact; recovery rolls committed `.pending` files forward and removes the rest. Tested in replay: a lost transition after a commit is repaired, a changed file re-runs its step, a changed input re-runs every step downstream, and a changed spec reopens the spec gate (through `BLOCKED` once the build started). Tasks begun on v0.1.x are refused. Part 2 (outbox, reconcile, reaping, the kill-point suite) follows the budgets |
 | P1-03 | Refuter pass | core | todo | | |
 | P1-04 | `run --attach` and `takeover` | core | todo | | |
-| P1-05 | Eval capture and component evals | core | review | #21 | 21 `claude plugin eval` cases (17 visible, 4 held out), a pass and a block case for each of the seven judgment agents, from the fixtures and this repository; on the pinned CLI the visible suite passes 17 of 17 at threshold 0.8 for $1.51 and the holdout 4 of 4. The first runs found that no judge could read its rubric: the guard allowed only the worktree and bundle, so every review and verdict, the G0 runs included, ran without one; fixed and tested here. `pnpm check:evals` enforces the suite's rules; `factoryctl eval capture` writes candidate cases outside the repository; the `factory-evals` workflow runs the suite on pushes to `main` and nightly. Done when the suite passes in CI on a push to `main`, which needs the `ANTHROPIC_API_KEY` secret |
+| P1-05 | Eval capture and component evals | core | review | #21 (merged) | 21 `claude plugin eval` cases (17 visible, 4 held out), a pass and a block case for each of the seven judgment agents, from the fixtures and this repository; on the pinned CLI the visible suite passes 17 of 17 at threshold 0.8 for $1.51 and the holdout 4 of 4. The first runs found that no judge could read its rubric: the guard allowed only the worktree and bundle, so every review and verdict, the G0 runs included, ran without one; fixed and tested here. `pnpm check:evals` enforces the suite's rules; `factoryctl eval capture` writes candidate cases outside the repository; the `factory-evals` workflow runs the suite on pushes to `main` and nightly. Done when the suite passes in CI on a push to `main`: the first run, on the #21 merge, stopped at once because the `ANTHROPIC_API_KEY` secret is not set yet |
 | P1-06 | OTel per stage and alias alarm | core | todo | | |
 | P1-07 | Failure taxonomy and weekly review | core | review | #18 (merged) | every failure path maps to one of the ten categories, each tested in replay (the builder's failure, no change, denied edits, budget, a session error, a runner crash, a rejected push); `factoryctl reject` records `human_rejected`; `stage_completed` records duration, runner and round; `factoryctl report` prints per-stage metrics and the weekly row; done when the first weekly row lands below |
 | P1-08 | Pilot target onboarding | core | todo | | |
-| P1-09 | Release process | core | todo | | |
+| P1-09 | Release process | core | review | #23 | `CHANGELOG.md` (Keep a Changelog, v0.1.0 to v0.2.0); `pnpm check:release` keeps `plugin.json`'s version, the newest dated section and its link reference in agreement; the `release` workflow publishes a GitHub release only for a tag that matches them, after `ci` passed on the tagged commit; the operator guide's release, install and rollback steps. Done when `v0.2.0` is tagged and published |
 
 ### Gate G1
 

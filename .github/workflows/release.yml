@@ -1,0 +1,57 @@
+name: release
+
+# Publishes the GitHub release for a version tag (ROADMAP P1-09) once the tag matches
+# plugin.json, CHANGELOG.md has its section, and factory CI passed on the tagged commit. The
+# operator pushes the tag; nothing here installs or pins a release (`factoryctl release install`).
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      checks: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          # A release never reads a cache another workflow could have written.
+          package-manager-cache: false
+      - name: The tag matches plugin.json and CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/check-release.ts --tag "$TAG" --notes "$RUNNER_TEMP/notes.md"
+      - name: Factory CI passed on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          for _ in $(seq 1 40); do
+            conclusion="$(gh api "repos/$REPO/commits/$SHA/check-runs?check_name=ci" --jq '.check_runs[0].conclusion // "pending"')"
+            case "$conclusion" in
+              success) echo "ci passed on $SHA"; exit 0 ;;
+              pending) sleep 30 ;;
+              *) echo "::error::ci is $conclusion on $SHA"; exit 1 ;;
+            esac
+          done
+          echo "::error::ci did not finish on $SHA within 20 minutes"
+          exit 1
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"

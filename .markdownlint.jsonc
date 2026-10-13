@@ -3,5 +3,7 @@
   // Long lines are allowed: the docs are table-heavy.
   "MD013": false,
   // Table pipe alignment is cosmetic; the docs use compact rows with tight delimiter rows.
-  "MD060": false
+  "MD060": false,
+  // CHANGELOG.md repeats "Added" and "Fixed" under every version, as Keep a Changelog does.
+  "MD024": { "siblings_only": true }
 }

@@ -62,6 +62,24 @@ Commands that move the pin refuse to run inside a Claude Code session; only the 
 - that the installed release is intact;
 - that the kill switch is off.
 
+## Releases
+
+A release is a version tag on `main` whose version equals `plugin/.claude-plugin/plugin.json` and has its own section in [`CHANGELOG.md`](../../CHANGELOG.md). `pnpm check:release` holds the two together on every PR.
+
+1. **Bump.** A PR sets the new version in `plugin.json`, moves the `[Unreleased]` notes into a dated section for it, adds its link reference, and states any **Breaking** change for you.
+2. **Tag**, once that PR is merged and `ci` is green on the merge commit:
+
+   ```bash
+   git switch main && git pull --ff-only
+   git tag -a v0.2.0 -m "v0.2.0" && git push origin v0.2.0
+   ```
+
+   The `release` workflow then checks the tag against `plugin.json` and the changelog, waits for `ci` to pass on the tagged commit, and publishes the GitHub release with the changelog section as its notes. A tag that does not match fails the workflow, and no release is published.
+3. **Install and pin** it on your machine, as in [Install a release](#install-a-release): `git fetch --tags`, then `pnpm factoryctl release install v0.2.0` from your checkout. `factoryctl doctor` must then show no `fail`.
+4. **Roll back** with `factoryctl release use v0.1.2`: any installed release can be pinned again. Tasks keep the event history they ran on, so check the changelog's **Breaking** notes before you roll back across them.
+
+Tag and pin only from your own terminal: `release install` and `release use` refuse to run inside a Claude Code session.
+
 ## Run a task
 
 ```bash

@@ -37,6 +37,7 @@ jobs:
       - run: pnpm test
       - run: pnpm check:docs
       - run: pnpm check:evals
+      - run: pnpm check:release
       - name: A change never edits an agent together with the evals that judge it
         if: github.event_name == 'pull_request'
         run: node scripts/check-evals.ts --base HEAD^1
