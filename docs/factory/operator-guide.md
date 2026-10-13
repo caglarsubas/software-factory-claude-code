@@ -151,6 +151,24 @@ When the gates fail, or a reviewer reports a blocking finding, the builder gets 
 
 A gate that errored, rather than failed, is an infrastructure problem: the task fails as `gate_fail` without another round. `factoryctl report T-0001` shows each round's sessions; `rounds/<n>/` in the run directory holds each later round's files.
 
+## Component evals
+
+`plugin/evals/` holds the component eval suite (P1-05), run by `claude plugin eval`. Each case sends one judgment agent a fixed request: a pass case it must accept, or a block case it must stop. Cases are tagged with the agent (`role:`), the expected outcome (`expect:pass` or `expect:block`) and where their code comes from (`target:fixture` or `target:self`).
+
+- **When they run:** the `factory-evals` workflow runs the suite on every push to `main` that changes the plugin, policies or config.
+  - On weekday nights it runs the held-out cases (`plugin/evals-holdout/`) and a smoke run of one live fixture task to the merge gate, capped at $1.50. On Mondays it also runs the visible suite.
+  - It never runs on a pull request, so a fork never reaches the key.
+- **Setup, once:**
+  1. Create the `software-factory-ci` workspace in the Anthropic Console with a $50 monthly spend limit, and an API key in it.
+  2. Add the key as the repository secret `ANTHROPIC_API_KEY`: Settings → Secrets and variables → Actions → New repository secret.
+- **Run them yourself:** `claude plugin eval plugin --ablation none --allow-tools Read --trust-plugin --threshold 0.8` from the repository root. A full run costs about $1.50.
+- **Rules (`pnpm check:evals`):**
+  - every judgment agent has a pass and a block case;
+  - every case checks that it dispatched the plugin's own agent;
+  - 15–30% of cases are held out;
+  - a pull request may not change an agent or rubric together with the evals that judge it.
+- **Capture:** `factoryctl eval capture T-0001` writes a run's judgment stages as candidate cases under `$FACTORY_HOME/evals/captured/`, each with the answer the run observed. Decide whether that answer was right, set `expect:`, and move a `target:fixture` or `target:self` case into `plugin/evals/`. A `target:private` case holds a private target's code: it never enters this repository.
+
 ## Failure taxonomy and weekly review
 
 Every failed task carries exactly one category (P1-07):

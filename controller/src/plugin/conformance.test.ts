@@ -86,9 +86,9 @@ describe("Claude Code pin", () => {
     expect(pkg.dependencies["@anthropic-ai/claude-agent-sdk"]).toBe(config.claude_code.agent_sdk);
   });
 
-  it("CI validates the plugin with the version config/factory.yaml pins", () => {
+  it.each(["factory-ci.yml", "factory-evals.yml"])("%s runs the Claude Code version config/factory.yaml pins", (file) => {
     const pinned = config.claude_code.version;
-    const workflow = readFileSync(join(REPO_ROOT, ".github/workflows/factory-ci.yml"), "utf8");
+    const workflow = readFileSync(join(REPO_ROOT, ".github/workflows", file), "utf8");
     const used = [...workflow.matchAll(/@anthropic-ai\/claude-code@([0-9.]+)/g)].map((m) => m[1]);
     expect(used.length).toBeGreaterThan(0);
     for (const v of used) expect(v).toBe(pinned);

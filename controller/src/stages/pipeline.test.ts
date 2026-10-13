@@ -26,6 +26,7 @@ import { EventStore } from "../store/events.ts";
 import { currentState, currentStatePayload } from "../task/lifecycle.ts";
 import { createTask } from "../task/task.ts";
 import { CATEGORIES } from "../task/taxonomy.ts";
+import { captureTask } from "../evals/capture.ts";
 import { specDigest } from "./commit.ts";
 import { ProtocolError, runTask, type Deps } from "./pipeline.ts";
 
@@ -632,6 +633,45 @@ describe("budgets and limits (P1-01)", () => {
     const ended = world.store.events(id).filter((e) => e.type === "command" && e.payload["command"] === "run_ended");
     expect(ended[0]?.payload).toMatchObject({ at: at(30), reason: "killed", reconstructed: true });
     expect(ended.at(-1)?.payload).toMatchObject({ reason: "waiting: merge gate" });
+  });
+});
+
+describe("judges read their rubrics (found by the P1-05 evals)", () => {
+  it("lets every session read the release's rubrics, and nothing else outside its roots", async () => {
+    const id = newTask();
+    const rubric = join(release.pluginDir, "rubrics", "review.md");
+    const t = transcripts(id);
+    const runner = replayRunner({
+      ...t,
+      "review-code": [assistant(pins["sonnet"] ?? "", [toolUse("Read", { file_path: rubric }), toolUse("Read", { file_path: join(release.pluginDir, "agents", "builder.md") })]), ...(t["review-code"] ?? [])],
+    });
+    expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
+    const review = world.store.events(id).find((e) => e.type === "stage_completed" && e.payload["label"] === "review-code");
+    const denied = (review?.payload["denied"] ?? []) as { tool: string; reason: string }[];
+    expect(denied.map((d) => d.reason).join("\n")).not.toContain("review.md");
+    expect(denied.map((d) => d.reason).join("\n")).toContain("builder.md");
+    for (const req of runner.requests) expect(req.options.additionalDirectories, req.label).toContain(join(release.pluginDir, "rubrics"));
+  });
+});
+
+describe("eval capture (P1-05)", () => {
+  it("turns a finished run's judgment stages into candidate cases, outside the repository", async () => {
+    const id = newTask();
+    await run(id, deps(replayRunner(transcripts(id))));
+    const captured = captureTask(world.home, id, "caglarsubas/software-factory-claude-code");
+    expect(captured.map((c) => c.label)).toEqual(["triage", "spec", "review-code", "review-security", "approve", "summarize"]);
+    // example/ts-mini is neither this repository nor a fixture mirror: its cases are private.
+    expect(new Set(captured.map((c) => c.target))).toEqual(new Set(["private"]));
+    for (const c of captured) {
+      expect(c.dir.startsWith(join(world.home.root, "evals", "captured"))).toBe(true);
+      const prompt = readFileSync(join(c.dir, "prompt.md"), "utf8");
+      const fm = parse(/^---\n([\s\S]*?)\n---\n/.exec(prompt)?.[1] ?? "") as { tags: string[] };
+      expect(fm.tags).toEqual([`role:${c.role}`, "expect:TODO", "target:private"]);
+      expect(prompt).toContain(`software-factory:${c.role}`);
+      expect(existsSync(join(c.dir, "observed.json"))).toBe(true);
+    }
+    expect(readFileSync(join(captured.find((c) => c.label === "approve")?.dir ?? "", "graders/result.md"), "utf8")).toContain('"^RESULT: approve$"');
+    expect(readFileSync(join(captured.find((c) => c.label === "review-code")?.dir ?? "", "prompt.md"), "utf8")).toContain("<diff.patch>");
   });
 });
 

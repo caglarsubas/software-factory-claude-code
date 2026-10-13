@@ -13,3 +13,6 @@ dist/
 # Secrets never belong in this public repository
 .env
 .env.*
+# Eval run results (claude plugin eval); captured cases stay in $FACTORY_HOME
+plugin/evals/results/
+plugin/evals-holdout/results/
