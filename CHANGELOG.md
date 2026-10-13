@@ -4,6 +4,14 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+### Added
+
+- **Refuter pass (P1-03).**
+  - Every blocking finding goes to the refuter, which tries to prove it wrong against the bundle and the candidate.
+  - Its answers (`refuted`, `upheld` or `unclear`) are committed as `refutations.json`, and only a refuted finding stops blocking.
+  - The approver and the summarizer see the refutations.
+  - `factoryctl eval capture` captures refuter sessions too, and two fixture cases join the eval suite.
+
 ## [0.2.0] - 2026-10-13
 
 Phase 1, first release: the factory now enforces budgets and limits, gets crash-safe artifacts and bounded remediation, files every failure under one category, and checks its judges with an eval suite. Counted Phase 1 tasks run on this release.

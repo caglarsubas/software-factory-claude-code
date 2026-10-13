@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0042",
+  "round": 1,
+  "candidate_commit": "0123456789abcdef0123456789abcdef01234567",
+  "refutations": [
+    {
+      "finding_id": "review-code/F-1",
+      "decision": "refuted",
+      "evidence": "Line 12 clamps the value with Math.max(0, \u2026), so the negative cap the finding describes cannot occur.",
+      "model": "claude-sonnet-5-5"
+    },
+    {
+      "finding_id": "review-security/F-1",
+      "decision": "upheld",
+      "evidence": "The search box value reaches the SQL string unescaped at src/orders/search.ts:6.",
+      "model": "claude-sonnet-5-5"
+    }
+  ]
+}

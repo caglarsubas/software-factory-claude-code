@@ -420,6 +420,8 @@ const reviewsR2 = (): Partial<Transcripts> => ({
   "review-security-r2": answer(pins["opus"] ?? "", { findings: [], summary: "No security-relevant change." }),
 });
 const blocking = { id: "F-1", severity: "blocking", category: "correctness", file: "src/cart.ts", line: 3, title: "isEmpty treats a cart of zero-quantity lines as non-empty", failure_scenario: "isEmpty([{ sku: 'a', quantity: 0 }]) returns false.", fix: "Ignore lines with quantity 0.", confidence: 90 };
+/** The refuter's answer to one finding. */
+const refuterSays = (decision: "refuted" | "upheld" | "unclear", evidence = "Traced the scenario through the candidate.") => answer(pins["sonnet"] ?? "", { decision, evidence });
 const committedLabels = (id: string): string[] => world.store.events(id).filter((e) => e.type === "artifact_committed").map((e) => String(e.payload["label"]));
 const failure = (id: string): Record<string, unknown> | undefined => world.store.events(id).find((e) => e.type === "stage_failed")?.payload;
 
@@ -448,11 +450,12 @@ describe("remediation rounds (P1-01)", () => {
     const id = newTask();
     const runner = replayRunner(transcripts(id, {
       "review-code": answer(pins["sonnet"] ?? "", { findings: [blocking], summary: "One blocking bug." }),
+      "refute-code-F-1": refuterSays("upheld"),
       "build-r2": roundBuild(id, 2),
       ...reviewsR2(),
     }));
     expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
-    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "spec", "build", "review-code", "review-security", "build-r2", "review-code-r2", "review-security-r2", "approve", "summarize"]);
+    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "spec", "build", "review-code", "review-security", "refute-code-F-1", "build-r2", "review-code-r2", "review-security-r2", "approve", "summarize"]);
     expect(runner.requests.find((r) => r.label === "build-r2")?.prompt).toContain("[finding code-reviewer F-1] src/cart.ts:3 isEmpty treats a cart of zero-quantity lines as non-empty");
     // The judges see round 2's reviews, under their usual names.
     expect(readFileSync(join(runDir(world.home, id), "bundle/review-code.json"), "utf8")).toContain('"summary": "Fixed."');
@@ -474,8 +477,10 @@ describe("remediation rounds (P1-01)", () => {
     const id = newTask();
     const runner = replayRunner(transcripts(id, {
       "review-code": answer(pins["sonnet"] ?? "", { findings: [blocking], summary: "One blocking bug." }),
+      "refute-code-F-1": refuterSays("upheld"),
       "build-r2": roundBuild(id, 2),
       "review-code-r2": answer(pins["sonnet"] ?? "", { findings: [{ ...blocking, id: "F-7", line: 9 }], summary: "Still there." }),
+      "refute-code-F-7-r2": refuterSays("unclear"),
       "review-security-r2": answer(pins["opus"] ?? "", { findings: [], summary: "Fine." }),
     }));
     expect(await run(id, deps(runner))).toBe("FAILED");
@@ -515,6 +520,77 @@ describe("remediation rounds (P1-01)", () => {
     const resumed = replayRunner(t);
     expect(await run(id, deps(resumed, { runGates: passingGates() }))).toBe("NEEDS_HUMAN");
     expect(resumed.requests.map((r) => r.label)).toEqual(["build-r2", "review-code-r2", "review-security-r2", "approve", "summarize"]);
+  });
+});
+
+describe("the refuter pass (P1-03)", () => {
+  const falsePositive = { ...blocking, id: "F-2", title: "isEmpty crashes on undefined", failure_scenario: "isEmpty(undefined) throws.", fix: "Guard against undefined." };
+
+  it("refutes a false positive, which then blocks nothing: no remediation round, and the approver sees why", async () => {
+    const id = newTask();
+    const runner = replayRunner(transcripts(id, {
+      "review-security": answer(pins["opus"] ?? "", { findings: [falsePositive], summary: "One blocking finding." }),
+      "refute-security-F-2": refuterSays("refuted", "The parameter is typed readonly Line[]; every caller passes an array, and the strict compile in the typecheck gate rejects undefined."),
+    }));
+    expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
+    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "spec", "build", "review-code", "review-security", "refute-security-F-2", "approve", "summarize"]);
+    expect(currentStatePayload(world.store.events(id))["gate"]).toBe("merge");
+    const dir = runDir(world.home, id);
+    const refutations = JSON.parse(readFileSync(join(dir, "refutations.json"), "utf8")) as { refutations: { finding_id: string; decision: string }[] };
+    expect(validator.validate("refutation.schema.json", refutations).errors).toEqual([]);
+    expect(refutations.refutations).toMatchObject([{ finding_id: "review-security/F-2", decision: "refuted" }]);
+    // The refuter judged the finding with the bundle and the candidate, read-only, and nothing else.
+    const req = runner.requests.find((r) => r.label === "refute-security-F-2");
+    expect(req?.options.agent).toBe("refuter");
+    expect(req?.prompt).toContain('<finding id="review-security/F-2">');
+    expect(req?.options.maxBudgetUsd).toBeLessThanOrEqual(release.budgets.stage_fraction.refute * release.budgets.task_usd.R1);
+    expect(readdirSync(join(dir, "bundle"))).toContain("refutations.json");
+    expect(runner.requests.find((r) => r.label === "approve")?.prompt).toContain("refutations.json");
+    // A refutation is a candidate eval case too.
+    const captured = captureTask(world.home, id, "caglarsubas/software-factory-claude-code");
+    const refuter = captured.find((c) => c.role === "refuter");
+    expect(refuter?.label).toBe("refute-security-F-2");
+    expect(readFileSync(join(refuter?.dir ?? "", "graders/result.md"), "utf8")).toContain('"^RESULT: refuted$"');
+    expect(readFileSync(join(refuter?.dir ?? "", "prompt.md"), "utf8")).toContain("isEmpty crashes on undefined");
+  });
+
+  it("keeps a true bug blocking: an upheld finding goes back to the builder", async () => {
+    const id = newTask();
+    const runner = replayRunner(transcripts(id, {
+      "review-code": answer(pins["sonnet"] ?? "", { findings: [blocking], summary: "One blocking bug." }),
+      "review-security": answer(pins["opus"] ?? "", { findings: [falsePositive], summary: "One blocking finding." }),
+      "refute-code-F-1": refuterSays("upheld", "isEmpty([{ quantity: 0 }]) returns false at src/cart.ts:3."),
+      "refute-security-F-2": refuterSays("refuted"),
+      "build-r2": roundBuild(id, 2),
+      ...reviewsR2(),
+    }));
+    expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
+    const labels = runner.requests.map((r) => r.label);
+    expect(labels.slice(0, 8)).toEqual(["triage", "spec", "build", "review-code", "review-security", "refute-code-F-1", "refute-security-F-2", "build-r2"]);
+    // Only the surviving finding reaches the remediation round.
+    const remediation = JSON.parse(readFileSync(join(runDir(world.home, id), "remediation.json"), "utf8")) as { items: { ref: string }[] };
+    expect(remediation.items.map((i) => i.ref)).toEqual(["code-reviewer F-1"]);
+    expect(runner.requests.find((r) => r.label === "build-r2")?.prompt).not.toContain("isEmpty crashes on undefined");
+  });
+
+  it("treats an unclear refutation as blocking", async () => {
+    const id = newTask();
+    const runner = replayRunner(transcripts(id, {
+      "review-code": answer(pins["sonnet"] ?? "", { findings: [blocking], summary: "One blocking bug." }),
+      "refute-code-F-1": refuterSays("unclear", "Could not tell whether callers ever pass a zero quantity."),
+      "build-r2": roundBuild(id, 2),
+      ...reviewsR2(),
+    }));
+    expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
+    expect(runner.requests.map((r) => r.label)).toContain("build-r2");
+  });
+
+  it("runs no refuter when no finding blocks", async () => {
+    const id = newTask();
+    const runner = replayRunner(transcripts(id));
+    await run(id, deps(runner));
+    expect(runner.requests.some((r) => r.label.startsWith("refute"))).toBe(false);
+    expect(existsSync(join(runDir(world.home, id), "refutations.json"))).toBe(false);
   });
 });
 

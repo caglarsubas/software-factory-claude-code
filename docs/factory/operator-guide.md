@@ -162,7 +162,9 @@ factoryctl budgets   # writes $FACTORY_HOME/budgets/calibration.json
 
 ### Remediation rounds
 
-When the gates fail, or a reviewer reports a blocking finding, the builder gets another round, with the failures in its prompt. The task stops when:
+A reviewer's blocking finding first goes to the refuter, which tries to prove it wrong. A finding it refutes stops blocking. One it upholds, or cannot decide, still blocks. `refutations.json` holds each answer and its evidence.
+
+When the gates fail, or a blocking finding survives the refuter, the builder gets another round, with the failures in its prompt. The task stops when:
 
 - the same failure comes back after a round (`gate_fail` or `review_block`);
 - three remediation rounds, four builds in all, did not clear it.

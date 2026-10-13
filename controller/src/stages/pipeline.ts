@@ -33,7 +33,7 @@ import { buildCategory, sdkCategory, type Category } from "../task/taxonomy.ts";
 import { commitArtifacts, freshness, inputsOf, isCommitted, recover, specDigest, type Output } from "./commit.ts";
 import { findingFingerprint, gateFingerprint } from "./fingerprint.ts";
 import { OUTPUTS } from "./outputs.ts";
-import { approvePrompt, buildPrompt, reviewPrompt, specPrompt, summarizePrompt, triagePrompt, type TaskText } from "./prompts.ts";
+import { approvePrompt, buildPrompt, refutePrompt, reviewPrompt, specPrompt, summarizePrompt, triagePrompt, type TaskText } from "./prompts.ts";
 import { latestRound, roundLabel, roundPath } from "./rounds.ts";
 
 export interface Deps {
@@ -112,6 +112,13 @@ interface Finding {
   title: string;
   failure_scenario: string;
   fix: string;
+}
+
+interface Refutation {
+  finding_id: string;
+  decision: "refuted" | "upheld" | "unclear";
+  evidence: string;
+  model: string;
 }
 
 interface Remediation {
@@ -498,15 +505,45 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     return [out(roundPath(`${r.label}.json`, n), { schema_version: 1, task_id: taskId, reviewer: r.agent, model, candidate_commit: candidate(n), ...(outcome.structured as object) }, "review.schema.json")];
   };
 
-  const blockingFindings = (n: number): { reviewer: string; finding: Finding }[] =>
-    REVIEWERS.flatMap((r) => ((readJson(roundPath(`${r.label}.json`, n)) as { findings: Finding[] }).findings).filter((f) => f.severity === "blocking").map((finding) => ({ reviewer: r.agent, finding })));
+  /** Every blocking finding of round n, with an id unique across reviewers (`review-code/F-1`). */
+  const blockingFindings = (n: number): { id: string; reviewer: string; finding: Finding }[] =>
+    REVIEWERS.flatMap((r) =>
+      (readJson(roundPath(`${r.label}.json`, n)) as { findings: Finding[] }).findings
+        .filter((f) => f.severity === "blocking")
+        .map((finding) => ({ id: `${r.label}/${finding.id}`, reviewer: r.agent, finding })),
+    );
+
+  // The refuter pass (P1-03): one session per blocking finding tries to prove it wrong.
+  const refute = (n: number) => async (): Promise<Output[]> => {
+    resetClone(worktree, candidate(n));
+    prepareBundle(n, []);
+    const refutations: Refutation[] = [];
+    for (const b of blockingFindings(n)) {
+      const label = roundLabel(`refute-${b.id.replace("review-", "").replace("/", "-")}`, n);
+      const outcome = await session({
+        stage: "refute", agent: "refuter", label, cwd: worktree, prompt: refutePrompt({ bundleDir, findingId: b.id, finding: b.finding }),
+        outputSchema: OUTPUTS.refutation(), extraDirs: [bundleDir], guard: readOnlyGuard(worktree, workDir(label), [bundleDir]),
+      });
+      const answer = outcome.structured as Pick<Refutation, "decision" | "evidence">;
+      refutations.push({ finding_id: b.id, decision: answer.decision, evidence: answer.evidence, model: outcome.models[0] ?? release.config.model_pins[release.config.routing["refuter"]?.model ?? ""] ?? "unknown" });
+    }
+    return [out(roundPath("refutations.json", n), { schema_version: 1, task_id: taskId, round: n, candidate_commit: candidate(n), refutations }, "refutation.schema.json")];
+  };
+
+  /** The blocking findings the refuter did not refute: upheld and unclear ones still block, whatever any model says later. */
+  const surviving = (n: number): { id: string; reviewer: string; finding: Finding }[] => {
+    const all = blockingFindings(n);
+    if (all.length === 0) return [];
+    const answers = (readJson(roundPath("refutations.json", n)) as { refutations: Refutation[] }).refutations;
+    return all.filter((b) => answers.find((a) => a.finding_id === b.id)?.decision !== "refuted");
+  };
 
   /** What round n left to fix, and whether another round may fix it. Deterministic: it reads only committed artifacts. */
   const remediation = (n: number) => (): Promise<Output[]> => {
     const g = readJson(roundPath("gates.json", n)) as GatesResult;
     const source: Remediation["source"] = g.passed ? "review" : "gates";
     const items: Remediation["items"] = g.passed
-      ? blockingFindings(n).map(({ reviewer, finding: f }) => ({
+      ? surviving(n).map(({ reviewer, finding: f }) => ({
           fingerprint: findingFingerprint(f), kind: "finding", ref: `${reviewer} ${f.id}`, file: f.file, line: f.line, title: f.title,
           detail: `${f.failure_scenario} Fix: ${f.fix}`.slice(0, DETAIL_LIMIT),
         }))
@@ -553,22 +590,26 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
 
   const approve = (n: number) => async (): Promise<Output[]> => {
     const decision = readJson("policy.json") as Decision;
-    prepareBundle(n, [["policy.json", "policy.json"], ...reviewCopies(n)]);
+    const refuted = has(roundPath("refutations.json", n));
+    prepareBundle(n, [["policy.json", "policy.json"], ...reviewCopies(n), ...(refuted ? [[roundPath("refutations.json", n), "refutations.json"] as [string, string]] : [])]);
     const outcome = await session({
-      stage: "approve", agent: "approver", label: "approve", cwd: bundleDir, prompt: approvePrompt({ bundleDir }),
+      stage: "approve", agent: "approver", label: "approve", cwd: bundleDir, prompt: approvePrompt({ bundleDir, refutations: refuted }),
       outputSchema: OUTPUTS.verdict(), extraDirs: [], guard: readOnlyGuard(bundleDir, workDir("approve")),
     });
     return [out("verdict.json", { schema_version: 1, task_id: taskId, candidate_commit: candidate(n), tier: decision.tier, ...(outcome.structured as object) }, "verdict.schema.json")];
   };
 
-  const approveExit = (): void => {
+  const approveExit = (n: number) => (): void => {
+    // A blocking finding the refuter did not refute blocks, whatever the verdict says (P1-03).
+    const blocking = surviving(n);
+    if (blocking.length > 0) fail("approve", "review_block", `blocking finding(s) the refuter did not refute: ${blocking.map((b) => b.id).join(", ")}`, "upheld_finding");
     const verdict = readJson("verdict.json") as { decision: string; rationale: string };
     if (verdict.decision === "reject") fail("approve", "review_block", `the approver rejected the change: ${verdict.rationale}`);
     moveTo("POLICY");
   };
 
   const summarize = (n: number) => async (): Promise<Output[]> => {
-    prepareBundle(n, [["policy.json", "policy.json"], ...reviewCopies(n), ["verdict.json", "verdict.json"]]);
+    prepareBundle(n, [["policy.json", "policy.json"], ...reviewCopies(n), ...(has(roundPath("refutations.json", n)) ? [[roundPath("refutations.json", n), "refutations.json"] as [string, string]] : []), ["verdict.json", "verdict.json"]]);
     const outcome = await session({
       stage: "summarize", agent: "summarizer", label: "summarize", cwd: bundleDir, prompt: summarizePrompt({ bundleDir }),
       outputSchema: OUTPUTS.summary(), extraDirs: [], guard: readOnlyGuard(bundleDir, workDir("summarize")),
@@ -692,16 +733,18 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       const reviewInputs = [roundPath("build.json", n), roundPath("gates.json", n), "spec.yaml", "spec.md"];
       if (clean) {
         for (const r of REVIEWERS) await runStep({ label: roundLabel(r.label, n), stage: "review", inputs: reviewInputs, run: review(r, n), exit: noExit });
-        clean = blockingFindings(n).length === 0;
+        const reviews = REVIEWERS.map((r) => roundPath(`${r.label}.json`, n));
+        if (blockingFindings(n).length > 0) await runStep({ label: roundLabel("refute", n), stage: "refute", inputs: [...reviewInputs, ...reviews], run: refute(n), exit: noExit });
+        clean = surviving(n).length === 0;
       }
       if (clean) break;
-      const remediationInputs = [...reviewInputs, ...(((readJson(roundPath("gates.json", n)) as GatesResult).passed) ? REVIEWERS.map((r) => roundPath(`${r.label}.json`, n)) : []), ...Array.from({ length: n - 1 }, (_, k) => roundPath("remediation.json", k + 1))];
+      const remediationInputs = [...reviewInputs, ...(((readJson(roundPath("gates.json", n)) as GatesResult).passed) ? [...REVIEWERS.map((r) => roundPath(`${r.label}.json`, n)), roundPath("refutations.json", n)] : []), ...Array.from({ length: n - 1 }, (_, k) => roundPath("remediation.json", k + 1))];
       await runStep({ label: roundLabel("remediation", n), stage: "remediation", inputs: remediationInputs, run: remediation(n), exit: remediationExit(n) });
     }
     const n = round;
-    const reviews = REVIEWERS.map((r) => roundPath(`${r.label}.json`, n));
+    const reviews = [...REVIEWERS.map((r) => roundPath(`${r.label}.json`, n)), roundPath("refutations.json", n)];
     await runStep({ label: "policy", stage: "policy", inputs: [roundPath("build.json", n), roundPath("gates.json", n), "triage.json", "spec.yaml"], run: policy(n), exit: noExit });
-    await runStep({ label: "approve", stage: "approve", inputs: ["policy.json", ...reviews], run: approve(n), exit: approveExit });
+    await runStep({ label: "approve", stage: "approve", inputs: ["policy.json", ...reviews], run: approve(n), exit: approveExit(n) });
     await runStep({ label: "summarize", stage: "summarize", inputs: ["verdict.json"], run: summarize(n), exit: noExit });
     await runStep({ label: "publish", stage: "publish", inputs: ["summary.json", "policy.json", roundPath("build.json", n)], run: publish(n), exit: publishExit });
   } catch (e) {
