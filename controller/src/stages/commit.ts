@@ -69,13 +69,14 @@ export interface StepRef {
   round: number;
 }
 
-/** Stage, commit, finalize. Returns the commit event's payload. */
-export function commitArtifacts(store: EventStore, dir: string, step: StepRef, inputs: Record<string, string>, outputs: readonly Output[]): Commit {
+/** Stage, commit, finalize. Returns the commit event's payload. `probe` marks the instants between (kill-point tests). */
+export function commitArtifacts(store: EventStore, dir: string, step: StepRef, inputs: Record<string, string>, outputs: readonly Output[], probe: (point: string) => void = () => undefined): Commit {
   if (outputs.length === 0) throw new Error(`${step.label} committed no artifacts`);
   for (const o of outputs) {
     mkdirSync(dirname(join(dir, o.path)), { recursive: true, mode: 0o700 });
     writeAtomic(join(dir, `${o.path}${PENDING}`), o.content);
   }
+  probe(`${step.label}:staged`);
   const attempt = commits(store.events(step.taskId)).filter((c) => c.label === step.label && c.round === step.round).length + 1;
   const commit: Commit = {
     stage: step.stage,
@@ -87,6 +88,7 @@ export function commitArtifacts(store: EventStore, dir: string, step: StepRef, i
     artifacts: outputs.map((o) => ({ path: o.path, digest: sha256(o.content) })),
   };
   store.append({ task_id: step.taskId, actor: { kind: "factoryctl", id: "factoryctl" }, type: "artifact_committed", payload: { ...commit } });
+  probe(`${step.label}:committed`);
   for (const o of outputs) finalize(join(dir, o.path));
   return commit;
 }

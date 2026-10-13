@@ -2,7 +2,9 @@
 // policy → approve → summarize → publish (ROADMAP §2.1; humans merge every tier in P1). Each
 // step commits its artifacts through the commit protocol (commit.ts), so a crash leaves a step
 // committed or not, and `resume` continues from the first step whose commit is missing or
-// stale; each step's exit transition is idempotent and forward-only.
+// stale; each step's exit transition is idempotent and forward-only. Every push and GitHub
+// write goes through the outbox (github/outbox.ts), whose dangling intents are reconciled before
+// anything else runs, so a killed run neither repeats an effect nor loses one.
 //
 // Bounded loops (P1-01): red gates or a blocking finding start a remediation round, with the
 // findings in the next build's prompt; the same finding twice, or a round past the policy's
@@ -16,8 +18,9 @@ import { cacheVolumeFor } from "../../../gates/src/run.ts";
 import { activeMs, budgetTier, calibrate, completedRuns, monthOf, monthSpend, sessionCap, taskSpend } from "../budget/budget.ts";
 import { writeManifest } from "../bundle/manifest.ts";
 import { writeAtomic } from "../fsutil.ts";
-import { changedFiles, commitAll, createTaskClone, diffPatch, GitError, head, pushFromMirror, resetClone, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
+import { changedFiles, commitAll, createTaskClone, diffPatch, GitError, head, resetClone, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
 import type { GitHub } from "../github/client.ts";
+import { createOutbox } from "../github/outbox.ts";
 import { describeHalt, readHalt } from "../halt.ts";
 import { runDir, worktreeDir, type Home } from "../home.ts";
 import { evaluate, type Decision, type RiskPolicy, type Tier } from "../policy/engine.ts";
@@ -38,7 +41,8 @@ import { latestRound, roundLabel, roundPath } from "./rounds.ts";
 
 export interface Deps {
   runner: SessionRunner;
-  runGates: (o: GateRunOptions) => Promise<GatesResult>;
+  /** `label` names the round's gate step (`gates`, `gates-r2`): replayed gates answer by it. */
+  runGates: (o: GateRunOptions, label: string) => Promise<GatesResult>;
   /** Builds the gate image if it is missing; called in factoryctl's own environment. */
   gateImage: () => string;
   /** Settings the build-stage preflight needs to reach the container engine (DOCKER_HOST and the FACTORY_* gate settings); never a credential. */
@@ -52,6 +56,8 @@ export interface Deps {
   log: (line: string) => void;
   /** The clock for the wall-clock limit (tests); defaults to the system clock. */
   now?: () => Date;
+  /** Test-only kill points (`--replay` with `kill_at`): called at named instants of a run; absent in a real run. */
+  probe?: (point: string) => void;
 }
 
 export interface PipelineInputs {
@@ -168,8 +174,10 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
 
   // --- small helpers -------------------------------------------------------------------
   const now = (): Date => deps.now?.() ?? new Date();
+  const probe = deps.probe ?? (() => undefined);
+  const outbox = createOutbox({ store, taskId, github: deps.github, auth: deps.auth, probe, log: deps.log });
   const state = (): State => currentState(store.events(taskId));
-  const emit = (type: "stage_started" | "stage_completed" | "stage_failed" | "side_effect_intent" | "side_effect_done" | "command", payload: Record<string, unknown>): FactoryEvent =>
+  const emit = (type: "stage_started" | "stage_completed" | "stage_failed" | "command", payload: Record<string, unknown>): FactoryEvent =>
     store.append({ task_id: taskId, actor: { kind: "factoryctl", id: "factoryctl" }, type, payload });
   // Exit transitions only move forward: re-applying an earlier step's exit on resume is a no-op.
   const rank = (s: State, payload: Record<string, unknown>): number => {
@@ -455,6 +463,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     resetClone(worktree, candidate(n));
     const label = roundLabel("gates", n);
     emit("stage_started", { stage: "gates", label, round: n });
+    probe(`${label}:running`);
     const started = Date.now();
     const result = await deps.runGates({
       worktree, base: c.base_commit, taskId, profile, image: deps.gateImage(), cacheVolume: cacheVolumeFor(task.target.repo), osvVolume: "sf-gates-osv",
@@ -463,7 +472,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       log: (l) => {
         deps.log(`${taskId}: gates: ${l}`);
       },
-    });
+    }, label);
     const artifact = out(roundPath("gates.json", n), result, "gates.schema.json");
     emit("stage_completed", { stage: "gates", label, ok: result.passed, failing: result.gates.filter((g) => g.status !== "pass").map((g) => g.name), duration_ms: Date.now() - started, round: n });
     return [artifact];
@@ -622,28 +631,23 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     const cand = candidate(n);
     resetClone(worktree, cand);
     const decision = readJson("policy.json") as Decision;
-    emit("side_effect_intent", { kind: "push", branch: c.branch, commit: cand });
-    const push = (): string => {
-      try {
-        return pushFromMirror(c.mirror, worktree, c.branch, c.remote, deps.auth);
-      } catch (e) {
-        // The branch moved on the remote: someone else's commits, never overwritten.
-        if (e instanceof GitError && /\[rejected\]|non-fast-forward|fetch first/.test(e.message)) fail("publish", "merge_conflict", `the remote's ${c.branch} has commits the candidate lacks`, "push_rejected");
-        throw e;
-      }
-    };
-    const pushed = push();
+    const where = { stage: "publish", round: n };
+    let pushed: string;
+    try {
+      pushed = await outbox.push(where, { remote: c.remote, mirror: c.mirror, clone: worktree, branch: c.branch, commit: cand });
+    } catch (e) {
+      // The branch moved on the remote: someone else's commits, never overwritten.
+      if (e instanceof GitError && /\[rejected\]|non-fast-forward|fetch first/.test(e.message)) fail("publish", "merge_conflict", `the remote's ${c.branch} has commits the candidate lacks`, "push_rejected");
+      throw e;
+    }
     if (pushed !== cand) fail("publish", "merge_conflict", `the mirror holds ${pushed} for ${c.branch}, not ${cand}`);
-    emit("side_effect_done", { kind: "push", branch: c.branch, commit: pushed });
     let pr: { number: number; url: string } | null = null;
     if (deps.github !== null) {
       const summary = readJson("summary.json") as { pr_body: string };
       const footer = `\n\n---\nFactory task ${taskId} · tier ${decision.tier} · candidate ${cand.slice(0, 12)} · the policy engine, not a model, decides what may merge.`;
-      emit("side_effect_intent", { kind: "pull_request", branch: c.branch });
-      pr = (await deps.github.findPullRequest(task.target.repo, c.branch)) ?? (await deps.github.createPullRequest({
-        repo: task.target.repo, head: c.branch, base: c.base_branch, title: `[factory] ${taskId}: ${task.title}`, body: summary.pr_body + footer, draft: decision.tier === "Restricted",
-      }));
-      emit("side_effect_done", { kind: "pull_request", number: pr.number, url: pr.url });
+      pr = await outbox.pullRequest(where, {
+        repo: task.target.repo, head: c.branch, base: c.base_branch, title: `[factory] ${taskId}: ${task.title}`, body: summary.pr_body + footer, draft: decision.tier === "Restricted", commit: cand,
+      });
     }
     return [out("publish.json", { branch: c.branch, head_commit: pushed, pr_number: pr?.number ?? null, pr_url: pr?.url ?? null }, null)];
   };
@@ -657,6 +661,30 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     throw new Stop();
   };
 
+  /**
+   * At the merge gate, the PR decides: merged ends the task MERGED and then DONE (no deploy stage
+   * in P1); closed without a merge is the operator's no, `human_rejected`. Without GitHub access
+   * or a PR, the task waits.
+   */
+  async function mergeGate(): Promise<State> {
+    const at = state();
+    if (deps.github === null || !has("publish.json")) return at;
+    const p = readJson("publish.json") as { pr_number: number | null; pr_url: string | null };
+    if (p.pr_number === null) return at;
+    const pr = await deps.github.pullRequest(task.target.repo, p.pr_number);
+    if (pr.merged) {
+      transition(store, taskId, "MERGED", { pr_number: pr.number, pr_url: pr.url, head_commit: pr.headSha });
+      transition(store, taskId, "DONE", {});
+      deps.log(`${taskId}: ${pr.url} was merged`);
+    } else if (pr.state === "closed") {
+      const detail = { stage: "merge-gate", category: "human_rejected", reason: `${pr.url} was closed without a merge`, cause: "pr_closed" };
+      emit("stage_failed", detail);
+      transition(store, taskId, "FAILED", detail);
+      deps.log(`${taskId}: ${pr.url} was closed without a merge (human_rejected)`);
+    }
+    return state();
+  }
+
   // --- the run loop ----------------------------------------------------------------------
   // Each step names the committed files it reads: a step is done while its latest commit was
   // made from those inputs and its own files are intact (commit.ts).
@@ -669,15 +697,17 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     if (fresh !== "done") {
       checkLimits(step.stage);
       if (fresh !== "never") deps.log(`${taskId}: ${step.label} runs again (${fresh === "inputs_changed" ? "its inputs changed" : "a committed file changed on disk"})`);
+      probe(`${step.label}:run`);
       const outputs = await step.run();
-      commitArtifacts(store, dir, { taskId, stage: step.stage, label: step.label, round }, stepInputs, outputs);
+      commitArtifacts(store, dir, { taskId, stage: step.stage, label: step.label, round }, stepInputs, outputs, probe);
+      probe(`${step.label}:exit`);
     }
     step.exit();
   }
 
   const initial = state();
   if (isTerminal(initial)) return initial;
-  if (initial === "NEEDS_HUMAN" && currentStatePayload(store.events(taskId))["gate"] === "merge") return initial;
+  if (initial === "NEEDS_HUMAN" && currentStatePayload(store.events(taskId))["gate"] === "merge") return mergeGate();
 
   // A run the process did not live to end gets its end from the heartbeat, so the wall clock counts only active time.
   const heartbeatPath = join(dir, "heartbeat.json");
@@ -716,6 +746,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     const recovered = recover(dir, store.events(taskId));
     for (const p of recovered.rolledForward) deps.log(`${taskId}: recovered ${p}, committed before an interruption`);
     for (const p of recovered.removed) deps.log(`${taskId}: removed ${p}, never committed`);
+    for (const r of await outbox.reconcile()) deps.log(`${taskId}: reconciled ${r.key} (attempt ${String(r.attempt)}): ${r.outcome === "found" ? "it happened before the interruption" : "it never happened"}`);
 
     await runStep({ label: "checkout", stage: "checkout", inputs: ["task.json"], run: checkout, exit: noExit });
     await runStep({ label: "triage", stage: "triage", inputs: ["task.json", "task.md"], run: triage, exit: () => {

@@ -10,6 +10,7 @@ import type { GatesResult } from "../../../gates/src/run.ts";
 import type { Check } from "../doctor.ts";
 import { buildTargetRepo, fixtureNames, loadFixture, mirrorRepo } from "../fixtures/targets.ts";
 import type { CheckRun, GitHub } from "../github/client.ts";
+import { memoryGitHub } from "../github/testing.ts";
 import { ensureHome, factoryHome, runDir, worktreeDir, type Home } from "../home.ts";
 import { loadRelease, type Release } from "../release.ts";
 import { installRelease, makeWritable } from "../release/install.ts";
@@ -86,11 +87,12 @@ async function dryRun(w: World, name: string, kind: "sdk" | "replay" = "sdk"): P
     approve: answer(pins["opus"] ?? "", { decision: "approve", confidence: 95, criteria: [{ ac_id: "AC-1", met: true, evidence: "docs/g0.md added" }], blocking_findings: [], rationale: "AC-1 met." }),
     summarize: answer(pins["haiku"] ?? "", { pr_body: "Adds docs/g0.md.", changelog: "Document the dry run" }),
   });
+  const memory = memoryGitHub();
   const github: GitHub = {
-    findPullRequest: () => Promise.resolve(null),
-    createPullRequest: () => {
+    ...memory,
+    createPullRequest: async (input) => {
       w.prs.push(repo);
-      return Promise.resolve({ number: w.prs.length, url: `https://github.com/${repo}/pull/${String(w.prs.length)}` });
+      return memory.createPullRequest(input);
     },
   };
   const gates = (o: { worktree: string; taskId: string }): Promise<GatesResult> =>

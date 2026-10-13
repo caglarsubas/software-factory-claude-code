@@ -30,7 +30,7 @@ unset ANTHROPIC_API_KEY                 # it would override the key file
 
 Sessions authenticate through `apiKeyHelper`, which reads that file. Every session is denied the file, by Read rules and by the sandbox.
 
-`FACTORY_GITHUB_TOKEN` stays in the shell that runs `factoryctl`. It reaches only the `git push` from the mirror and the PR call. Without it, a run pushes nothing and opens no PR.
+`FACTORY_GITHUB_TOKEN` stays in the shell that runs `factoryctl`. It reaches only the `git push` from the mirror and the PR calls. Without it, a run pushes nothing and opens no PR. On GitHub Enterprise, set `FACTORY_GITHUB_API_URL` to its API: `factoryctl` sends the token only over https.
 
 ### Install a release
 
@@ -114,7 +114,7 @@ The evidence lives in `$FACTORY_HOME/runs/T-0001/`:
 
   `approve` refuses to run inside a Claude Code session (`CLAUDECODE` set): an agent never approves its own work. The approval is bound to the spec you read: if the spec runs again, the task stops at the spec gate for a new approval.
 
-- **Merge gate:** review the PR on GitHub (the diff, the factory's summary, the gate results) and merge it yourself, or close it.
+- **Merge gate:** review the PR on GitHub (the diff, the factory's summary, the gate results) and merge it yourself, or close it. Then run `factoryctl resume T-0001`: it reads the PR and ends the task `DONE` when it was merged, or `FAILED` as `human_rejected` when it was closed without a merge.
   - `factoryctl approve --gate merge` deliberately does nothing.
   - From Phase 2 the `policy-check` workflow requires your GitHub review on R3 changes.
 
@@ -130,10 +130,10 @@ The evidence lives in `$FACTORY_HOME/runs/T-0001/`:
 
 | Situation | What to do |
 |---|---|
-| `factoryctl` crashed, the host rebooted, or you pressed Ctrl-C | `factoryctl resume T-0001`. Every step commits its files through an event, so a crash leaves each step committed or not. The run continues from the first step that is not, a file half-written by the crash is rolled forward or removed, and a transition lost in the crash is repaired. |
+| `factoryctl` crashed, was killed, the host rebooted, or you pressed Ctrl-C | `factoryctl resume T-0001`. Every step commits its files through an event, so a crash leaves each step committed or not. The run continues from the first step that is not, a file half-written by the crash is rolled forward or removed, and a transition lost in the crash is repaired. A push or PR the crash interrupted is looked up before anything runs: it is recorded if it happened and made later if not, never twice. Session processes and gate containers the dead run left behind are stopped. |
 | You edited or removed a file in `runs/T-0001/` | Its step runs again on the next `resume`, and so does every step that read it. A spec that changes needs your approval again. |
 | "T-0001 was started by a factoryctl without the commit protocol" | The task began on v0.1.x. Finish it with that release (`factoryctl release use v0.1.2`), or create a new task. |
-| "T-0001 is running (pid …)" | Another `factoryctl` holds the run lock. A lock whose process has died is cleared on the next run. |
+| "T-0001 is running (pid …)" | Another `factoryctl` holds the run lock. A lock whose process has died, or whose pid now belongs to another process, is cleared on the next run; `halt`, `cancel` and `reject` never signal such a pid. |
 | A task `FAILED` | `factoryctl report T-0001` gives its category, one of the ten in [the taxonomy](#failure-taxonomy-and-weekly-review), and the cost of each stage. A failed task is final: fix the cause, then create a new task. |
 | A task should stop for good | `factoryctl cancel T-0001`. A running session is signalled and the task ends at once. |
 | A new release misbehaves | `factoryctl release use v0.1.0` pins an earlier installed release; `factoryctl release status` lists them and verifies each one's files. |
@@ -204,7 +204,7 @@ Every failed task carries exactly one category (P1-07):
 | `api_error` | a session or `factoryctl` itself failed |
 | `merge_conflict` | the task's branch moved on the remote |
 | `wall_clock` | the task used up its 90 minutes of active time |
-| `human_rejected` | you rejected it with `factoryctl reject` |
+| `human_rejected` | you rejected it with `factoryctl reject`, or closed its PR without merging |
 
 Once a week, run `factoryctl report --week 2026-W42` (the ISO week, in UTC) and add the row it prints to the weekly table in STATUS. It counts the live tasks created that week by outcome: aggregates only, which is all the public repository may hold. Replayed tasks never count.
 
@@ -287,6 +287,7 @@ The operator signs each gate by approving its evidence PR. For G0, take these st
 | `runs/<task>/` | the evidence bundle and transcripts |
 | `releases/<sha>/`, `current`, `bin/factoryctl` | installed releases, the pin, the shim |
 | `mirrors/`, `worktrees/<task>/`, `sessions/<task>/` | bare mirrors, per-task clones, per-task session homes |
+| `procs/` | the running sessions' processes, so a run that dies leaves none behind |
 | `secrets/` | the API key file; never readable by a session |
 | `gates/<gate>/` | gate snapshots and evidence |
 | `HALT`, `halt.log` | the kill switch and its audit trail |

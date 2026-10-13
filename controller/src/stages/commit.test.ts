@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { sha256, writeAtomic } from "../fsutil.ts";
 import { acquireRunLock, factoryHome, LockError, readLock } from "../home.ts";
+import { startTime } from "../proc.ts";
 import { EventStore } from "../store/events.ts";
 import { commitArtifacts, freshness, inputDigest, inputsOf, latestCommit, recover, specDigest } from "./commit.ts";
 
@@ -111,16 +112,18 @@ describe("the run lock", () => {
   it("appears whole, admits one runner, and replaces a dead holder's lock", () => {
     const home = factoryHome({ FACTORY_HOME: join(scratch, `home-${String(++n)}`) });
     mkdirSync(home.root, { recursive: true });
-    const release = acquireRunLock(home, "T-0001");
-    expect(readLock(home)).toEqual({ pid: process.pid, task_id: "T-0001" });
+    const lock = acquireRunLock(home, "T-0001");
+    expect(lock.stale).toBeNull();
+    expect(readLock(home)).toEqual({ pid: process.pid, start_time: startTime(process.pid), task_id: "T-0001" });
     expect(() => acquireRunLock(home, "T-0002")).toThrow(LockError);
     expect(readdirSync(home.root)).toEqual(["run.lock"]);
-    release();
-    // A lock whose process is gone is stale.
-    writeFileSync(home.lock, JSON.stringify({ pid: 2 ** 22 + 1, task_id: "T-0009" }));
+    lock.release();
+    // A lock whose process is gone is stale, and is handed back so the caller can clean up after it.
+    writeFileSync(home.lock, JSON.stringify({ pid: 2 ** 22 + 1, start_time: "1", task_id: "T-0009" }));
     const again = acquireRunLock(home, "T-0003");
+    expect(again.stale).toMatchObject({ task_id: "T-0009" });
     expect(readLock(home)?.task_id).toBe("T-0003");
-    again();
+    again.release();
     expect(existsSync(home.lock)).toBe(false);
   });
 });

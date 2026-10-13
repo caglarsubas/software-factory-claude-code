@@ -46,6 +46,23 @@ export function killGateContainers(): number {
   return ids.length;
 }
 
+/**
+ * Reaping (P1-02): removes the containers and data volumes a task's gate runs left behind when
+ * their factoryctl died. Gate runs are named `sf-gates-<task>-<random>`; returns how many
+ * containers it removed.
+ */
+export function removeTaskContainers(taskId: string): number {
+  const prefix = `sf-gates-${taskId.toLowerCase()}-`;
+  const list = (args: string[]): string[] => {
+    const r = spawnSync(ENGINE, args, { encoding: "utf8" });
+    return r.status === 0 ? r.stdout.split("\n").filter((n) => n.startsWith(prefix)) : [];
+  };
+  const containers = list(["ps", "--all", "--filter", `label=${LABEL}`, "--format", "{{.Names}}"]);
+  if (containers.length > 0) spawnSync(ENGINE, ["rm", "--force", ...containers], { stdio: "ignore" });
+  for (const v of list(["volume", "ls", "--quiet", "--filter", `label=${LABEL}`]).filter((n) => n.endsWith("-data"))) removeVolume(v);
+  return containers.length;
+}
+
 export interface VolumeMount {
   volume: string;
   target: string;

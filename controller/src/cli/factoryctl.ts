@@ -19,24 +19,28 @@
 //   factoryctl doctor
 //
 // FACTORY_HOME holds run state (default ~/.factory); FACTORY_RELEASE overrides the release the
-// running code belongs to; FACTORY_GITHUB_TOKEN pushes and opens PRs. --replay replays
-// recorded transcripts instead of calling a model: zero tokens.
+// running code belongs to; FACTORY_GITHUB_TOKEN pushes and opens PRs, against
+// FACTORY_GITHUB_API_URL (default https://api.github.com). --replay replays recorded transcripts
+// instead of calling a model: zero tokens; its replay.json holds test-only injection
+// (session/injection.ts).
 import { spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { engineHost, killGateContainers, PROXY_ENV } from "../../../gates/src/container.ts";
+import { engineHost, killGateContainers, PROXY_ENV, removeTaskContainers } from "../../../gates/src/container.ts";
 import { runGates } from "../../../gates/src/run.ts";
 import { ensureImage } from "../../../gates/src/image.ts";
 import { runBypassVariants } from "../../../plugin/hooks/bypass-cases.ts";
 import { doctor } from "../doctor.ts";
 import { beginG0, evaluateG0, writeEvidence } from "../gate/g0.ts";
-import { restCommitChecks, restGitHub } from "../github/client.ts";
+import { githubApiUrl, GitHubError, isLoopbackApi, restCommitChecks, restGitHub } from "../github/client.ts";
 import { clearHalt, describeHalt, readHalt, setHalt } from "../halt.ts";
-import { acquireRunLock, ensureHome, factoryHome, readLock, runDir, type Home } from "../home.ts";
+import { acquireRunLock, ensureHome, factoryHome, liveHolder, runDir, type Home } from "../home.ts";
+import { reap } from "../proc.ts";
 import { loadRelease } from "../release.ts";
 import { checkReleaseFiles, findRelease, installRelease, listReleases, pinnedSha, pinRelease, writeShim } from "../release/install.ts";
 import { createValidator } from "../schemas/validate.ts";
+import { isLocalRemote, killAt, readInjection, replayedGates } from "../session/injection.ts";
 import { replayRunner } from "../session/replay.ts";
 import { sdkRunner } from "../session/runner.ts";
 import { calibrate, completedRuns, monthOf, monthSpend, TIERS } from "../budget/budget.ts";
@@ -113,26 +117,52 @@ function printTaskReport(r: TaskReport): void {
   if (r.findings !== null) out(`findings: ${Object.entries(r.findings).map(([k, v]) => `${k} ${String(v)}`).join(", ")}`);
 }
 
+function apiUrl(): string {
+  try {
+    return githubApiUrl(process.env["FACTORY_GITHUB_API_URL"]);
+  } catch (e) {
+    return fail(e instanceof GitHubError ? e.message : String(e));
+  }
+}
+
 async function drive(home: Home, store: EventStore, taskId: string, replay: string | undefined): Promise<void> {
   const halt = readHalt(home);
   if (halt !== null) fail(`the factory is ${describeHalt(halt)}; lift it with: factoryctl unhalt --reason "…"`);
   const validator = createValidator();
   const release = loadRelease(validator);
   const token = process.env["FACTORY_GITHUB_TOKEN"];
-  const release_lock = acquireRunLock(home, taskId);
+  const api = apiUrl();
+  const injection = replay === undefined ? {} : readInjection(replay);
+  if (injection.gates !== undefined) {
+    const created = store.events(taskId).find((e) => e.type === "task_created");
+    const remote = created?.payload["remote"];
+    if (typeof remote !== "string" || !isLocalRemote(remote) || (token !== undefined && !isLoopbackApi(api))) fail("replayed gates need a task with a local remote and, with a GitHub token, a loopback FACTORY_GITHUB_API_URL");
+  }
+  const log = (line: string): void => {
+    process.stderr.write(`factoryctl: ${line}\n`);
+  };
+  const lock = acquireRunLock(home, taskId);
+  // Clean up after a run that died: its session process groups, and its gate containers.
+  if (lock.stale !== null) log(`the run of ${lock.stale.task_id} (pid ${String(lock.stale.pid)}) ended without releasing its lock; cleaning up after it`);
+  for (const c of reap(home)) log(`reaped ${c.task_id} ${c.label} (pid ${String(c.pid)}), left running by a run that died`);
+  if (lock.stale !== null && injection.gates === undefined) {
+    const removed = removeTaskContainers(lock.stale.task_id);
+    if (removed > 0) log(`removed ${String(removed)} gate container(s) of ${lock.stale.task_id}`);
+  }
   const abort = new AbortController();
   const onSignal = (): void => {
     abort.abort();
   };
   process.once("SIGTERM", onSignal);
   process.once("SIGINT", onSignal);
+  const probe = killAt(injection.kill_at);
   try {
     const state = await runTask({
       home, store, validator, release, taskId, abort,
       deps: {
-        runner: replay === undefined ? sdkRunner : replayRunner(replay),
-        runGates,
-        gateImage: () => ensureImage(),
+        runner: replay === undefined ? sdkRunner : replayRunner(replay, { standIn: true, ...(probe === undefined ? {} : { probe }) }),
+        runGates: injection.gates === undefined ? runGates : replayedGates(injection.gates),
+        gateImage: injection.gates === undefined ? () => ensureImage() : () => "software-factory-gates:replay",
         engineEnv: () => {
           const host = engineHost();
           // Gate settings and proxy settings for the setup container; a value with credentials in it stays behind.
@@ -143,12 +173,13 @@ async function drive(home: Home, store: EventStore, taskId: string, replay: stri
           });
           return Object.fromEntries([...(host === null ? [] : [["DOCKER_HOST", host] as const]), ...passed]);
         },
-        github: token === undefined ? null : restGitHub(token),
+        github: token === undefined ? null : restGitHub(token, api),
         auth: token === undefined ? null : { token },
         keyFile: keyFile(home),
         ...(process.env["FACTORY_GATES_FETCH_NETWORK"] === undefined ? {} : { gatesFetchNetwork: process.env["FACTORY_GATES_FETCH_NETWORK"] }),
         ...(process.env["FACTORY_GATES_CA_FILE"] === undefined ? {} : { gatesCaFile: process.env["FACTORY_GATES_CA_FILE"] }),
-        log: (line) => process.stderr.write(`factoryctl: ${line}\n`),
+        log,
+        ...(probe === undefined ? {} : { probe }),
       },
     });
     const payload = currentStatePayload(store.events(taskId));
@@ -156,7 +187,7 @@ async function drive(home: Home, store: EventStore, taskId: string, replay: stri
     out(`${taskId} ${state}${typeof payload["gate"] === "string" ? ` (gate: ${payload["gate"]})` : ""}${typeof payload["pr_url"] === "string" ? ` ${payload["pr_url"]}` : ""}${halted}`);
     if (state === "FAILED") process.exitCode = 1;
   } finally {
-    release_lock();
+    lock.release();
   }
 }
 
@@ -189,7 +220,8 @@ async function main(): Promise<void> {
     const reason = values.reason ?? "no reason given";
     const halt = setHalt(home, operator(), reason);
     haltLog(home, { command: "halt", reason });
-    const lock = readLock(home);
+    // Only a runner that is still the process it was: a reused pid is someone else's.
+    const lock = liveHolder(home);
     if (lock !== null) {
       try {
         process.kill(lock.pid, "SIGTERM");
@@ -296,7 +328,7 @@ async function main(): Promise<void> {
         return;
       case "status": {
         const ids = positionals[1] === undefined ? store.taskIds() : [taskArg(positionals, 1, store)];
-        const lock = readLock(home);
+        const lock = liveHolder(home);
         const halt = readHalt(home);
         if (halt !== null) out(`HALTED  ${describeHalt(halt)}`);
         for (const id of ids) {
@@ -313,7 +345,7 @@ async function main(): Promise<void> {
         if (isTerminal(currentState(store.events(id)))) fail(`${id} has already ended`);
         store.append({ task_id: id, actor: { kind: "operator", id: process.env["USER"] ?? "operator" }, type: "command", payload: { command: "cancel" } });
         transition(store, id, "CANCELLED", { by: "operator" });
-        const lock = readLock(home);
+        const lock = liveHolder(home);
         // The running stage stops at its next boundary; signal the runner to abort its session now.
         if (lock?.task_id === id) process.kill(lock.pid, "SIGTERM");
         out(`${id} CANCELLED`);
@@ -346,7 +378,7 @@ async function main(): Promise<void> {
         store.append({ task_id: id, actor: by, type: "command", payload: { command: "reject", reason: values.reason } });
         store.append({ task_id: id, actor: { kind: "factoryctl", id: "factoryctl" }, type: "stage_failed", payload: { stage, category: "human_rejected", reason: values.reason } });
         transition(store, id, "FAILED", { stage, category: "human_rejected", reason: values.reason, by: by.id });
-        const lock = readLock(home);
+        const lock = liveHolder(home);
         if (lock?.task_id === id) process.kill(lock.pid, "SIGTERM");
         out(`${id} FAILED (human_rejected)${currentStatePayload(events)["gate"] === "merge" ? "; close its PR on GitHub" : ""}`);
         return;
@@ -429,7 +461,7 @@ async function main(): Promise<void> {
         }
         const evidence = await evaluateG0({
           home, store, validator, release,
-          deps: { bypass: runBypassVariants, checks: restCommitChecks(process.env["FACTORY_GITHUB_TOKEN"] ?? null), doctor: doctor(home, release, keyFile(home)), repository: values.repo ?? null },
+          deps: { bypass: runBypassVariants, checks: restCommitChecks(process.env["FACTORY_GITHUB_TOKEN"] ?? null, apiUrl()), doctor: doctor(home, release, keyFile(home)), repository: values.repo ?? null },
         });
         const files = writeEvidence(home, evidence);
         for (const c of evidence.criteria) out(`${c.status.padEnd(5)}  ${c.id}  ${c.detail}`);

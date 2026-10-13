@@ -104,3 +104,10 @@ export function pushFromMirror(mirror: string, clone: string, branch: string, re
   git(mirror, [...NO_HOOKS, "push", "--quiet", remote, `refs/heads/${branch}:refs/heads/${branch}`], { env: authEnv(remote, auth) });
   return resolveCommit(mirror, `refs/heads/${branch}`);
 }
+
+/** The commit a remote branch points at, or null when the branch does not exist: what a push is reconciled against. */
+export function remoteBranchSha(cwd: string, remote: string, branch: string, auth: GitAuth | null): string | null {
+  const out = git(cwd, ["ls-remote", "--heads", remote, `refs/heads/${branch}`], { env: authEnv(remote, auth) });
+  const line = out.split("\n").find((l) => l.endsWith(`\trefs/heads/${branch}`));
+  return line === undefined ? null : (line.split("\t")[0] ?? null);
+}
