@@ -230,7 +230,11 @@ describe("a task through every stage, replayed", () => {
       expect(Object.keys(o.env ?? {}).sort(), req.label).toEqual([...ENV_ALLOWLIST].sort());
       expect(JSON.stringify(o.env), req.label).not.toMatch(/must-not-leak|agent\.sock/);
       expect(o.env?.["CLAUDE_CONFIG_DIR"], req.label).toContain(join(world.home.sessions, id));
-      expect(o.allowedTools, req.label).toEqual(release.tools.agents[agent]?.allow);
+      // Judgment stages answer through StructuredOutput; the builder has no output schema.
+      const allow = [...(release.tools.agents[agent]?.allow ?? []), ...(req.label === "build" ? [] : ["StructuredOutput"])];
+      expect(o.allowedTools, req.label).toEqual(allow);
+      expect(o.tools, req.label).toEqual(allow);
+      expect(o.agents?.[agent]?.tools, req.label).toEqual(expect.arrayContaining(req.label === "build" ? [] : ["StructuredOutput"]));
       expect(o.disallowedTools, req.label).toEqual(expect.arrayContaining(["WebFetch", "WebSearch", "Bash(git push*)"]));
       expect(o.plugins, req.label).toEqual([{ type: "local", path: release.pluginDir }]);
       expect(o.agents?.[agent]?.model, req.label).toMatch(/^claude-/);

@@ -40,5 +40,8 @@ export function result(model: string, opts: { structured?: unknown; text?: strin
   return (subtype === "success" ? { ...base, result: opts.text ?? "done", structured_output: opts.structured } : { ...base, errors: ["max turns reached"] }) as unknown as SDKMessage;
 }
 
-/** A judgment stage that answers with structured output and no tool calls. */
-export const answer = (model: string, structured: unknown): SDKMessage[] => [assistant(model, [text("Reviewed the bundle.")]), result(model, { structured })];
+/** A judgment stage that answers the way a live session does: through the SDK's StructuredOutput tool. */
+export const answer = (model: string, structured: unknown): SDKMessage[] => [
+  assistant(model, [text("Reviewed the bundle."), toolUse("StructuredOutput", structured as Record<string, unknown>)]),
+  result(model, { structured }),
+];

@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { STRUCTURED_OUTPUT_TOOL } from "./options.ts";
 import { collect, record, type SessionRunner, type StageRequest } from "./runner.ts";
 
 export type Transcripts = Record<string, SDKMessage[]>;
@@ -75,13 +76,18 @@ export function replayRunner(source: Transcripts | string): ReplayRunner {
       if (messages === undefined) throw new Error(`replay: no transcript for ${req.label}`);
       const cwd = req.options.cwd ?? process.cwd();
       async function* replay(): AsyncGenerator<SDKMessage> {
+        // As in a live session, a denied StructuredOutput call delivers no structured output.
+        let outputDenied = false;
         for (const m of messages ?? []) {
           for (const use of toolUses(m)) {
             const denied = await preToolUse(req.options, use, cwd);
             if (denied === null) apply(use, cwd);
-            else if (!req.denials.some((d) => d.reason === denied)) req.denials.push({ tool: use.name, reason: denied });
+            else {
+              if (use.name === STRUCTURED_OUTPUT_TOOL) outputDenied = true;
+              if (!req.denials.some((d) => d.reason === denied)) req.denials.push({ tool: use.name, reason: denied });
+            }
           }
-          yield m;
+          yield m.type === "result" && outputDenied && "structured_output" in m ? { ...m, structured_output: undefined } : m;
         }
       }
       return collect(replay(), req, record(req.transcript));

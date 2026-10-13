@@ -13,7 +13,7 @@ import type { CheckRun, GitHub } from "../github/client.ts";
 import { ensureHome, factoryHome, runDir, worktreeDir, type Home } from "../home.ts";
 import { loadRelease, type Release } from "../release.ts";
 import { installRelease, makeWritable } from "../release/install.ts";
-import { factorySource } from "../release/testing.ts";
+import { factorySource, RELEASE_TAG } from "../release/testing.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { replayRunner } from "../session/replay.ts";
 import type { SessionRunner } from "../session/runner.ts";
@@ -45,7 +45,7 @@ async function world(): Promise<World> {
   const root = join(scratch, `world-${String(++n)}`);
   const home = factoryHome({ FACTORY_HOME: join(root, "factory") });
   ensureHome(home);
-  const installed = await installRelease({ home, source, tag: "v0.1.0", by: "operator", validator, installDeps: () => undefined });
+  const installed = await installRelease({ home, source, tag: RELEASE_TAG, by: "operator", validator, installDeps: () => undefined });
   const checkout = join(root, "operator-checkout");
   mkdirSync(join(checkout, "src"), { recursive: true });
   mkdirSync(join(checkout, ".git"));
@@ -127,7 +127,7 @@ describe("gate G0", () => {
     const evidence = await evaluateG0({ home: w.home, store: w.store, validator, release: w.release, deps: deps(), now: new Date("2026-10-22T16:00:00Z") });
     expect(evidence.criteria.map((c) => `${c.id} ${c.status}`)).toEqual(["G0-1 pass", "G0-2 pass", "G0-3 pass", "G0-4 pass", "G0-5 human"]);
     expect(evidence.passed).toBe(true);
-    expect(evidence.release?.tag).toBe("v0.1.0");
+    expect(evidence.release?.tag).toBe(RELEASE_TAG);
     expect(evidence.criteria[0]?.evidence.join("\n")).toContain(`https://github.com/caglarsubas/factory-fixture-ts-mini/pull/`);
     expect(evidence.criteria[2]?.evidence.join("\n")).toMatch(/14 sessions, each env exactly the [0-9]+-name allowlist/);
     expect(evidence.criteria[4]?.evidence.join("\n")).toContain("**/auth/** → R3");

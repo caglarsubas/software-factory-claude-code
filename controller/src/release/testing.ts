@@ -5,6 +5,10 @@ import { cpSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync
 import { dirname, join } from "node:path";
 import { REPO_ROOT } from "../policy/load.ts";
 
+/** The tag a release of this working tree must carry: v<plugin.json version>. */
+export const PLUGIN_VERSION = (JSON.parse(readFileSync(join(REPO_ROOT, "plugin/.claude-plugin/plugin.json"), "utf8")) as { version: string }).version;
+export const RELEASE_TAG = `v${PLUGIN_VERSION}`;
+
 function git(cwd: string, args: string[]): string {
   const r = spawnSync("git", ["-c", "user.email=op@example.invalid", "-c", "user.name=op", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", ...args], { cwd, encoding: "utf8" });
   if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
@@ -12,7 +16,7 @@ function git(cwd: string, args: string[]): string {
 }
 
 /** A repository at `dest` holding this checkout's tracked and unignored files, tagged `tag`; returns the tagged commit. */
-export function factorySource(dest: string, tag = "v0.1.0", origin = "https://github.com/example/software-factory.git"): string {
+export function factorySource(dest: string, tag = RELEASE_TAG, origin = "https://github.com/example/software-factory.git"): string {
   const files = git(REPO_ROOT, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]).split("\0").filter((f) => f !== "" && existsSync(join(REPO_ROOT, f)));
   for (const f of files) {
     mkdirSync(dirname(join(dest, f)), { recursive: true });
