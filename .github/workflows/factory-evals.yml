@@ -52,7 +52,7 @@ jobs:
               --allow-tools Read --trust-plugin --no-publish -j 4 --json "$RUNNER_TEMP/$1.json"
           }
           summary() {
-            node -e 'const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); const a = d.aggregates; console.log(`| ${process.argv[2]} | ${a.casesPassed} of ${a.casesTotal} | ${a.overallScore.toFixed(2)} | $${d.costUsd.toFixed(2)} |`)' "$RUNNER_TEMP/$1.json" "$1" >> "$GITHUB_STEP_SUMMARY"
+            node scripts/eval-summary.ts "$RUNNER_TEMP/$1.json" "$1" >> "$GITHUB_STEP_SUMMARY"
           }
           printf '| Suite | Cases passed | Score | Cost |\n|---|---|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
           status=0
