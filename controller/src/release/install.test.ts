@@ -9,7 +9,7 @@ import { ensureHome, factoryHome } from "../home.ts";
 import { loadRelease } from "../release.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { findRelease, installRelease, listReleases, makeWritable, pinnedSha, pinRelease, repositoryOf, verifyRelease, writeShim } from "./install.ts";
-import { bumpRelease, factorySource, linkDeps } from "./testing.ts";
+import { bumpRelease, factorySource, linkDeps, PLUGIN_VERSION, RELEASE_TAG } from "./testing.ts";
 
 const validator = createValidator();
 const root = mkdtempSync(join(tmpdir(), "release-"));
@@ -26,10 +26,10 @@ const install = (tag: string, installDeps: (dir: string) => void = () => undefin
 
 describe("release install", () => {
   it("installs the tagged commit's tree read-only, with a valid RELEASE.json", async () => {
-    const r = await install("v0.1.0", linkDeps);
+    const r = await install(RELEASE_TAG, linkDeps);
     expect(r).toMatchObject({ dir: join(home.releases, sha), installed: true });
     expect(validator.validate("release.schema.json", JSON.parse(readFileSync(join(r.dir, "RELEASE.json"), "utf8"))).errors).toEqual([]);
-    expect(r.info).toMatchObject({ sha, tag: "v0.1.0", repository: "example/software-factory", installed_by: "operator", plugin_version: "0.1.0" });
+    expect(r.info).toMatchObject({ sha, tag: RELEASE_TAG, repository: "example/software-factory", installed_by: "operator", plugin_version: PLUGIN_VERSION });
     // Exactly the commit's files: the working tree's untracked and ignored files never ship.
     const tracked = spawnSync("git", ["-C", source, "ls-files"], { encoding: "utf8" }).stdout.trim().split("\n");
     for (const f of tracked.slice(0, 50)) expect(existsSync(join(r.dir, f)), f).toBe(true);
@@ -41,12 +41,12 @@ describe("release install", () => {
   });
 
   it("installs once, and refuses to reuse a release that was modified", async () => {
-    expect((await install("v0.1.0")).installed).toBe(false);
+    expect((await install(RELEASE_TAG)).installed).toBe(false);
     const file = join(home.releases, sha, "policies/risk.yaml");
     makeWritable(file);
     writeFileSync(file, `${readFileSync(file, "utf8")}# edited\n`);
     expect(verifyRelease(join(home.releases, sha), validator)).toMatchObject({ ok: false });
-    await expect(install("v0.1.0")).rejects.toThrow(/modified after install/);
+    await expect(install(RELEASE_TAG)).rejects.toThrow(/modified after install/);
     writeFileSync(file, readFileSync(file, "utf8").replace("# edited\n", ""));
     expect(verifyRelease(join(home.releases, sha), validator)).toMatchObject({ ok: true });
   });
@@ -55,23 +55,23 @@ describe("release install", () => {
     await expect(install("main")).rejects.toThrow(/version tag/);
     await expect(install("v9.9.9")).rejects.toThrow(/not a tag/);
     spawnSync("git", ["-C", source, "tag", "v0.0.9", sha]);
-    await expect(install("v0.0.9")).rejects.toThrow(/already installed as v0\.1\.0/);
+    await expect(install("v0.0.9")).rejects.toThrow(`already installed as ${RELEASE_TAG}`);
     spawnSync("git", ["-C", source, "-c", "user.email=op@example.invalid", "-c", "user.name=op", "commit", "-q", "--allow-empty", "-m", "unbumped"]);
     spawnSync("git", ["-C", source, "tag", "v0.2.0"]);
-    await expect(install("v0.2.0")).rejects.toThrow(/plugin version 0\.1\.0/);
-    expect(listReleases(home, validator).map((r) => r.tag)).toEqual(["v0.1.0"]);
+    await expect(install("v0.2.0")).rejects.toThrow(`plugin version ${PLUGIN_VERSION}`);
+    expect(listReleases(home, validator).map((r) => r.tag)).toEqual([RELEASE_TAG]);
     expect(spawnSync("ls", ["-A", home.releases], { encoding: "utf8" }).stdout.trim()).toBe(sha);
   });
 
   it("pins a release, moves the pin to another, and finds releases by tag or commit", async () => {
     expect(pinRelease(home, sha)).toBeNull();
     expect(readlinkSync(home.current)).toBe(join("releases", sha));
-    const next = bumpRelease(source, "0.1.1");
-    await install("v0.1.1");
+    const next = bumpRelease(source, "0.99.0");
+    await install("v0.99.0");
     expect(pinRelease(home, next)).toBe(sha);
     expect(pinnedSha(home)).toBe(next);
-    expect(findRelease(home, validator, "v0.1.0").sha).toBe(sha);
-    expect(findRelease(home, validator, sha.slice(0, 12)).tag).toBe("v0.1.0");
+    expect(findRelease(home, validator, RELEASE_TAG).sha).toBe(sha);
+    expect(findRelease(home, validator, sha.slice(0, 12)).tag).toBe(RELEASE_TAG);
     expect(() => findRelease(home, validator, "v7.0.0")).toThrow(/no installed release/);
     expect(() => pinRelease(home, "0".repeat(40))).toThrow(/no installed release/);
     pinRelease(home, sha);
@@ -81,12 +81,12 @@ describe("release install", () => {
     const shim = writeShim(home);
     expect(readFileSync(shim, "utf8")).toContain('"$FACTORY_HOME/current/controller/src/cli/factoryctl.ts"');
     const r = spawnSync("sh", [shim, "doctor"], { encoding: "utf8", env: { PATH: process.env["PATH"] ?? "", HOME: root, FACTORY_HOME: home.root } });
-    expect(r.stdout).toMatch(new RegExp(`^ok {4}installed release: v0\\.1\\.0 \\(${sha.slice(0, 12)}\\): [0-9]+ files intact$`, "m"));
-    expect(r.stdout).toContain(`plugin 0.1.0 at ${join(home.releases, sha)}`);
+    expect(r.stdout).toMatch(new RegExp(`^ok {4}installed release: ${RELEASE_TAG.replaceAll(".", "\\.")} \\(${sha.slice(0, 12)}\\): [0-9]+ files intact$`, "m"));
+    expect(r.stdout).toContain(`plugin ${PLUGIN_VERSION} at ${join(home.releases, sha)}`);
     // Without FACTORY_HOME in the environment, the shim falls back to the home it was written for.
     const bare = spawnSync("sh", [shim, "doctor"], { encoding: "utf8", env: { PATH: process.env["PATH"] ?? "", HOME: root } });
     expect(bare.stderr).not.toContain("Cannot find module");
-    expect(bare.stdout).toMatch(/^ok {4}installed release: v0\.1\.0 /m);
+    expect(bare.stdout).toContain(`installed release: ${RELEASE_TAG} (`);
   });
 
   it("quotes a home path with spaces and quotes in the shim", () => {

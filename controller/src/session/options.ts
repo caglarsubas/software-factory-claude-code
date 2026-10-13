@@ -21,6 +21,9 @@ export type SessionStage = "triage" | "spec" | "build" | "review" | "approve" | 
 
 export const REGISTRIES = ["registry.npmjs.org", "pypi.org", "files.pythonhosted.org"];
 
+/** The SDK's channel for structured output: under outputFormat json_schema the session ends its turn by calling this tool, so a judgment stage must have it listed, pre-approved and allowed by the guard. It only carries the answer. */
+export const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
+
 export interface StageSpec {
   stage: SessionStage;
   /** Plugin agent file name, e.g. "code-reviewer". */
@@ -57,14 +60,14 @@ export interface PreparedSession {
 }
 
 /** The plugin's agent file as an SDK agent definition: one definition, two runtimes. */
-export function agentDefinition(release: Release, agent: string): AgentDefinition {
+export function agentDefinition(release: Release, agent: string, extraTools: readonly string[] = []): AgentDefinition {
   const a = toAgent(readDefinition(join(release.pluginDir, "agents", `${agent}.md`)));
   const pin = release.config.model_pins[a.model];
   if (pin === undefined) throw new Error(`${agent}: no model pin for alias ${a.model}`);
   return {
     description: a.description,
     prompt: a.prompt.replaceAll("${CLAUDE_PLUGIN_ROOT}", release.pluginDir),
-    tools: a.tools,
+    tools: [...a.tools, ...extraTools],
     disallowedTools: a.disallowedTools,
     model: pin,
     maxTurns: a.maxTurns,
@@ -118,6 +121,8 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
   const model = release.config.model_pins[routing.model];
   if (model === undefined) throw new Error(`config/factory.yaml pins no model for ${routing.model}`);
   if (spec.stage !== "build" && spec.outputSchema === undefined) throw new Error(`${spec.stage} must return structured output`);
+  const extraTools = spec.outputSchema === undefined ? [] : [STRUCTURED_OUTPUT_TOOL];
+  const allow = [...tools.allow, ...extraTools];
 
   const dir = sessionDir(inputs.home, inputs.taskId);
   const home = join(dir, "home");
@@ -130,7 +135,7 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
     task_id: inputs.taskId,
     stage: spec.stage,
     ...spec.guard,
-    allowed_tools: tools.allow,
+    allowed_tools: allow,
     // No host-side post-edit commands: formatters and linters load config the builder can edit.
     post_edit: [],
     ...(spec.preflight === undefined ? {} : { preflight: spec.preflight }),
@@ -146,14 +151,14 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
     cwd: spec.cwd,
     additionalDirectories: spec.extraDirs,
     agent: spec.agent,
-    agents: { [spec.agent]: agentDefinition(release, spec.agent) },
+    agents: { [spec.agent]: agentDefinition(release, spec.agent, extraTools) },
     plugins: [{ type: "local", path: release.pluginDir }],
     settingSources: [],
     settings: sessionSettings(inputs, release),
     sandbox: sessionSandbox(inputs),
     permissionMode: "dontAsk",
-    tools: tools.allow,
-    allowedTools: tools.allow,
+    tools: allow,
+    allowedTools: allow,
     disallowedTools: [...tools.deny, ...release.tools.forbidden.map((f) => f.pattern)],
     model,
     effort: routing.effort as NonNullable<Options["effort"]>,
