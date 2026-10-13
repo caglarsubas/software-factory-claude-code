@@ -197,6 +197,113 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "side_effect_intent"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "actor": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "factoryctl"
+              }
+            }
+          },
+          "payload": {
+            "type": "object",
+            "description": "An outbox intent (P1-02): recorded before the effect is looked up or made. Events from before the outbox carry no key.",
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "task/stage/round/kind[/name] (D6).",
+                "pattern": "^T-[0-9]{4,}/[a-z][a-z0-9-]*/[1-9][0-9]*/(push|pull_request|comment|check_run)(/[A-Za-z0-9._-]+)?$"
+              },
+              "kind": {
+                "enum": [
+                  "push",
+                  "pull_request",
+                  "comment",
+                  "check_run"
+                ]
+              },
+              "attempt": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "key",
+              "kind",
+              "attempt"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "side_effect_done"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "actor": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "factoryctl"
+              }
+            }
+          },
+          "payload": {
+            "type": "object",
+            "description": "The outcome of an outbox intent with the same key and attempt: made (done), already there (found), never made (absent, from reconcile) or failed.",
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "task/stage/round/kind[/name] (D6).",
+                "pattern": "^T-[0-9]{4,}/[a-z][a-z0-9-]*/[1-9][0-9]*/(push|pull_request|comment|check_run)(/[A-Za-z0-9._-]+)?$"
+              },
+              "kind": {
+                "enum": [
+                  "push",
+                  "pull_request",
+                  "comment",
+                  "check_run"
+                ]
+              },
+              "attempt": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "outcome": {
+                "enum": [
+                  "done",
+                  "found",
+                  "absent",
+                  "failed"
+                ]
+              }
+            },
+            "required": [
+              "key",
+              "kind",
+              "attempt",
+              "outcome"
+            ]
+          }
+        }
+      }
     }
   ]
 }

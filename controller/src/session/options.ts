@@ -10,6 +10,7 @@ import type { AgentDefinition, Options, SandboxSettings, Settings } from "@anthr
 import type { GuardConfig } from "../../../plugin/hooks/lib/guard-policy.ts";
 import { describeHalt, readHalt } from "../halt.ts";
 import { sessionDir, type Home } from "../home.ts";
+import { sessionSpawner } from "../proc.ts";
 import { readDefinition, toAgent } from "../plugin/agents.ts";
 import type { Release } from "../release.ts";
 import type { Validator } from "../schemas/validate.ts";
@@ -180,6 +181,8 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
       }],
     },
     persistSession: true,
+    // Its own process group, registered while it lives: a run that dies leaves nothing behind that the next one cannot reap (P1-02).
+    spawnClaudeCodeProcess: sessionSpawner(inputs.home, inputs.taskId, spec.label),
     // Explicit limits, never a default: the agent's own turn limit and the session's share of the task budget.
     maxTurns: agent.maxTurns ?? 10,
     maxBudgetUsd: spec.budgetUsd,

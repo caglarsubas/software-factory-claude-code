@@ -12,7 +12,7 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 import type { GatesResult } from "../../../gates/src/run.ts";
-import type { GitHub, PullRequestInput } from "../github/client.ts";
+import { memoryGitHub, type MemoryGitHub } from "../github/testing.ts";
 import { clearHalt, setHalt } from "../halt.ts";
 import { ensureHome, factoryHome, runDir, worktreeDir, type Home } from "../home.ts";
 import { REPO_ROOT } from "../policy/load.ts";
@@ -65,7 +65,7 @@ interface World {
   remote: string;
   operatorCheckout: string;
   profilePath: string;
-  github: GitHub & { prs: PullRequestInput[] };
+  github: MemoryGitHub;
 }
 
 let world: World;
@@ -90,18 +90,7 @@ beforeEach(() => {
 
   const home = factoryHome({ FACTORY_HOME: join(root, "factory") });
   ensureHome(home);
-  const prs: PullRequestInput[] = [];
-  const github = {
-    prs,
-    findPullRequest: (_repo: string, head: string) => {
-      const i = prs.findIndex((p) => p.head === head);
-      return Promise.resolve(i < 0 ? null : { number: i + 1, url: `https://github.com/example/ts-mini/pull/${String(i + 1)}` });
-    },
-    createPullRequest: (input: PullRequestInput) => {
-      prs.push(input);
-      return Promise.resolve({ number: prs.length, url: `https://github.com/example/ts-mini/pull/${String(prs.length)}` });
-    },
-  };
+  const github = memoryGitHub((_repo, branch) => spawnSync("git", ["-C", remote, "rev-parse", "--verify", "-q", `refs/heads/${branch}`], { encoding: "utf8" }).stdout.trim());
   world = { home, store: EventStore.open(home.db), remote, operatorCheckout, profilePath, github };
 });
 
@@ -408,9 +397,9 @@ const roundBuild = (taskId: string, n: number): SDKMessage[] => [
 /** Gates whose result each call takes from the list, then passes. */
 const gatesSequence = (summaries: (string | null)[], status: "fail" | "error" = "fail"): Deps["runGates"] => {
   let call = 0;
-  return async (o) => {
+  return async (o, label) => {
     const summary = summaries[call++] ?? null;
-    const green = await passingGates()(o);
+    const green = await passingGates()(o, label);
     return summary === null ? green : { ...green, passed: false, gates: [{ name: "test", status, duration_ms: 1, summary }] };
   };
 };
@@ -618,9 +607,9 @@ describe("budgets and limits (P1-01)", () => {
     let gatesRan = false;
     const t = transcripts(id);
     const runner = replayRunner({ ...t, build: [...(t["build"] ?? []).slice(0, -1), result(pins["sonnet"] ?? "", { costUsd: release.budgets.task_usd.R1 + 1 })] });
-    const gates: Deps["runGates"] = (o) => {
+    const gates: Deps["runGates"] = (o, label) => {
       gatesRan = true;
-      return passingGates()(o);
+      return passingGates()(o, label);
     };
     expect(await run(id, deps(runner, { runGates: gates }))).toBe("FAILED");
     expect(failure(id)).toMatchObject({ stage: "build", category: "budget_exceeded" });
@@ -709,6 +698,48 @@ describe("budgets and limits (P1-01)", () => {
     const ended = world.store.events(id).filter((e) => e.type === "command" && e.payload["command"] === "run_ended");
     expect(ended[0]?.payload).toMatchObject({ at: at(30), reason: "killed", reconstructed: true });
     expect(ended.at(-1)?.payload).toMatchObject({ reason: "waiting: merge gate" });
+  });
+});
+
+describe("the outbox and the merge gate (P1-02)", () => {
+  it("records the push and the PR through the outbox, each found before it is made", async () => {
+    const id = newTask();
+    expect(await run(id, deps(replayRunner(transcripts(id))))).toBe("NEEDS_HUMAN");
+    const effects = world.store.events(id).filter((e) => e.type === "side_effect_intent" || e.type === "side_effect_done");
+    expect(effects.map((e) => `${e.type} ${String(e.payload["key"])}${typeof e.payload["outcome"] === "string" ? ` ${e.payload["outcome"]}` : ""}`)).toEqual([
+      `side_effect_intent ${id}/publish/1/push`,
+      `side_effect_done ${id}/publish/1/push done`,
+      `side_effect_intent ${id}/publish/1/pull_request`,
+      `side_effect_done ${id}/publish/1/pull_request done`,
+    ]);
+    expect(world.github.prs[0]?.headSha).toBe(remoteBranch(id));
+  });
+
+  it("ends the task DONE once its PR is merged, and human_rejected once it is closed unmerged", async () => {
+    const merged = newTask();
+    await run(merged, deps(replayRunner(transcripts(merged))));
+    // Still open: the task keeps waiting.
+    expect(await run(merged, deps(replayRunner({})))).toBe("NEEDS_HUMAN");
+    const pr = world.github.prs.find((p) => p.head === `factory/${merged}`);
+    if (pr === undefined) throw new Error("no PR");
+    pr.state = "closed";
+    pr.merged = true;
+    expect(await run(merged, deps(replayRunner({})))).toBe("DONE");
+    expect(states(merged).slice(-3)).toEqual(["NEEDS_HUMAN", "MERGED", "DONE"]);
+
+    const closed = newTask();
+    await run(closed, deps(replayRunner(transcripts(closed))));
+    const other = world.github.prs.find((p) => p.head === `factory/${closed}`);
+    if (other === undefined) throw new Error("no PR");
+    other.state = "closed";
+    expect(await run(closed, deps(replayRunner({})))).toBe("FAILED");
+    expect(failure(closed)).toMatchObject({ stage: "merge-gate", category: "human_rejected", cause: "pr_closed" });
+  });
+
+  it("waits at the merge gate without GitHub access", async () => {
+    const id = newTask();
+    await run(id, deps(replayRunner(transcripts(id))));
+    expect(await run(id, deps(replayRunner({}), { github: null }))).toBe("NEEDS_HUMAN");
   });
 });
 

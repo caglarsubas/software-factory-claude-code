@@ -1,15 +1,20 @@
 // The GitHub REST calls factoryctl makes, against a fake fetch.
 import { describe, expect, it } from "vitest";
-import { restCommitChecks, restGitHub } from "./client.ts";
+import { githubApiUrl, isLoopbackApi, restCommitChecks, restGitHub } from "./client.ts";
 
-function fakeFetch(body: unknown, status = 200) {
+function fakeFetch(...bodies: unknown[]) {
   const calls: { url: string; init: RequestInit }[] = [];
   const fn: typeof fetch = (url, init) => {
     calls.push({ url: url instanceof Request ? url.url : url.toString(), init: init ?? {} });
+    const next = bodies.length > 1 ? bodies.shift() : bodies[0];
+    const [body, status] = Array.isArray(next) && next.length === 2 && typeof next[1] === "number" ? (next as [unknown, number]) : [next, 200];
     return Promise.resolve(new Response(JSON.stringify(body), { status }));
   };
   return { calls, fn };
 }
+
+const SHA = "c".repeat(40);
+const restPull = (number: number, over: Record<string, unknown> = {}) => ({ number, html_url: `https://github.com/owner/name/pull/${String(number)}`, state: "open", merged_at: null, head: { sha: SHA }, ...over });
 
 describe("restCommitChecks", () => {
   it("reads a commit's check runs without a token on a public repository", async () => {
@@ -24,16 +29,58 @@ describe("restCommitChecks", () => {
   });
 
   it("sends the token when it has one, and fails on an HTTP error", async () => {
-    const f = fakeFetch({ message: "Not Found" }, 404);
+    const f = fakeFetch([{ message: "Not Found" }, 404]);
     await expect(restCommitChecks("t0ken", "https://api.example", f.fn).checkRuns("owner/name", "b".repeat(40))).rejects.toThrow(/HTTP 404/);
     expect(f.calls[0]?.init.headers).toHaveProperty("authorization", "Bearer t0ken");
   });
 });
 
 describe("restGitHub", () => {
-  it("finds an open PR by head branch before creating one", async () => {
-    const f = fakeFetch([{ number: 7, html_url: "https://github.com/owner/name/pull/7" }]);
-    expect(await restGitHub("t0ken", "https://api.example", f.fn).findPullRequest("owner/name", "factory/T-0001")).toEqual({ number: 7, url: "https://github.com/owner/name/pull/7" });
-    expect(f.calls[0]?.url).toBe("https://api.example/repos/owner/name/pulls?state=open&head=owner%3Afactory%2FT-0001");
+  it("lists a branch's PRs in every state, with their head commit and whether they merged", async () => {
+    const f = fakeFetch([restPull(7, { state: "closed", merged_at: "2026-10-13T09:00:00Z" }), restPull(9)]);
+    expect(await restGitHub("t0ken", "https://api.example", f.fn).pullRequests("owner/name", "factory/T-0001")).toEqual([
+      { number: 7, url: "https://github.com/owner/name/pull/7", state: "closed", merged: true, headSha: SHA },
+      { number: 9, url: "https://github.com/owner/name/pull/9", state: "open", merged: false, headSha: SHA },
+    ]);
+    expect(f.calls[0]?.url).toBe("https://api.example/repos/owner/name/pulls?state=all&per_page=100&head=owner%3Afactory%2FT-0001");
+  });
+
+  it("creates and reads PRs, comments and check runs", async () => {
+    const f = fakeFetch(
+      [restPull(3), 201],
+      restPull(3, { state: "closed" }),
+      [{ id: 11, html_url: "https://github.com/owner/name/pull/3#issuecomment-11", body: "hello <!-- m -->" }],
+      [{ id: 12, html_url: "https://github.com/owner/name/pull/3#issuecomment-12", body: "again" }, 201],
+      { total_count: 2, check_runs: [{ id: 1, html_url: "https://github.com/owner/name/runs/1", external_id: null }, { id: 2, html_url: "https://github.com/owner/name/runs/2", external_id: "T-0001/publish/1/check_run/evidence" }] },
+      [{ id: 5, html_url: "https://github.com/owner/name/runs/5" }, 201],
+    );
+    const gh = restGitHub("t0ken", "https://api.example", f.fn);
+    expect(await gh.createPullRequest({ repo: "owner/name", head: "factory/T-0001", base: "main", title: "t", body: "b", draft: false })).toMatchObject({ number: 3, state: "open" });
+    expect(await gh.pullRequest("owner/name", 3)).toMatchObject({ number: 3, state: "closed", merged: false });
+    expect(await gh.comments("owner/name", 3)).toEqual([{ id: 11, url: "https://github.com/owner/name/pull/3#issuecomment-11", body: "hello <!-- m -->" }]);
+    expect(await gh.createComment("owner/name", 3, "again")).toMatchObject({ id: 12 });
+    expect(await gh.findCheckRun("owner/name", SHA, "T-0001/publish/1/check_run/evidence")).toEqual({ id: 2, url: "https://github.com/owner/name/runs/2" });
+    expect(await gh.createCheckRun({ repo: "owner/name", name: "factory", headSha: SHA, externalId: "k", conclusion: "success", title: "t", summary: "s" })).toEqual({ id: 5, url: "https://github.com/owner/name/runs/5" });
+    expect(f.calls.map((c) => `${c.init.method ?? ""} ${c.url.replace("https://api.example", "")}`)).toEqual([
+      "POST /repos/owner/name/pulls",
+      "GET /repos/owner/name/pulls/3",
+      "GET /repos/owner/name/issues/3/comments?per_page=100&page=1",
+      "POST /repos/owner/name/issues/3/comments",
+      `GET /repos/owner/name/commits/${SHA}/check-runs?per_page=100&page=1`,
+      "POST /repos/owner/name/check-runs",
+    ]);
+    expect(JSON.parse(f.calls[5]?.init.body as string)).toMatchObject({ head_sha: SHA, external_id: "k", status: "completed", conclusion: "success" });
+  });
+});
+
+describe("FACTORY_GITHUB_API_URL", () => {
+  it("defaults to api.github.com, and takes https or loopback http only", () => {
+    expect(githubApiUrl(undefined)).toBe("https://api.github.com");
+    expect(githubApiUrl("https://ghe.example/api/v3/")).toBe("https://ghe.example/api/v3");
+    expect(githubApiUrl("http://127.0.0.1:4010")).toBe("http://127.0.0.1:4010");
+    expect(isLoopbackApi("http://127.0.0.1:4010")).toBe(true);
+    expect(isLoopbackApi("https://api.github.com")).toBe(false);
+    expect(() => githubApiUrl("http://ghe.example")).toThrow(/https, or http on a loopback address/);
+    expect(() => githubApiUrl("not a url")).toThrow(/is not a URL/);
   });
 });

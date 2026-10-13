@@ -5,7 +5,7 @@ The factory's control plane (ROADMAP §2). Version 0 (P0-07) runs one task at a 
 ```bash
 pnpm factoryctl task create --profile profile.yaml --title "…" --body-file task.md [--untrusted] [--remote URL]
 pnpm factoryctl run T-0001          # until the task needs a human or ends
-pnpm factoryctl resume T-0001       # the same, after a stop, an approval, a halt or a crash
+pnpm factoryctl resume T-0001       # the same, after a stop, an approval, a halt, a crash, or a merged or closed PR
 pnpm factoryctl approve T-0001 --gate spec --reason "…"
 pnpm factoryctl status [T-0001]
 pnpm factoryctl cancel T-0001
@@ -30,6 +30,14 @@ A run goes checkout → triage → spec → rounds of build → gates → review
   3. The files are moved into place.
 
   A step is done while its latest commit was made from the inputs it has now and its files are intact. So `resume` continues from the first step that is not done, and a changed input re-runs every step downstream of it. At the start of every run, recovery rolls a committed `.pending` forward and deletes any other. A re-run build starts from the base commit with an empty work directory.
+- **Side effects (P1-02, `github/outbox.ts`):** every push and GitHub write goes through the outbox, and nothing else in the controller makes one (a conformance test checks).
+  - Each effect is keyed `task/stage/round/kind[/name]`. A `side_effect_intent` event precedes it and a `side_effect_done` follows it, with the attempt number and the outcome: `done`, `found`, `absent` or `failed`.
+  - An effect first looks for itself and acts only when it finds nothing. It looks for the branch at the commit, a PR from the branch at the commit, a comment carrying the key as a marker, or a check run with the key as its `external_id`.
+  - At the start of every run, each intent left without an outcome is looked up and recorded `found` or `absent`.
+  - At the merge gate, `resume` reads the PR: merged ends the task `MERGED`, then `DONE`; closed without a merge fails it as `human_rejected` (cause `pr_closed`).
+- **Processes (P1-02, `proc.ts`):** the run lock and every session process are named by pid and start time, so a reused pid is never mistaken for them.
+  - Each session runs in its own process group (the SDK's `spawnClaudeCodeProcess`) and is registered in `procs/` while it lives.
+  - A run that starts after one died kills the dead run's process groups and removes its gate containers.
 - **Spec approvals** are bound to the spec they were given on (`spec_digest`): a spec that runs again reopens the gate, through `BLOCKED` when the build had already started.
 - **Refuter pass (P1-03):** each blocking finding of a round goes to one refuter session, which sees the bundle and the read-only candidate, like the reviewers. Its answers are committed as `refutations.json` (`refuted`, `upheld` or `unclear`). Only the findings it did not refute count as blocking: they start a remediation round, and an approval never passes them.
 - **Remediation rounds (P1-01):**
@@ -88,6 +96,12 @@ Each target has a bare mirror (`mirrors/`), and each task its own `git clone --s
 
 Replayed tool calls go through the same rules as live ones: `allowedTools` under `dontAsk`, then the in-process guard. The file edits that pass are applied to the working directory.
 
-- `run --replay DIR` drives a task from a transcript directory with zero tokens.
+- `run --replay DIR` drives a task from a transcript directory with zero tokens. Each replayed session runs a placeholder process through the session's spawner, as a live one would.
+- `DIR/replay.json` holds test-only injection (`session/injection.ts`):
+  - `kill_at` SIGKILLs factoryctl at a named probe point;
+  - `gates` replays gate results.
+
+  Replayed gates are refused unless the task's remote is a local path and the GitHub API, if a token is set, is on loopback (`FACTORY_GITHUB_API_URL`).
+- `cli/killpoints.test.ts` (in `pnpm test`, gate G1-1) kills the real CLI at 26 points: every stage, both sides of the push and the PR, and inside a remediation round. It then resumes and checks that every step committed once, that none re-ran after finishing, and that there was one push and one PR. It also checks that no intent dangles and no staged file or session process is left.
 - `stages/pipeline.test.ts` covers the pipeline (in `pnpm test`).
 - `cli/factoryctl.int.test.ts` runs it end to end with the container gates (`pnpm test:gates`).

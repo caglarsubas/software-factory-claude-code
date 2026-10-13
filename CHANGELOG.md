@@ -11,6 +11,18 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
   - Its answers (`refuted`, `upheld` or `unclear`) are committed as `refutations.json`, and only a refuted finding stops blocking.
   - The approver and the summarizer see the refutations.
   - `factoryctl eval capture` captures refuter sessions too, and two fixture cases join the eval suite.
+- **Crash-safe side effects (P1-02).**
+  - Every push and GitHub write goes through an outbox: an intent before it, an outcome after it.
+  - Each effect is looked up before it is made, and dangling intents are reconciled when a run starts.
+  - A run killed at any instant neither repeats a push or PR nor loses one.
+- **Reaping (P1-02).** Sessions run in their own process groups and are registered while they live; a run that starts after one died stops the processes and gate containers it left behind.
+- **The merge gate follows the PR.** `resume` ends a task `DONE` once its PR is merged, and `human_rejected` once it is closed unmerged.
+- **Kill-point suite (G1-1).** The CLI is killed at 26 points, in every stage, around both side effects and inside a remediation round; each resumes without a re-run or a duplicate.
+- `FACTORY_GITHUB_API_URL` points `factoryctl` at GitHub Enterprise: https only, or http on loopback.
+
+### Changed
+
+- The run lock records the runner's start time: `halt`, `cancel` and `reject` never signal a pid the system has given to another process, and such a lock is cleared.
 
 ## [0.2.0] - 2026-10-13
 

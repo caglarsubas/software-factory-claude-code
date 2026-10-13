@@ -182,6 +182,21 @@ describe("factoryctl", { timeout: 30_000 }, () => {
     expect(readFileSync(join(home, "gates/G0/evidence.md"), "utf8")).toContain("## Gate G0 evidence");
   });
 
+  it("keeps test-only injection off anything that leaves the machine, and the token off plain http (P1-02)", () => {
+    expect(factoryctl(["task", "create", "--profile", profilePath, "--title", "Billing rounding", "--body-file", body, "--untrusted", "--remote", "https://github.com/example/ts-mini.git"]).stdout.trim()).toBe("T-0004");
+    const dir = join(root, "injected");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "replay.json"), JSON.stringify({ gates: {} }));
+    const remoteRun = factoryctl(["run", "T-0004", "--replay", dir]);
+    expect(remoteRun.status).toBe(2);
+    expect(remoteRun.stderr).toContain("replayed gates need a task with a local remote");
+    const apiRun = factoryctl(["run", "T-0001", "--replay", dir], { FACTORY_GITHUB_TOKEN: "t", FACTORY_GITHUB_API_URL: "https://api.github.com" });
+    expect(apiRun.stderr).toContain("a loopback FACTORY_GITHUB_API_URL");
+    const http = factoryctl(["run", "T-0001"], { FACTORY_GITHUB_API_URL: "http://ghe.example" });
+    expect(http.status).toBe(2);
+    expect(http.stderr).toContain("FACTORY_GITHUB_API_URL must be https, or http on a loopback address");
+  });
+
   it("rejects unknown tasks and commands", () => {
     expect(factoryctl(["run", "T-9999"]).stderr).toContain("no task T-9999");
     expect(factoryctl(["frobnicate"]).status).toBe(2);

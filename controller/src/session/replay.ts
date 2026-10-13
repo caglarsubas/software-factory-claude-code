@@ -3,11 +3,16 @@
 // rules as a live session (allowedTools under dontAsk, then the in-process guard), and the
 // file edits that pass are applied to the session's cwd, so the rest of the pipeline sees
 // the same worktree a live run would have left.
+//
+// For the kill-point suite (P1-02), a replayed session can also stand in for the live one's
+// process: a placeholder started through the session's own spawnClaudeCodeProcess, so it is
+// registered and grouped exactly as the Claude Code process would be, and a probe fires while it
+// runs.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Options, SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { STRUCTURED_OUTPUT_TOOL } from "./options.ts";
-import { collect, record, type SessionRunner, type StageRequest } from "./runner.ts";
+import { collect, record, type SessionRunner, type StageOutcome, type StageRequest } from "./runner.ts";
 
 export type Transcripts = Record<string, SDKMessage[]>;
 
@@ -65,7 +70,54 @@ function apply(use: ToolUse, cwd: string): void {
   }
 }
 
-export function replayRunner(source: Transcripts | string): ReplayRunner {
+export interface ReplayOptions {
+  /** Run a placeholder process for each session, through the session's spawner. */
+  standIn?: boolean;
+  /** Called as `<label>:session` while the session (and its placeholder) runs. */
+  probe?: (point: string) => void;
+}
+
+const PLACEHOLDER = ["--eval", "setInterval(() => undefined, 1 << 30)"];
+
+/** Starts the placeholder; the returned function stops it and waits until it has exited. */
+function standIn(req: StageRequest): () => Promise<void> {
+  const spawnFn = req.options.spawnClaudeCodeProcess;
+  if (spawnFn === undefined) return () => Promise.resolve();
+  const abort = new AbortController();
+  const child = spawnFn({ command: process.execPath, args: PLACEHOLDER, env: { PATH: process.env["PATH"] ?? "" }, signal: abort.signal });
+  const exited = new Promise<void>((resolve) => {
+    child.once("exit", () => {
+      resolve();
+    });
+  });
+  return async () => {
+    child.stdin.end();
+    child.kill("SIGTERM");
+    await exited;
+  };
+}
+
+function replaySession(req: StageRequest, messages: SDKMessage[]): Promise<StageOutcome> {
+  const cwd = req.options.cwd ?? process.cwd();
+  async function* replay(): AsyncGenerator<SDKMessage> {
+    // As in a live session, a denied StructuredOutput call delivers no structured output.
+    let outputDenied = false;
+    for (const m of messages) {
+      for (const use of toolUses(m)) {
+        const denied = await preToolUse(req.options, use, cwd);
+        if (denied === null) apply(use, cwd);
+        else {
+          if (use.name === STRUCTURED_OUTPUT_TOOL) outputDenied = true;
+          if (!req.denials.some((d) => d.reason === denied)) req.denials.push({ tool: use.name, reason: denied });
+        }
+      }
+      yield m.type === "result" && outputDenied && "structured_output" in m ? { ...m, structured_output: undefined } : m;
+    }
+  }
+  return collect(replay(), req, record(req.transcript));
+}
+
+export function replayRunner(source: Transcripts | string, opts: ReplayOptions = {}): ReplayRunner {
   const requests: StageRequest[] = [];
   return {
     kind: "replay",
@@ -74,23 +126,13 @@ export function replayRunner(source: Transcripts | string): ReplayRunner {
       requests.push(req);
       const messages = typeof source === "string" ? loadDir(source, req.label) : source[req.label];
       if (messages === undefined) throw new Error(`replay: no transcript for ${req.label}`);
-      const cwd = req.options.cwd ?? process.cwd();
-      async function* replay(): AsyncGenerator<SDKMessage> {
-        // As in a live session, a denied StructuredOutput call delivers no structured output.
-        let outputDenied = false;
-        for (const m of messages ?? []) {
-          for (const use of toolUses(m)) {
-            const denied = await preToolUse(req.options, use, cwd);
-            if (denied === null) apply(use, cwd);
-            else {
-              if (use.name === STRUCTURED_OUTPUT_TOOL) outputDenied = true;
-              if (!req.denials.some((d) => d.reason === denied)) req.denials.push({ tool: use.name, reason: denied });
-            }
-          }
-          yield m.type === "result" && outputDenied && "structured_output" in m ? { ...m, structured_output: undefined } : m;
-        }
+      const stop = opts.standIn === true ? standIn(req) : () => Promise.resolve();
+      try {
+        opts.probe?.(`${req.label}:session`);
+        return await replaySession(req, messages);
+      } finally {
+        await stop();
       }
-      return collect(replay(), req, record(req.transcript));
     },
   };
 }
