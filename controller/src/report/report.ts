@@ -19,6 +19,8 @@ export interface StageMetrics {
   durationMs: number | null;
   costUsd: number;
   denied: number;
+  /** A session that never reported (its run was killed): charged its cap, as the budget charges it (D4). */
+  unreported: boolean;
 }
 
 export interface Findings {
@@ -46,6 +48,8 @@ export interface TaskReport {
   stages: StageMetrics[];
   totals: { costUsd: number; inputTokens: number; outputTokens: number; durationMs: number };
   findings: Findings | null;
+  /** The alias alarms raised during the task's sessions (P1-06). */
+  alarms: { label: string; payload: Record<string, unknown> }[];
 }
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -75,11 +79,22 @@ export function taskReport(events: readonly FactoryEvent[], reviews: readonly { 
   // Sessions record their runner on stage_started (since v0.1.0) and on stage_completed (since P1-07).
   const startedRunner = new Map<string, string>();
   const stages: StageMetrics[] = [];
+  // A session that started and never completed: listed when it is superseded or the events end.
+  const open = new Map<string, StageMetrics>();
   for (const e of events) {
     const label = str(e.payload["label"]) ?? "";
     const runner = str(e.payload["runner"]);
-    if (e.type === "stage_started" && runner !== null) startedRunner.set(label, runner);
+    if (e.type === "stage_started" && runner !== null) {
+      startedRunner.set(label, runner);
+      const previous = open.get(label);
+      if (previous !== undefined) stages.push(previous);
+      open.set(label, {
+        stage: str(e.payload["stage"]) ?? "", label, round: num(e.payload["round"]) ?? 1, runner, ok: false,
+        numTurns: null, inputTokens: null, outputTokens: null, durationMs: null, costUsd: num(e.payload["cap_usd"]) ?? 0, denied: 0, unreported: true,
+      });
+    }
     if (e.type !== "stage_completed") continue;
+    open.delete(label);
     stages.push({
       stage: str(e.payload["stage"]) ?? "",
       label,
@@ -92,8 +107,10 @@ export function taskReport(events: readonly FactoryEvent[], reviews: readonly { 
       durationMs: num(e.payload["duration_ms"]),
       costUsd: num(e.payload["cost_usd"]) ?? 0,
       denied: Array.isArray(e.payload["denied"]) ? e.payload["denied"].length : 0,
+      unreported: false,
     });
   }
+  stages.push(...open.values());
   const runners = events.flatMap((e) => (e.type === "stage_started" && typeof e.payload["runner"] === "string" ? [e.payload["runner"]] : []));
   const payload = currentStatePayload(events);
   const verdictTier = events.findLast((e) => e.type === "state_changed" && typeof e.payload["tier"] === "string")?.payload["tier"];
@@ -120,6 +137,7 @@ export function taskReport(events: readonly FactoryEvent[], reviews: readonly { 
       durationMs: stages.reduce((a, s) => a + (s.durationMs ?? 0), 0),
     },
     findings,
+    alarms: events.filter((e) => e.type === "alarm").map((e) => ({ label: str(e.payload["label"]) ?? "", payload: e.payload })),
   };
 }
 

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "seq": 12,
+  "task_id": "T-0042",
+  "ts": "2026-10-13T12:00:00Z",
+  "epoch": 0,
+  "actor": {
+    "kind": "factoryctl",
+    "id": "factoryctl"
+  },
+  "type": "alarm",
+  "payload": {
+    "kind": "alias_new_id",
+    "label": "review-code",
+    "alias": "sonnet",
+    "pinned": "claude-sonnet-5-6",
+    "resolved": "claude-sonnet-5-6",
+    "seen": [
+      "claude-sonnet-5-5"
+    ]
+  }
+}

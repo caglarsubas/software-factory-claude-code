@@ -14,6 +14,7 @@ import { sessionSpawner } from "../proc.ts";
 import { readDefinition, toAgent } from "../plugin/agents.ts";
 import type { Release } from "../release.ts";
 import type { Validator } from "../schemas/validate.ts";
+import { telemetryEnv, type Telemetry } from "../telemetry.ts";
 import { sessionEnv, type SessionEnv } from "./env.ts";
 import { guardHook, type Denial } from "./guard.ts";
 
@@ -52,6 +53,8 @@ export interface SessionInputs {
   /** File apiKeyHelper reads; denied to every tool and to the sandbox. */
   keyFile: string;
   abort?: AbortController;
+  /** OTel export for this session (P1-06), with the attributes only the pipeline knows. */
+  telemetry?: { config: Telemetry; tier: string; round: number };
 }
 
 export interface PreparedSession {
@@ -151,7 +154,9 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
   const guardConfigPath = join(dir, `${spec.label}.guard.json`);
   writeFileSync(guardConfigPath, `${JSON.stringify(guard, null, 2)}\n`, { mode: 0o600 });
 
-  const env = sessionEnv({ home, configDir, tmpDir, guardConfig: guardConfigPath, modelPins: release.config.model_pins });
+  const t = inputs.telemetry;
+  const telemetry = t === undefined ? undefined : telemetryEnv(t.config, { task: inputs.taskId, stage: spec.stage, label: spec.label, round: t.round, tier: t.tier, agent: spec.agent, release: release.info?.tag ?? "dev" });
+  const env = sessionEnv({ home, configDir, tmpDir, guardConfig: guardConfigPath, modelPins: release.config.model_pins, ...(telemetry === undefined ? {} : { telemetry }) });
   const denials: Denial[] = [];
   const agent = agentDefinition(release, spec.agent, extraTools);
   if (!(spec.budgetUsd > 0)) throw new Error(`${spec.label}: no budget left for a session`);

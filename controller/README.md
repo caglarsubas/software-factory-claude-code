@@ -58,7 +58,11 @@ A run goes checkout → triage → spec → rounds of build → gates → review
   - the release, policy, CLI and SDK versions;
   - per-stage resolved model IDs and costs, taken from the event store.
 - **Failures:** every failed task carries one of the ten P1-07 categories (`task/taxonomy.ts`), and `cause` keeps what the pipeline saw when it differs. A builder that records a failure or makes no change is `gate_fail`, or `permission_denied` when the guard denied its tool calls; a rejected push is `merge_conflict`.
-- **Metrics:** `stage_completed` records each session's turns, tokens, cost, duration, runner and round. `report T-…` prints them per stage, with the review findings; `report --week` prints the row for STATUS's weekly taxonomy table, counting the live tasks created that ISO week (UTC).
+- **Telemetry (P1-06, `telemetry.ts`):** with `FACTORY_OTEL_ENDPOINT` set to a collector on loopback, every session exports Claude Code's OTel metrics and events.
+  - Resource attributes name the task, stage, label, round, tier, agent and release.
+  - Its env grows only by the eight `OTEL_ENV` names, which G0-3 and G1-3 accept.
+- **The alias alarm:** after every session, an `alarm` event is recorded when it ran on a model ID that no pin in `config/factory.yaml` names, or when its alias resolves to an ID that earlier live sessions of the alias never ran on. `report` lists alarms, and `doctor` warns about them for 30 days.
+- **Metrics:** `stage_completed` records each session's turns, tokens, cost, duration, runner and round. `report T-…` prints them per stage, with the review findings and any session killed before it reported (charged its cap); `report --week` prints the row for STATUS's weekly taxonomy table, counting the live tasks created that ISO week (UTC).
 
 ## Sessions
 

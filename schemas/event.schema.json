@@ -54,7 +54,8 @@
         "command",
         "side_effect_intent",
         "side_effect_done",
-        "artifact_committed"
+        "artifact_committed",
+        "alarm"
       ]
     },
     "from": {
@@ -300,6 +301,64 @@
               "kind",
               "attempt",
               "outcome"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "alarm"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "actor": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "factoryctl"
+              }
+            }
+          },
+          "payload": {
+            "type": "object",
+            "description": "The model alias alarm (P1-06): a session ran on a model ID config/factory.yaml does not pin, or an alias resolved to an ID no earlier live session of it ran on.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "unpinned_model",
+                  "alias_new_id"
+                ]
+              },
+              "label": {
+                "$ref": "defs.schema.json#/$defs/text"
+              },
+              "alias": {
+                "$ref": "defs.schema.json#/$defs/text"
+              },
+              "pinned": {
+                "type": "string"
+              },
+              "resolved": {
+                "$ref": "defs.schema.json#/$defs/text"
+              },
+              "seen": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "kind",
+              "label",
+              "alias",
+              "pinned",
+              "resolved"
             ]
           }
         }
