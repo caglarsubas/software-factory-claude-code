@@ -65,6 +65,51 @@
         "multiplier",
         "min_runs_per_tier"
       ]
+    },
+    "stage_fraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Share of the task budget one session of the stage may spend (maxBudgetUsd); the controller caps it by what remains.",
+      "properties": {
+        "triage": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "spec": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "build": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "review": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "approve": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "summarize": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "triage",
+        "spec",
+        "build",
+        "review",
+        "approve",
+        "summarize"
+      ]
     }
   },
   "required": [
@@ -73,6 +118,7 @@
     "default_monthly_cap_usd",
     "wall_clock_minutes",
     "max_remediation_rounds",
-    "calibration"
+    "calibration",
+    "stage_fraction"
   ]
 }

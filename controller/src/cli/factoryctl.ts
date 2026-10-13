@@ -10,6 +10,7 @@
 //   factoryctl approve T-0001 --gate spec --reason TEXT
 //   factoryctl reject T-0001 --reason TEXT   end a task the operator will not merge (human_rejected)
 //   factoryctl report [T-0001 | --week YYYY-Www]  per-stage metrics, or the weekly taxonomy row
+//   factoryctl budgets                       tier budgets as calibrated, and each target's month spend
 //   factoryctl halt [--reason TEXT]          kill switch v0: stop every session and run now
 //   factoryctl unhalt --reason TEXT
 //   factoryctl release install TAG [--source DIR] | use TAG|SHA | status
@@ -20,7 +21,7 @@
 // running code belongs to; FACTORY_GITHUB_TOKEN pushes and opens PRs. --replay replays
 // recorded transcripts instead of calling a model: zero tokens.
 import { spawnSync } from "node:child_process";
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { engineHost, killGateContainers, PROXY_ENV } from "../../../gates/src/container.ts";
@@ -37,12 +38,14 @@ import { checkReleaseFiles, findRelease, installRelease, listReleases, pinnedSha
 import { createValidator } from "../schemas/validate.ts";
 import { replayRunner } from "../session/replay.ts";
 import { sdkRunner } from "../session/runner.ts";
+import { calibrate, completedRuns, monthOf, monthSpend, TIERS } from "../budget/budget.ts";
+import { writeAtomic } from "../fsutil.ts";
 import { isoWeek, taskReport, WEEK_HEADER, weekRow, weekRowMarkdown, type TaskReport } from "../report/report.ts";
 import { specDigest } from "../stages/commit.ts";
 import { runTask } from "../stages/pipeline.ts";
 import { EventStore } from "../store/events.ts";
 import { currentState, currentStatePayload, isTerminal, transition } from "../task/lifecycle.ts";
-import { createTask, readTask } from "../task/task.ts";
+import { createTask, loadProfile, readTask } from "../task/task.ts";
 
 const out = (s: string): void => {
   process.stdout.write(`${s}\n`);
@@ -358,6 +361,45 @@ async function main(): Promise<void> {
         out(weekRowMarkdown(row));
         return;
       }
+      case "budgets": {
+        // G1-5: the tier budgets the P1-01 rule sets, recorded with their evidence.
+        const validator = createValidator();
+        const release = loadRelease(validator);
+        const byTask = new Map<string, ReturnType<typeof store.events>>();
+        for (const e of store.allEvents()) byTask.set(e.task_id, [...(byTask.get(e.task_id) ?? []), e]);
+        const runs = completedRuns(byTask);
+        const tiers = calibrate(release.budgets, runs);
+        const month = monthOf(new Date());
+        const targets = new Map<string, { ids: Set<string>; cap: number | null }>();
+        for (const id of store.taskIds()) {
+          try {
+            const t = readTask(home, id);
+            const entry = targets.get(t.target.repo) ?? { ids: new Set<string>(), cap: null };
+            entry.ids.add(id);
+            try {
+              entry.cap = loadProfile(t.target.profile, validator).budgets.monthly_usd;
+            } catch {
+              // A profile that moved or no longer validates leaves the cap unknown.
+            }
+            targets.set(t.target.repo, entry);
+          } catch {
+            // A task without its run directory has no target to report.
+          }
+        }
+        out(`tier        budget  source       runs  observed max  (×${String(release.budgets.calibration.multiplier)} until ${String(release.budgets.calibration.min_runs_per_tier)} runs, then frozen)`);
+        for (const t of TIERS) {
+          const b = tiers[t];
+          out(`${t.padEnd(10)} ${`$${b.budget.toFixed(2)}`.padStart(8)}  ${b.source.padEnd(11)} ${String(b.runs).padStart(5)}  ${b.observedMaxUsd === null ? "—" : `$${b.observedMaxUsd.toFixed(2)}`}`);
+        }
+        const months = [...targets].map(([target, e]) => ({ target, month, spent_usd: Math.round(monthSpend(byTask, e.ids, month) * 100) / 100, cap_usd: e.cap }));
+        for (const m of months) out(`${m.month}  ${m.target}: $${m.spent_usd.toFixed(2)} of ${m.cap_usd === null ? "an unknown cap" : `$${m.cap_usd.toFixed(2)}`}`);
+        const dir = join(home.root, "budgets");
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        const path = join(dir, "calibration.json");
+        writeAtomic(path, `${JSON.stringify({ schema_version: 1, computed_at: new Date().toISOString(), policy: { task_usd: release.budgets.task_usd, calibration: release.budgets.calibration }, tiers, runs: runs.length, months }, null, 2)}\n`);
+        out(`recorded: ${path}`);
+        return;
+      }
       case "gate": {
         if (positionals[1] !== "G0") fail("usage: factoryctl gate G0 --begin [--checkout DIR]... | gate G0 [--repo OWNER/NAME]");
         const validator = createValidator();
@@ -384,7 +426,7 @@ async function main(): Promise<void> {
         return;
       }
       default:
-        fail("usage: factoryctl task create | run | resume | status | cancel | approve | reject | report | halt | unhalt | release | gate | doctor");
+        fail("usage: factoryctl task create | run | resume | status | cancel | approve | reject | report | budgets | halt | unhalt | release | gate | doctor");
     }
   } finally {
     store.close();

@@ -37,6 +37,8 @@ export interface StageSpec {
   /** Directories the session may read besides cwd (the evidence bundle, the task directory). */
   extraDirs: string[];
   guard: Pick<GuardConfig, "worktree" | "task_dir" | "protected_paths" | "scope" | "writable_task_files" | "secret_paths" | "readable_roots">;
+  /** The soft cap for this session (maxBudgetUsd, P1-01); the controller enforces the task budget itself. */
+  budgetUsd: number;
   /** Build stage: the command require-gates runs before the builder may stop. */
   preflight?: { argv: string[]; timeout_ms: number };
 }
@@ -147,11 +149,13 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
 
   const env = sessionEnv({ home, configDir, tmpDir, guardConfig: guardConfigPath, modelPins: release.config.model_pins });
   const denials: Denial[] = [];
+  const agent = agentDefinition(release, spec.agent, extraTools);
+  if (!(spec.budgetUsd > 0)) throw new Error(`${spec.label}: no budget left for a session`);
   const options: Options = {
     cwd: spec.cwd,
     additionalDirectories: spec.extraDirs,
     agent: spec.agent,
-    agents: { [spec.agent]: agentDefinition(release, spec.agent, extraTools) },
+    agents: { [spec.agent]: agent },
     plugins: [{ type: "local", path: release.pluginDir }],
     settingSources: [],
     settings: sessionSettings(inputs, release),
@@ -173,6 +177,9 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
       }],
     },
     persistSession: true,
+    // Explicit limits, never a default: the agent's own turn limit and the session's share of the task budget.
+    maxTurns: agent.maxTurns ?? 10,
+    maxBudgetUsd: spec.budgetUsd,
     ...(spec.outputSchema === undefined ? {} : { outputFormat: { type: "json_schema", schema: spec.outputSchema } }),
     ...(inputs.abort === undefined ? {} : { abortController: inputs.abort }),
   };

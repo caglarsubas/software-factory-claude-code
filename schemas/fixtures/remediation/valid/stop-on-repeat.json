@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0042",
+  "round": 2,
+  "source": "review",
+  "decision": "stop",
+  "reason": "the same finding again after a remediation round",
+  "repeated": [
+    "finding:0123456789abcdef"
+  ],
+  "items": [
+    {
+      "fingerprint": "finding:0123456789abcdef",
+      "kind": "finding",
+      "ref": "code-reviewer F-1",
+      "file": "src/cart.ts",
+      "line": 12,
+      "title": "isEmpty ignores zero-quantity lines",
+      "detail": "A cart with one line of quantity 0 is reported non-empty. Fix: filter lines with quantity 0."
+    }
+  ]
+}

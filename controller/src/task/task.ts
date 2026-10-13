@@ -18,6 +18,8 @@ export interface Profile {
   restricted: { glob: string; note?: string }[];
   invariants?: { id: string; text: string; check?: string }[];
   spec_dir: string;
+  /** The target's monthly cap (P1-01, D3). */
+  budgets: { monthly_usd: number };
 }
 
 export interface Task {

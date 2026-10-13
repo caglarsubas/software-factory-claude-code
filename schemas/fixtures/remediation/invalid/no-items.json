@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0042",
+  "round": 1,
+  "source": "review",
+  "decision": "remediate",
+  "reason": "1 blocking finding; round 2 of 4",
+  "repeated": [],
+  "items": []
+}

@@ -8,8 +8,8 @@
 //
 // So a crash at any instant leaves a step either committed or not, never half-written, and a
 // changed input re-runs every step downstream of it.
-import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileDigest, finalize, PENDING, sha256, TMP, writeAtomic } from "../fsutil.ts";
 import type { EventStore, FactoryEvent } from "../store/events.ts";
 
@@ -55,6 +55,13 @@ export function freshness(dir: string, events: readonly FactoryEvent[], label: s
   return intact ? "done" : "artifact_changed";
 }
 
+/** Whether a file on disk is the one its latest commit recorded: only such files feed decisions. */
+export function isCommitted(dir: string, events: readonly FactoryEvent[], path: string): boolean {
+  const c = commits(events).findLast((x) => x.artifacts.some((a) => a.path === path));
+  const digest = c?.artifacts.find((a) => a.path === path)?.digest;
+  return digest !== undefined && existsSync(join(dir, path)) && fileDigest(join(dir, path)) === digest;
+}
+
 export interface StepRef {
   taskId: string;
   stage: string;
@@ -65,7 +72,10 @@ export interface StepRef {
 /** Stage, commit, finalize. Returns the commit event's payload. */
 export function commitArtifacts(store: EventStore, dir: string, step: StepRef, inputs: Record<string, string>, outputs: readonly Output[]): Commit {
   if (outputs.length === 0) throw new Error(`${step.label} committed no artifacts`);
-  for (const o of outputs) writeAtomic(join(dir, `${o.path}${PENDING}`), o.content);
+  for (const o of outputs) {
+    mkdirSync(dirname(join(dir, o.path)), { recursive: true, mode: 0o700 });
+    writeAtomic(join(dir, `${o.path}${PENDING}`), o.content);
+  }
   const attempt = commits(store.events(step.taskId)).filter((c) => c.label === step.label && c.round === step.round).length + 1;
   const commit: Commit = {
     stage: step.stage,

@@ -11,6 +11,7 @@ pnpm factoryctl status [T-0001]
 pnpm factoryctl cancel T-0001
 pnpm factoryctl reject T-0001 --reason "…"   # the operator will not take the result: human_rejected
 pnpm factoryctl report [T-0001 | --week 2026-W42]
+pnpm factoryctl budgets             # tier budgets as calibrated, month spend per target (G1-5)
 pnpm factoryctl halt [--reason "…"] # kill switch v0; lift with: unhalt --reason "…"
 pnpm factoryctl release install v0.1.0 | use TAG | status
 pnpm factoryctl gate G0 --begin     # then the fixture dry runs, then: gate G0
@@ -19,7 +20,7 @@ pnpm factoryctl doctor
 
 In operation, factoryctl runs from an installed release through `$FACTORY_HOME/bin/factoryctl`; the [operator guide](../docs/factory/operator-guide.md) covers installation, approvals, recovery, the kill switch and gate G0.
 
-A run goes checkout → triage → spec → build → gates → review (code and security) → policy → approve → summarize → publish, and stops at `NEEDS_HUMAN`. It stops at the spec gate when the spec or the provisional tier calls for a human. It always stops at the merge gate: in Phase 0 and Phase 1 a human merges every tier.
+A run goes checkout → triage → spec → rounds of build → gates → review (code and security) → policy → approve → summarize → publish, and stops at `NEEDS_HUMAN`. It stops at the spec gate when the spec or the provisional tier calls for a human. It always stops at the merge gate: in Phase 0 and Phase 1 a human merges every tier.
 
 - **State:** `factory.db` is SQLite with append-only events, guarded by triggers and validated against `schemas/event.schema.json`. A task's state is a fold over its events, and only `factoryctl` writes `state_changed`.
 - **Artifacts:** each step commits its artifacts into `runs/<id>/` through the commit protocol (`stages/commit.ts`, P1-02):
@@ -29,6 +30,17 @@ A run goes checkout → triage → spec → build → gates → review (code and
 
   A step is done while its latest commit was made from the inputs it has now and its files are intact. So `resume` continues from the first step that is not done, and a changed input re-runs every step downstream of it. At the start of every run, recovery rolls a committed `.pending` forward and deletes any other. A re-run build starts from the base commit with an empty work directory.
 - **Spec approvals** are bound to the spec they were given on (`spec_digest`): a spec that runs again reopens the gate, through `BLOCKED` when the build had already started.
+- **Remediation rounds (P1-01):**
+  - Red gates, or a blocking finding from a reviewer, start another round. Its build gets the failures as data in its prompt and starts from the previous round's candidate.
+  - Round 1 keeps the flat layout. Round `n` keeps its build, gates, reviews and remediation under `rounds/<n>/`, with labels suffixed `-r<n>`.
+  - The same failure twice stops the task, and so does a round past `max_remediation_rounds` (3, so at most four builds). Failures are matched by fingerprint (`stages/fingerprint.ts`): file, category and title for a finding, gate and first error line for a gate.
+  - A gate that errored, rather than failed, is not the builder's to fix: `gate_fail` at once.
+- **Budgets and limits (P1-01, `budget/budget.ts`):**
+  - A task's budget is its tier's, calibrated from live runs: observed max × 1.5, never below the initial value, frozen after 20 runs. The tier ratchets up: the highest tier before triage, then the higher of triage's (one up when unsure), the spec's provisional tier and the policy's.
+  - Every session gets `maxTurns` and `maxBudgetUsd`: its stage's share of the budget, never more than what remains.
+  - The controller checks the task budget before every step and after every session (`budget_exceeded`). A session that never reports is charged its cap.
+  - It also checks the wall clock of active time (`wall_clock`, 90 minutes), counted from run start and end events and a heartbeat, so waits for a human do not count. A timer aborts a session in flight when the clock runs out.
+  - It checks the target's monthly cap (`budgets.monthly_usd` in its profile): reaching it pauses the task, which resumes in a new month or under a raised cap.
 - **Older tasks:** a task that a `factoryctl` without the commit protocol (v0.1.x) started is refused; finish it on that release.
 - **Manifest:** `manifest.json` records:
   - every artifact's digest;
