@@ -57,8 +57,8 @@ describe("release install", () => {
     spawnSync("git", ["-C", source, "tag", "v0.0.9", sha]);
     await expect(install("v0.0.9")).rejects.toThrow(`already installed as ${RELEASE_TAG}`);
     spawnSync("git", ["-C", source, "-c", "user.email=op@example.invalid", "-c", "user.name=op", "commit", "-q", "--allow-empty", "-m", "unbumped"]);
-    spawnSync("git", ["-C", source, "tag", "v0.2.0"]);
-    await expect(install("v0.2.0")).rejects.toThrow(`plugin version ${PLUGIN_VERSION}`);
+    spawnSync("git", ["-C", source, "tag", "v9.0.0"]);
+    await expect(install("v9.0.0")).rejects.toThrow(`plugin version ${PLUGIN_VERSION}`);
     expect(listReleases(home, validator).map((r) => r.tag)).toEqual([RELEASE_TAG]);
     expect(spawnSync("ls", ["-A", home.releases], { encoding: "utf8" }).stdout.trim()).toBe(sha);
   });
