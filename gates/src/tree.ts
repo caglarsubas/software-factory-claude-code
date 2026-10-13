@@ -120,11 +120,21 @@ function pax(name: string, linkname: string | undefined, mtime: number): Buffer[
 
 function write(out: Writable, chunk: Buffer): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (out.write(chunk)) resolve();
-    else {
-      out.once("drain", resolve);
-      out.once("error", reject);
+    if (out.write(chunk)) {
+      resolve();
+      return;
     }
+    // Each wait removes both listeners, so a long export does not pile them up on the stream.
+    const onDrain = (): void => {
+      out.off("error", onError);
+      resolve();
+    };
+    const onError = (e: Error): void => {
+      out.off("drain", onDrain);
+      reject(e);
+    };
+    out.once("drain", onDrain);
+    out.once("error", onError);
   });
 }
 

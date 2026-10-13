@@ -1,7 +1,7 @@
 // Release install (P0-09: "tag v0.1.0 installed to releases/"): a tagged commit's tree, read-only,
 // verified by digest, pinned by the operator, and run through $FACTORY_HOME/bin/factoryctl.
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -83,6 +83,20 @@ describe("release install", () => {
     const r = spawnSync("sh", [shim, "doctor"], { encoding: "utf8", env: { PATH: process.env["PATH"] ?? "", HOME: root, FACTORY_HOME: home.root } });
     expect(r.stdout).toMatch(new RegExp(`^ok {4}installed release: v0\\.1\\.0 \\(${sha.slice(0, 12)}\\): [0-9]+ files intact$`, "m"));
     expect(r.stdout).toContain(`plugin 0.1.0 at ${join(home.releases, sha)}`);
+    // Without FACTORY_HOME in the environment, the shim falls back to the home it was written for.
+    const bare = spawnSync("sh", [shim, "doctor"], { encoding: "utf8", env: { PATH: process.env["PATH"] ?? "", HOME: root } });
+    expect(bare.stderr).not.toContain("Cannot find module");
+    expect(bare.stdout).toMatch(/^ok {4}installed release: v0\.1\.0 /m);
+  });
+
+  it("quotes a home path with spaces and quotes in the shim", () => {
+    const odd = factoryHome({ FACTORY_HOME: join(root, "it's a home") });
+    // A stand-in `node` that reports the FACTORY_HOME the shim exported.
+    const bin = join(root, "fake-bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "node"), '#!/bin/sh\nprintf "%s" "$FACTORY_HOME"\n', { mode: 0o755 });
+    expect(spawnSync("/bin/sh", [writeShim(odd)], { encoding: "utf8", env: { PATH: bin } }).stdout).toBe(odd.root);
+    expect(spawnSync("/bin/sh", [writeShim(odd)], { encoding: "utf8", env: { PATH: bin, FACTORY_HOME: "/elsewhere" } }).stdout).toBe("/elsewhere");
   });
 });
 

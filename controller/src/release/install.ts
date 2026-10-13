@@ -195,7 +195,8 @@ export function writeShim(home: Home): string {
     [
       "#!/bin/sh",
       "# factoryctl from the pinned release ($FACTORY_HOME/current), written by `factoryctl release install`.",
-      `FACTORY_HOME="\${FACTORY_HOME:-${quoted}}"`,
+      // Quotes inside "${VAR:-word}" stay literal, so the default is assigned on its own.
+      `[ -n "\${FACTORY_HOME:-}" ] || FACTORY_HOME=${quoted}`,
       "export FACTORY_HOME",
       'exec node --disable-warning=ExperimentalWarning "$FACTORY_HOME/current/controller/src/cli/factoryctl.ts" "$@"',
       "",
