@@ -2,8 +2,9 @@
 // factory, policy, CLI and SDK versions, and the resolved model IDs and cost of each stage,
 // taken from the event store rather than from anything an agent wrote.
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { PENDING, TMP, writeAtomic } from "../fsutil.ts";
 import type { RiskPolicy } from "../policy/engine.ts";
 import type { Release } from "../release.ts";
 import type { Validator } from "../schemas/validate.ts";
@@ -18,6 +19,8 @@ function files(root: string, dir: string = root): string[] {
   return readdirSync(dir).sort().flatMap((name) => {
     const full = join(dir, name);
     if (dir === root && EXCLUDED.has(name)) return [];
+    // Staged files a crash left behind are not artifacts until recovery commits or removes them.
+    if (name.endsWith(PENDING) || TMP.test(name)) return [];
     return statSync(full).isDirectory() ? files(root, full) : [relative(root, full)];
   });
 }
@@ -69,6 +72,6 @@ export function writeManifest(i: ManifestInputs): Record<string, unknown> {
   };
   const check = i.validator.validate("manifest.schema.json", manifest);
   if (!check.valid) throw new Error(`manifest.json: ${check.errors.join("; ")}`);
-  writeFileSync(join(i.dir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+  writeAtomic(join(i.dir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
 }

@@ -5,7 +5,7 @@
 // fake GitHub API. The container gates run end to end in gates.int.test.ts.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -26,7 +26,8 @@ import { EventStore } from "../store/events.ts";
 import { currentState, currentStatePayload } from "../task/lifecycle.ts";
 import { createTask } from "../task/task.ts";
 import { CATEGORIES } from "../task/taxonomy.ts";
-import { runTask, type Deps } from "./pipeline.ts";
+import { specDigest } from "./commit.ts";
+import { ProtocolError, runTask, type Deps } from "./pipeline.ts";
 
 const validator = createValidator();
 const release = loadRelease(validator);
@@ -175,6 +176,10 @@ function transcripts(taskId: string, over: Partial<Transcripts> = {}): Transcrip
   };
 }
 
+/** The operator's spec approval, bound to the spec on disk as `factoryctl approve` binds it. */
+const approveSpec = (taskId: string): void => {
+  world.store.append({ task_id: taskId, actor: { kind: "operator", id: "operator" }, type: "command", payload: { command: "approve", gate: "spec", reason: "scope reviewed", spec_digest: specDigest(runDir(world.home, taskId)) } });
+};
 const states = (taskId: string): string[] => world.store.events(taskId).filter((e) => e.type === "state_changed").map((e) => e.to ?? "");
 const run = (taskId: string, d: Deps) => runTask({ home: world.home, store: world.store, validator, release, deps: d, taskId });
 const remoteBranch = (taskId: string): string => spawnSync("git", ["-C", world.remote, "rev-parse", "--verify", "-q", `refs/heads/factory/${taskId}`], { encoding: "utf8" }).stdout.trim();
@@ -295,6 +300,102 @@ describe("guardrails during replay", () => {
   });
 });
 
+describe("the commit protocol (P1-02)", () => {
+  const gated = (id: string, over: Partial<Transcripts> = {}): Transcripts => transcripts(id, { spec: answer(pins["opus"] ?? "", spec({ human_gate: { required: true, reason: "touches billing" } })), ...over });
+  const committed = (id: string): string[] => world.store.events(id).filter((e) => e.type === "artifact_committed").map((e) => String(e.payload["label"]));
+
+  it("commits every step's artifacts once, and a resume runs nothing that is committed", async () => {
+    const id = newTask();
+    expect(await run(id, deps(replayRunner(gated(id))))).toBe("NEEDS_HUMAN");
+    expect(committed(id)).toEqual(["checkout", "triage", "spec"]);
+    approveSpec(id);
+    const second = replayRunner(gated(id));
+    expect(await run(id, deps(second))).toBe("NEEDS_HUMAN");
+    expect(committed(id)).toEqual(["checkout", "triage", "spec", "build", "gates", "review-code", "review-security", "policy", "approve", "summarize", "publish"]);
+    expect(second.requests.map((r) => r.label)).toEqual(["build", "review-code", "review-security", "approve", "summarize"]);
+    // Every committed file is on disk with its committed digest; nothing is left staged.
+    const dir = runDir(world.home, id);
+    for (const e of world.store.events(id).filter((x) => x.type === "artifact_committed")) {
+      for (const a of e.payload["artifacts"] as { path: string; digest: string }[]) expect(`sha256:${createHash("sha256").update(readFileSync(join(dir, a.path))).digest("hex")}`, a.path).toBe(a.digest);
+    }
+    expect(readdirSync(dir).filter((f) => f.endsWith(".pending"))).toEqual([]);
+  });
+
+  it("re-runs a step whose committed file was changed on disk, and nothing downstream when it comes out the same", async () => {
+    const id = newTask();
+    await run(id, deps(replayRunner(gated(id))));
+    approveSpec(id);
+    writeFileSync(join(runDir(world.home, id), "triage.json"), "{}\n");
+    const runner = replayRunner(gated(id));
+    expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
+    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "build", "review-code", "review-security", "approve", "summarize"]);
+    expect(currentStatePayload(world.store.events(id))["gate"]).toBe("merge");
+  });
+
+  it("re-runs every step downstream of a changed input, and a changed spec reopens the spec gate", async () => {
+    const id = newTask();
+    await run(id, deps(replayRunner(gated(id))));
+    approveSpec(id);
+    rmSync(join(runDir(world.home, id), "triage.json"));
+    const changed = gated(id, {
+      triage: answer(pins["haiku"] ?? "", { kind: "feature", proposed_tier: "R1", uncertain: false, duplicate_of: null, summary: "Carts can report emptiness." }),
+      spec: answer(pins["opus"] ?? "", spec({ objective: "Report empty carts", human_gate: { required: true, reason: "touches billing" } })),
+    });
+    const runner = replayRunner(changed);
+    expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
+    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "spec"]);
+    // The approval was for the earlier spec: the gate is open again until the new one is approved.
+    expect(currentStatePayload(world.store.events(id))["gate"]).toBe("spec");
+    const approvals = world.store.events(id).filter((e) => e.type === "command" && e.payload["command"] === "approve");
+    expect(approvals.map((e) => e.payload["spec_digest"])).not.toContain(specDigest(runDir(world.home, id)));
+    approveSpec(id);
+    const after = replayRunner(changed);
+    expect(await run(id, deps(after))).toBe("NEEDS_HUMAN");
+    expect(after.requests.map((r) => r.label)).toEqual(["build", "review-code", "review-security", "approve", "summarize"]);
+  });
+
+  it("sends a spec that changed after the build started back to the spec gate", async () => {
+    const id = newTask();
+    const inner = replayRunner(transcripts(id));
+    const halting: SessionRunner = {
+      kind: "replay",
+      run: (req) => {
+        if (req.label === "build") setHalt(world.home, "operator", "drill");
+        return inner.run(req);
+      },
+    };
+    expect(await run(id, deps(halting))).toBe("BUILDING");
+    clearHalt(world.home);
+    writeFileSync(join(runDir(world.home, id), "spec.yaml"), "edited by hand\n");
+    const runner = replayRunner(gated(id));
+    expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
+    expect(runner.requests.map((r) => r.label)).toEqual(["spec"]);
+    expect(states(id).slice(-3)).toEqual(["BLOCKED", "SPECIFIED", "NEEDS_HUMAN"]);
+    expect(currentStatePayload(world.store.events(id))["gate"]).toBe("spec");
+    approveSpec(id);
+    expect(await run(id, deps(replayRunner(gated(id))))).toBe("NEEDS_HUMAN");
+    expect(currentStatePayload(world.store.events(id))["gate"]).toBe("merge");
+  });
+
+  it("refuses a task an earlier factoryctl started without the commit protocol", async () => {
+    const id = newTask();
+    const old = "T-0099";
+    const dir = runDir(world.home, old);
+    cpSync(runDir(world.home, id), dir, { recursive: true });
+    writeFileSync(join(dir, "task.json"), readFileSync(join(dir, "task.json"), "utf8").replaceAll(id, old));
+    world.store.append({ task_id: old, actor: { kind: "operator", id: "operator" }, type: "task_created", payload: { remote: world.remote } });
+    // Never run: an older task with no stage started adopts the protocol.
+    const fresh = replayRunner(transcripts(old));
+    expect(await run(old, deps(fresh))).toBe("NEEDS_HUMAN");
+    const older = "T-0098";
+    cpSync(runDir(world.home, id), runDir(world.home, older), { recursive: true });
+    writeFileSync(join(runDir(world.home, older), "task.json"), readFileSync(join(runDir(world.home, older), "task.json"), "utf8").replaceAll(id, older));
+    world.store.append({ task_id: older, actor: { kind: "operator", id: "operator" }, type: "task_created", payload: { remote: world.remote } });
+    world.store.append({ task_id: older, actor: { kind: "factoryctl", id: "factoryctl" }, type: "stage_started", payload: { stage: "triage", label: "triage", runner: "sdk", env_keys: [] } });
+    await expect(run(older, deps(replayRunner(transcripts(older))))).rejects.toThrow(ProtocolError);
+  });
+});
+
 describe("resume, gates and cancellation", () => {
   it("stops at the spec gate for a human, then resumes without re-running finished stages", async () => {
     const id = newTask();
@@ -306,19 +407,37 @@ describe("resume, gates and cancellation", () => {
 
     // Without an approval, resuming does nothing.
     expect(await run(id, deps(replayRunner(t)))).toBe("NEEDS_HUMAN");
-    world.store.append({ task_id: id, actor: { kind: "operator", id: "operator" }, type: "command", payload: { command: "approve", gate: "spec", reason: "scope reviewed" } });
+    approveSpec(id);
     const second = replayRunner(t);
     expect(await run(id, deps(second))).toBe("NEEDS_HUMAN");
     expect(second.requests.map((r) => r.label)).toEqual(["build", "review-code", "review-security", "approve", "summarize"]);
     expect(currentStatePayload(world.store.events(id))["gate"]).toBe("merge");
   });
 
-  it("repairs a transition lost between an artifact and its state change", async () => {
+  it("repairs a transition lost between a commit and its state change", async () => {
     const id = newTask();
+    // The process dies right after triage commits: the TRIAGED transition, and every write after it, is lost.
+    let dead = false;
+    const dying = new Proxy(world.store, {
+      get(target, key) {
+        if (key === "append") {
+          return (e: Parameters<EventStore["append"]>[0]) => {
+            if (dead || (e.type === "state_changed" && e.to === "TRIAGED")) {
+              dead = true;
+              throw new Error("killed");
+            }
+            return target.append(e);
+          };
+        }
+        const v: unknown = Reflect.get(target, key);
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    await expect(runTask({ home: world.home, store: dying, validator, release, deps: deps(replayRunner(transcripts(id))), taskId: id })).rejects.toThrow("killed");
+    expect(states(id)).toEqual([]);
+    expect(world.store.events(id).filter((e) => e.type === "artifact_committed").map((e) => e.payload["label"])).toEqual(["checkout", "triage"]);
+
     const runner = replayRunner(transcripts(id));
-    // A crash after triage.json was written but before TRIAGED was recorded.
-    mkdirSync(runDir(world.home, id), { recursive: true });
-    writeFileSync(join(runDir(world.home, id), "triage.json"), JSON.stringify({ schema_version: 1, task_id: id, kind: "feature", proposed_tier: "R1", uncertain: false, duplicate_of: null, summary: "x" }));
     expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
     expect(runner.requests.map((r) => r.label)).not.toContain("triage");
     expect(states(id)[0]).toBe("TRIAGED");

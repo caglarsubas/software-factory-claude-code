@@ -53,7 +53,8 @@
         "stage_failed",
         "command",
         "side_effect_intent",
-        "side_effect_done"
+        "side_effect_done",
+        "artifact_committed"
       ]
     },
     "from": {
@@ -104,6 +105,87 @@
                 "const": "factoryctl"
               }
             }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "artifact_committed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "actor": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "factoryctl"
+              }
+            }
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "The commit point of a stage's artifacts (P1-02): written after the files are staged as .pending and before they are moved into place.",
+            "properties": {
+              "stage": {
+                "$ref": "defs.schema.json#/$defs/text"
+              },
+              "label": {
+                "$ref": "defs.schema.json#/$defs/text"
+              },
+              "round": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "attempt": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "input_digest": {
+                "$ref": "defs.schema.json#/$defs/digest"
+              },
+              "inputs": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "defs.schema.json#/$defs/digest"
+                }
+              },
+              "artifacts": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$"
+                    },
+                    "digest": {
+                      "$ref": "defs.schema.json#/$defs/digest"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "digest"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "stage",
+              "label",
+              "round",
+              "attempt",
+              "input_digest",
+              "inputs",
+              "artifacts"
+            ]
           }
         }
       }

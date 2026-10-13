@@ -94,7 +94,7 @@ The evidence lives in `$FACTORY_HOME/runs/T-0001/`:
   factoryctl resume T-0001
   ```
 
-  `approve` refuses to run inside a Claude Code session (`CLAUDECODE` set): an agent never approves its own work.
+  `approve` refuses to run inside a Claude Code session (`CLAUDECODE` set): an agent never approves its own work. The approval is bound to the spec you read: if the spec runs again, the task stops at the spec gate for a new approval.
 
 - **Merge gate:** review the PR on GitHub (the diff, the factory's summary, the gate results) and merge it yourself, or close it.
   - `factoryctl approve --gate merge` deliberately does nothing.
@@ -112,7 +112,9 @@ The evidence lives in `$FACTORY_HOME/runs/T-0001/`:
 
 | Situation | What to do |
 |---|---|
-| `factoryctl` crashed, the host rebooted, or you pressed Ctrl-C | `factoryctl resume T-0001`. Each stage writes its artifact last, so the run continues from the first missing one, and a transition lost in a crash is repaired. |
+| `factoryctl` crashed, the host rebooted, or you pressed Ctrl-C | `factoryctl resume T-0001`. Every step commits its files through an event, so a crash leaves each step committed or not. The run continues from the first step that is not, a file half-written by the crash is rolled forward or removed, and a transition lost in the crash is repaired. |
+| You edited or removed a file in `runs/T-0001/` | Its step runs again on the next `resume`, and so does every step that read it. A spec that changes needs your approval again. |
+| "T-0001 was started by a factoryctl without the commit protocol" | The task began on v0.1.x. Finish it with that release (`factoryctl release use v0.1.2`), or create a new task. |
 | "T-0001 is running (pid …)" | Another `factoryctl` holds the run lock. A lock whose process has died is cleared on the next run. |
 | A task `FAILED` | `factoryctl report T-0001` gives its category, one of the ten in [the taxonomy](#failure-taxonomy-and-weekly-review), and the cost of each stage. A failed task is final: fix the cause, then create a new task. |
 | A task should stop for good | `factoryctl cancel T-0001`. A running session is signalled and the task ends at once. |

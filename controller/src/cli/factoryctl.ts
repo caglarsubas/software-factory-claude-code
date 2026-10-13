@@ -38,6 +38,7 @@ import { createValidator } from "../schemas/validate.ts";
 import { replayRunner } from "../session/replay.ts";
 import { sdkRunner } from "../session/runner.ts";
 import { isoWeek, taskReport, WEEK_HEADER, weekRow, weekRowMarkdown, type TaskReport } from "../report/report.ts";
+import { specDigest } from "../stages/commit.ts";
 import { runTask } from "../stages/pipeline.ts";
 import { EventStore } from "../store/events.ts";
 import { currentState, currentStatePayload, isTerminal, transition } from "../task/lifecycle.ts";
@@ -321,8 +322,10 @@ async function main(): Promise<void> {
         if (values.reason === undefined || values.reason.trim() === "") fail("--reason is required");
         const events = store.events(id);
         if (currentState(events) !== "NEEDS_HUMAN" || currentStatePayload(events)["gate"] !== "spec") fail(`${id} is not waiting at the spec gate`);
-        store.append({ task_id: id, actor: { kind: "operator", id: process.env["USER"] ?? "operator" }, type: "command", payload: { command: "approve", gate: "spec", reason: values.reason } });
-        out(`${id} spec approved; continue with: factoryctl resume ${id}`);
+        // The approval is bound to the spec read now: a spec that runs again needs a new one.
+        const digest = specDigest(runDir(home, id));
+        store.append({ task_id: id, actor: { kind: "operator", id: process.env["USER"] ?? "operator" }, type: "command", payload: { command: "approve", gate: "spec", reason: values.reason, spec_digest: digest } });
+        out(`${id} spec approved (${digest.slice(0, 19)}); continue with: factoryctl resume ${id}`);
         return;
       }
       case "reject": {

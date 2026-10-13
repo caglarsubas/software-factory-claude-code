@@ -53,6 +53,12 @@ export function createTaskClone(mirror: string, dir: string, branch: string, bas
   git(dir, ["checkout", "--quiet", "-b", branch, base]);
 }
 
+/** Puts a task's clone back at `commit`, discarding every change and untracked file, so a re-run step starts where the first run did. */
+export function resetClone(dir: string, commit: string): void {
+  git(dir, ["reset", "--hard", "--quiet", commit]);
+  git(dir, ["clean", "-fdxq"]);
+}
+
 export function head(dir: string): string {
   return git(dir, ["rev-parse", "HEAD"]).trim();
 }

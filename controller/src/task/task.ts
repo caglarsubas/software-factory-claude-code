@@ -1,8 +1,9 @@
 // Task creation (factoryctl task create): the text is snapshotted at admission, digested, and
 // trust-labelled; the event store records the creation.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { writeAtomic } from "../fsutil.ts";
 import { githubRemote } from "../git/repo.ts";
 import { runDir, type Home } from "../home.ts";
 import { loadYaml } from "../policy/load.ts";
@@ -58,7 +59,7 @@ export function createTask(home: Home, store: EventStore, validator: Validator, 
   if (existsSync(dir)) throw new Error(`${dir} already exists`);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const body = `${input.body.trimEnd()}\n`;
-  writeFileSync(join(dir, "task.md"), body, { mode: 0o600 });
+  writeAtomic(join(dir, "task.md"), body);
   const task: Task = {
     schema_version: 1,
     id,
@@ -71,8 +72,8 @@ export function createTask(home: Home, store: EventStore, validator: Validator, 
   };
   const check = validator.validate("task.schema.json", task);
   if (!check.valid) throw new Error(`task.json: ${check.errors.join("; ")}`);
-  writeFileSync(join(dir, "task.json"), `${JSON.stringify(task, null, 2)}\n`, { mode: 0o600 });
-  store.append({ task_id: id, actor: { kind: "operator", id: input.admittedBy }, type: "task_created", payload: { remote: input.remote ?? githubRemote(profile.target.repo) } });
+  writeAtomic(join(dir, "task.json"), `${JSON.stringify(task, null, 2)}\n`);
+  store.append({ task_id: id, actor: { kind: "operator", id: input.admittedBy }, type: "task_created", payload: { remote: input.remote ?? githubRemote(profile.target.repo), commit_protocol: 1 } });
   return task;
 }
 
