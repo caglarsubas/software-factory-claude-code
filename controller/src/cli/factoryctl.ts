@@ -21,7 +21,7 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { killGateContainers } from "../../../gates/src/container.ts";
+import { engineHost, killGateContainers, PROXY_ENV } from "../../../gates/src/container.ts";
 import { runGates } from "../../../gates/src/run.ts";
 import { ensureImage } from "../../../gates/src/image.ts";
 import { runBypassVariants } from "../../../plugin/hooks/bypass-cases.ts";
@@ -99,6 +99,16 @@ async function drive(home: Home, store: EventStore, taskId: string, replay: stri
         runner: replay === undefined ? sdkRunner : replayRunner(replay),
         runGates,
         gateImage: () => ensureImage(),
+        engineEnv: () => {
+          const host = engineHost();
+          // Gate settings and proxy settings for the setup container; a value with credentials in it stays behind.
+          const names = ["FACTORY_CONTAINER_ENGINE", "FACTORY_GATES_FETCH_NETWORK", "FACTORY_GATES_CA_FILE", ...PROXY_ENV];
+          const passed = names.flatMap((k) => {
+            const v = process.env[k];
+            return v === undefined || v.includes("@") ? [] : [[k, v] as const];
+          });
+          return Object.fromEntries([...(host === null ? [] : [["DOCKER_HOST", host] as const]), ...passed]);
+        },
         github: token === undefined ? null : restGitHub(token),
         auth: token === undefined ? null : { token },
         keyFile: keyFile(home),

@@ -84,5 +84,16 @@ describe("factoryctl run with container gates", () => {
     const manifest = JSON.parse(readFileSync(join(run, "manifest.json"), "utf8")) as { candidate_commit: string };
     expect(createValidator().validate("manifest.schema.json", manifest).errors).toEqual([]);
     expect(git(remote, ["rev-parse", "refs/heads/factory/T-0001"]).stdout.trim()).toBe(manifest.candidate_commit);
+
+    // The builder's Stop hook runs the preflight in the session's stripped environment: a per-task
+    // HOME with no Docker config and none of the operator's variables. It must still pass, using
+    // the image and engine settings factoryctl gave it (the first live run on macOS did not).
+    const guard = JSON.parse(readFileSync(join(home, "sessions/T-0001/build.guard.json"), "utf8")) as { preflight: { argv: string[] } };
+    const [program = "", ...args] = guard.preflight.argv;
+    const bareHome = join(root, "session-home");
+    mkdirSync(bareHome);
+    const preflight = spawnSync(program, args, { cwd: wt, encoding: "utf8", env: { PATH: process.env["PATH"] ?? "", HOME: bareHome } });
+    expect(preflight.status, preflight.stderr.slice(-2000)).toBe(0);
+    expect((JSON.parse(readFileSync(join(run, "work/build/preflight-gates.json"), "utf8")) as { passed: boolean }).passed).toBe(true);
   });
 });

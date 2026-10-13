@@ -22,6 +22,21 @@ export const HARDENING: readonly string[] = [
   "--label", LABEL,
 ];
 
+/**
+ * Where the engine listens, for a process that will not see the operator's Docker config: the
+ * build-stage preflight runs with the session's per-task HOME. DOCKER_HOST wins; otherwise the
+ * current Docker context's endpoint (Docker Desktop keeps it in ~/.docker). Never a URL with
+ * credentials in it.
+ */
+export function engineHost(env: NodeJS.ProcessEnv = process.env): string | null {
+  const inspect = (): string => {
+    const r = spawnSync(ENGINE, ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"], { encoding: "utf8" });
+    return r.status === 0 ? r.stdout.trim() : "";
+  };
+  const host = env["DOCKER_HOST"] ?? (ENGINE === "docker" ? inspect() : undefined);
+  return host === undefined || host === "" || host.includes("@") ? null : host;
+}
+
 /** The kill switch (factoryctl halt) stops every gate container on this host; returns how many. */
 export function killGateContainers(): number {
   const ps = spawnSync(ENGINE, ["ps", "--quiet", "--filter", `label=${LABEL}`], { encoding: "utf8" });
