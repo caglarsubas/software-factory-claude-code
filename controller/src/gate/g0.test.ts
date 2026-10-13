@@ -128,9 +128,9 @@ describe("gate G0", () => {
     expect(evidence.criteria.map((c) => `${c.id} ${c.status}`)).toEqual(["G0-1 pass", "G0-2 pass", "G0-3 pass", "G0-4 pass", "G0-5 human"]);
     expect(evidence.passed).toBe(true);
     expect(evidence.release?.tag).toBe(RELEASE_TAG);
-    expect(evidence.criteria[0]?.evidence.join("\n")).toContain(`https://github.com/caglarsubas/factory-fixture-ts-mini/pull/`);
+    expect(evidence.criteria[0]?.evidence.join("\n")).toContain(`<https://github.com/caglarsubas/factory-fixture-ts-mini/pull/`);
     expect(evidence.criteria[2]?.evidence.join("\n")).toMatch(/14 sessions, each env exactly the [0-9]+-name allowlist/);
-    expect(evidence.criteria[4]?.evidence.join("\n")).toContain("**/auth/** → R3");
+    expect(evidence.criteria[4]?.evidence.join("\n")).toContain("`**/auth/**` → R3");
 
     const md = evidenceMarkdown(evidence);
     expect(md).toContain("| G0-1 | Fixture dry runs produce the full artifact chain and a PR | done |");

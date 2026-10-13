@@ -4,11 +4,11 @@ Claude Code updates this file after every deliverable; the plan is [`ROADMAP.md`
 
 | Field | Value |
 |---|---|
-| Current phase | P0 Foundation (in progress) |
-| Next gate | G0 · target Oct 23, 2026 |
-| Factory release | `v0.1.0` tagged 2026-10-11 (#14); live runs on it and on `v0.1.1` (#15) found three bugs, fixed in `v0.1.1` and `v0.1.2` (#16), the release G0 runs on |
+| Current phase | P0 Foundation: G0-1 to G0-4 pass; awaiting the operator's signature (#17) |
+| Next gate | G0 · target Oct 23, 2026; [evidence](gates/G0.md) in #17 |
+| Factory release | `v0.1.2` (`95d3abc`, tagged 2026-10-13), the release G0 ran on; `v0.1.0` (#14) and `v0.1.1` (#15) were superseded after their live runs found three bugs (#15, #16) |
 | Claude Code / Agent SDK pin | 2.1.286 / 0.3.286 (stable on Oct 9, 2026; re-check at P0 start) |
-| P0 entry criteria | GitHub App ☐ · Console workspace with spend limit ☐ · `main` created ☑ · toolchain pinned ☑ (Node 24.21.0, pnpm 12.6.0, TypeScript 6.0.3) — code work started without the first two by operator decision; both are required before G0-1 |
+| P0 entry criteria | GitHub App ☐ (a token scoped to the fixture repositories stood in for G0-1; see deviations) · Console workspace with spend limit ☑ · `main` created ☑ · toolchain pinned ☑ (Node 24.21.0, pnpm 12.6.0, TypeScript 6.0.3) |
 
 Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliverable is `done` only when its "done when" check in the roadmap passes and the evidence link proves it.
 
@@ -24,17 +24,17 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | P0-06 | Gate runner in a disposable container | core | done | #9 | merged 2026-10-09 with `ci` green; 19 seeded-defect runs (11 TypeScript, 8 Python) each fail exactly the gates they target, including `export-ignore`, `nosemgrep` and `trufflehog:ignore` bypass attempts; both rule packs (13 rules) pass their annotated tests; 8 pinned downloads verified by cosign, SLSA or GitHub attestation in CI; require-gates now runs the preflight itself |
 | P0-07 | `factoryctl` v0 and replay harness | core | done | #11 | merged 2026-10-09 with `ci` green; 9 replay tests run every stage with zero tokens in `pnpm test`: the full run to the merge gate, exact session options and an env equal to the allowlist, guard denials, the spec gate and resume, crash repair, red gates, `review_block`, `schema_invalid`, `max_turns` and cancellation; `factoryctl` end to end with container gates in the gates job; append-only events enforced by triggers |
 | P0-08 | Fixture targets and profiles | core | done | #13 | merged 2026-10-09 with `ci` green; `ts-mini` and `py-mini` with 5 seeded tasks each (R0 docs, R1 feature, R3 auth change at the spec gate, R3 sink, R1 with prompt injection); `factoryctl task create` accepts all 10; each golden patch applies and lands on its tier; in containers both targets are green at base, every hidden test fails at base and passes with its golden patch, with the expected sinks; deterministic base commits for the mirrors; `profiles/self` and `profiles/template` validate |
-| P0-09 | Operator guide, threat model, G0, `v0.1.0` | core | review | #14 | [operator guide](operator-guide.md) (install, run, approve, recover, kill switch v0, G0) and one-page [threat model](threat-model.md) mapping all 20 OWASP LLM 2025 and Agentic 2026 risks, enforced by check-docs; `factoryctl release install` puts a version tag read-only into `releases/<sha>` with tree and file digests, pins it and writes the shim (a trial install with pnpm: 7,483 files, and `doctor` run from it confirms the pins); kill switch v0 (`halt`, `unhalt`): a halt mid-session denies every further tool call and ends the run without failing the task, which resumes after `unhalt`; `factoryctl gate G0` checks G0-1 to G0-4 and drafts the evidence PR, each criterion tested to pass on complete fixture runs and fail on what it guards. Done when the G0 evidence PR is open, after `v0.1.0` is tagged on the merge |
+| P0-09 | Operator guide, threat model, G0, `v0.1.0` | core | done | #14, #15, #16 | [operator guide](operator-guide.md) (install, run, approve, recover, kill switch v0, G0) and one-page [threat model](threat-model.md) mapping all 20 OWASP LLM 2025 and Agentic 2026 risks, enforced by check-docs; `factoryctl release install` puts a version tag read-only into `releases/<sha>` with tree and file digests, pins it and writes the shim (a trial install with pnpm: 7,483 files, and `doctor` run from it confirms the pins); kill switch v0 (`halt`, `unhalt`): a halt mid-session denies every further tool call and ends the run without failing the task, which resumes after `unhalt`; `factoryctl gate G0` checks G0-1 to G0-4 and drafts the evidence PR, each criterion tested to pass on complete fixture runs and fail on what it guards. the G0 evidence PR (#17) is open, with G0-1 to G0-4 passing on `v0.1.2` |
 
 ### Gate G0
 
 | ID | Criterion | Status | Evidence | Date | Signed by |
 |---|---|---|---|---|---|
-| G0-1 | Fixture dry runs produce the full artifact chain and a PR | todo | | | |
-| G0-2 | At least 20 bypass variants all exit 2 | todo | | | |
-| G0-3 | Operator checkout unchanged; session `env` equals the allowlist | todo | | | |
-| G0-4 | Factory CI green; `doctor` confirms pins | todo | | | |
-| G0-5 | Operator signs; globs and budgets confirmed | todo | | | |
+| G0-1 | Fixture dry runs produce the full artifact chain and a PR | done | [both fixtures](gates/G0.md) went task → spec → gates → reviews → verdict → PR on `v0.1.2` with valid manifests; 14 live sessions, $1.69 in total | 2026-10-13 | |
+| G0-2 | At least 20 bypass variants all exit 2 | done | 58 of 58 variants exit 2 through the released guard hook | 2026-10-13 | |
+| G0-3 | Operator checkout unchanged; session `env` equals the allowlist | done | the operator checkout (12,814 files) and the release (7,487 files) byte-identical; 14 sessions, each env exactly the 17-name allowlist | 2026-10-13 | |
+| G0-4 | Factory CI green; `doctor` confirms pins | done | `ci` green on `95d3abc`; `doctor`: Node 24.21.0, Claude Code 2.1.286, Agent SDK 0.3.286 | 2026-10-13 | |
+| G0-5 | Operator signs; globs and budgets confirmed | review | awaiting the operator's approval of #17, which confirms the protected globs and tier budgets in [the evidence](gates/G0.md) | | |
 
 ## Phase 1 · Local MVP
 
@@ -147,9 +147,13 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | 2026-10-09 | P0-07 | `format-typecheck` runs format and typecheck commands after each edit | `factoryctl` configures no post-edit commands; the Stop preflight runs the gates in containers | the hook runs outside the Bash sandbox, and formatters and linters load config the builder can edit |
 | 2026-10-09 | P0-08 | fixture targets mirrored to throwaway GitHub repositories | `scripts/mirror-fixture.ts` pushes each fixture's deterministic base; the two repositories are not created yet | creating repositories in the operator's account is an owner action, like the App, due before G0-1 |
 | 2026-10-09 | P0-09 | `factoryctl gate G<n>` drafts and opens the evidence PR | it writes the PR body (`evidence.md`) and the STATUS rows; the operator opens the `gates/G0` PR | opening a PR on the factory repository needs a token `factoryctl` must never hold for its own repository; the operator's approval of that PR is the signature |
+| 2026-10-13 | G0 | gate run on `v0.1.0` | on `v0.1.2` | the first live runs found three bugs, each fixed with a test that reproduces the live failure: judgment stages could not call the SDK's `StructuredOutput` tool past the tool allowlist and guard (#15); the `factoryctl` shim's default `FACTORY_HOME` (#15); the build preflight built the gate image inside the session's stripped environment (#16) |
+| 2026-10-13 | G0-1 | the GitHub App for the dry runs | a fine-grained token scoped to the two fixture repositories (contents and pull requests) | the App is still an owner action; the token reached only `factoryctl`'s push and PR calls, never a session; the App replaces it before Phase 1 runs on other targets |
+| 2026-10-13 | G0 | the evidence PR from a `gates/G0` branch | from this session's branch, with the evidence in [`gates/G0.md`](gates/G0.md) | the session can push only its own branch |
 
 ### Platform re-verification (ROADMAP §11)
 
 | Gate | Date | CLI / SDK pin | New advisories | Feature-status changes | Price changes | Action |
 |---|---|---|---|---|---|---|
 | plan | 2026-10-09 | 2.1.286 / 0.3.286 | none beyond §11 | — | — | baseline |
+| G0 | 2026-10-13 | 2.1.286 / 0.3.286 | not re-checked | not re-checked | not re-checked | pins confirmed by `doctor`; the advisory, feature and price re-check is due before Phase 1 starts |
