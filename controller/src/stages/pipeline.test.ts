@@ -127,6 +127,7 @@ function deps(runner: SessionRunner, over: Partial<Deps> = {}): Deps {
     runner,
     runGates: passingGates(),
     gateImage: () => "software-factory-gates:replay",
+    engineEnv: () => ({ DOCKER_HOST: "unix:///tmp/engine.sock" }),
     github: world.github,
     auth: null,
     keyFile: join(world.home.secrets, "anthropic.key"),
@@ -247,6 +248,12 @@ describe("a task through every stage, replayed", () => {
       expect(settings.apiKeyHelper, req.label).toContain(world.home.secrets);
       expect(o.outputFormat === undefined, req.label).toBe(req.label === "build");
     }
+    // The preflight gets a ready image and the engine endpoint: it runs in the builder's stripped env.
+    const build = runner.requests.find((r) => r.label === "build");
+    const guard = JSON.parse(readFileSync(build?.options.env?.["FACTORY_GUARD_CONFIG"] ?? "", "utf8")) as { preflight: { argv: string[] } };
+    expect(guard.preflight.argv.slice(0, 2)).toEqual(["/usr/bin/env", "DOCKER_HOST=unix:///tmp/engine.sock"]);
+    expect(guard.preflight.argv.join(" ")).toContain("--image software-factory-gates:replay");
+    expect(guard.preflight.argv.join(" ")).not.toMatch(/must-not-leak|agent\.sock/);
     // The event store records each session's runner and env names, never values (G0-1, G0-3).
     const started = world.store.events(id).filter((e) => e.type === "stage_started" && e.payload["runner"] !== undefined);
     expect(started.map((e) => e.payload["label"])).toEqual(runner.requests.map((r) => r.label));

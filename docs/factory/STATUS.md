@@ -6,7 +6,7 @@ Claude Code updates this file after every deliverable; the plan is [`ROADMAP.md`
 |---|---|
 | Current phase | P0 Foundation (in progress) |
 | Next gate | G0 · target Oct 23, 2026 |
-| Factory release | `v0.1.0` tagged 2026-10-11 (#14); its first live run found two bugs (#15), fixed for `v0.1.1`, the release G0 runs on |
+| Factory release | `v0.1.0` tagged 2026-10-11 (#14); live runs on it and on `v0.1.1` (#15) found three bugs, fixed in `v0.1.1` and `v0.1.2` (#16), the release G0 runs on |
 | Claude Code / Agent SDK pin | 2.1.286 / 0.3.286 (stable on Oct 9, 2026; re-check at P0 start) |
 | P0 entry criteria | GitHub App ☐ · Console workspace with spend limit ☐ · `main` created ☑ · toolchain pinned ☑ (Node 24.21.0, pnpm 12.6.0, TypeScript 6.0.3) — code work started without the first two by operator decision; both are required before G0-1 |
 

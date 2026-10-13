@@ -28,7 +28,10 @@ import { approvePrompt, buildPrompt, reviewPrompt, specPrompt, summarizePrompt, 
 export interface Deps {
   runner: SessionRunner;
   runGates: (o: GateRunOptions) => Promise<GatesResult>;
+  /** Builds the gate image if it is missing; called in factoryctl's own environment. */
   gateImage: () => string;
+  /** Settings the build-stage preflight needs to reach the container engine (DOCKER_HOST and the FACTORY_* gate settings); never a credential. */
+  engineEnv?: () => Record<string, string>;
   /** null: push only, the operator opens the PR (no GitHub token). */
   github: GitHub | null;
   auth: GitAuth | null;
@@ -260,10 +263,15 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     moveTo("BUILDING");
     const s = parse(readFileSync(join(dir, "spec.yaml"), "utf8")) as Spec;
     const work = workDir("build");
-    const preflight = {
-      argv: [process.execPath, "--disable-warning=ExperimentalWarning", release.gatesCli, "run", "--worktree", worktree, "--base", c.base_commit, "--task", taskId, "--profile", profilePath, "--out", join(work, "preflight-gates.json")],
-      timeout_ms: PREFLIGHT_MS,
-    };
+    // The preflight runs from the builder's Stop hook, in the session's stripped environment
+    // (per-task HOME, allowlisted env), so it gets a ready image and the engine's endpoint
+    // rather than building anything itself.
+    const gateRun = [
+      process.execPath, "--disable-warning=ExperimentalWarning", release.gatesCli, "run", "--worktree", worktree, "--base", c.base_commit, "--task", taskId,
+      "--profile", profilePath, "--out", join(work, "preflight-gates.json"), "--image", deps.gateImage(), "--cache-volume", cacheVolumeFor(task.target.repo), "--osv-volume", "sf-gates-osv",
+    ];
+    const engine = Object.entries(deps.engineEnv?.() ?? {}).map(([k, v]) => `${k}=${v}`);
+    const preflight = { argv: engine.length === 0 ? gateRun : ["/usr/bin/env", ...engine, ...gateRun], timeout_ms: PREFLIGHT_MS };
     await session({
       stage: "build", agent: "builder", label: "build", cwd: worktree,
       prompt: buildPrompt({ specYaml: readFileSync(join(dir, "spec.yaml"), "utf8"), taskDir: work, findings: null }),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { exec, runArgs, type ContainerSpec } from "./container.ts";
+import { engineHost, exec, runArgs, type ContainerSpec } from "./container.ts";
 
 const gate: ContainerSpec = {
   name: "sf-gate-test",
@@ -61,5 +61,12 @@ describe("exec", () => {
     expect(r.timedOut).toBe(true);
     expect(called).toBe(true);
     expect(r.status).toBeNull();
+  });
+});
+
+describe("engineHost", () => {
+  it("passes DOCKER_HOST through, but never one that carries credentials", () => {
+    expect(engineHost({ DOCKER_HOST: "unix:///Users/op/.docker/run/docker.sock" })).toBe("unix:///Users/op/.docker/run/docker.sock");
+    expect(engineHost({ DOCKER_HOST: "tcp://user:secret@builder:2376" })).toBeNull();
   });
 });
