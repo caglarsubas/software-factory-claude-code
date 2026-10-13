@@ -159,7 +159,7 @@ function g01(i: G0Inputs, tasks: string[]): Criterion {
     const results = candidates.map((id) => ({ id, ...dryRunProblems(i, id, repo) }));
     const ok = results.findLast((r) => r.problems.length === 0);
     if (ok !== undefined) {
-      evidence.push(`${name}: ${ok.id} → ${ok.pr}; ${String(ok.sessions)} live sessions; manifest valid; $${ok.usd.toFixed(2)}`);
+      evidence.push(`${name}: ${ok.id} → <${ok.pr}>; ${String(ok.sessions)} live sessions; manifest valid; $${ok.usd.toFixed(2)}`);
     } else {
       const last = results.at(-1);
       failures.push(last === undefined ? `${name}: no dry run in the evidence window` : `${name}: ${last.id}: ${last.problems.join("; ")}`);
@@ -250,7 +250,8 @@ async function g04(i: G0Inputs): Promise<Criterion> {
 function g05(i: G0Inputs): Criterion {
   const risk = parse(readFileSync(join(i.release.root, "policies/risk.yaml"), "utf8")) as { rules: { when: { any_path?: string[] }; minimum_risk: string }[] };
   const budgets = parse(readFileSync(join(i.release.root, "policies/budgets.yaml"), "utf8")) as { task_usd: Record<string, number>; default_monthly_cap_usd: number; wall_clock_minutes: number };
-  const globs = risk.rules.flatMap((r) => (r.when.any_path ?? []).map((g) => `${g} → ${r.minimum_risk}`));
+  // Code spans: a glob like **/auth/** would otherwise render as emphasis in the PR body.
+  const globs = risk.rules.flatMap((r) => (r.when.any_path ?? []).map((g) => `\`${g}\` → ${r.minimum_risk}`));
   return {
     id: "G0-5",
     criterion: "Operator signs; globs and budgets confirmed",
