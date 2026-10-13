@@ -43,5 +43,12 @@ export const OUTPUTS = {
   spec: () => modelSchema("spec.schema.json", ["schema_version", "id"], { markdown: { type: "string", minLength: 1, description: "The spec as readable Markdown for humans (spec.md)." } }),
   review: () => modelSchema("review.schema.json", ["schema_version", "task_id", "reviewer", "model", "candidate_commit"]),
   verdict: () => modelSchema("verdict.schema.json", ["schema_version", "task_id", "candidate_commit", "tier"]),
+  /** One refuter session answers one finding: the decision and evidence of a refutations.json item. */
+  refutation: () => {
+    const item = (modelSchema("refutation.schema.json", ["schema_version", "task_id", "round", "candidate_commit"])["properties"] as Json)["refutations"] as Json;
+    const fields = item["items"] as Json;
+    const properties = fields["properties"] as Json;
+    return { type: "object", additionalProperties: false, properties: { decision: properties["decision"], evidence: properties["evidence"] }, required: ["decision", "evidence"] };
+  },
   summary: () => modelSchema("summary.schema.json", ["schema_version", "task_id"]),
 } as const;

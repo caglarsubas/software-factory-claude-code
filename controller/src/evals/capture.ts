@@ -64,6 +64,12 @@ export function captureTask(home: Home, taskId: string, factoryRepo: string | nu
       if (review === null) continue;
       stages.push({ label: roundLabel(label, r), role, artifact: roundPath(`${label}.json`, r), request: `Review the change in this evidence bundle. Its files are inlined; there is no checkout to read. Return JSON with findings and summary.\n\n${bundle(r)}`, result: { line: "`RESULT: <n>`, the number of findings the agent marked blocking", pattern: `^RESULT: ${String(blocking(review))}$` } });
     }
+    const refutations = json(roundPath("refutations.json", r));
+    for (const a of Array.isArray(refutations?.["refutations"]) ? (refutations["refutations"] as { finding_id: string; decision: string }[]) : []) {
+      const [reviewLabel, findingId] = a.finding_id.split("/");
+      const finding = (json(roundPath(`${reviewLabel ?? ""}.json`, r))?.["findings"] as { id: string }[] | undefined)?.find((f) => f.id === findingId);
+      stages.push({ label: roundLabel(`refute-${a.finding_id.replace("review-", "").replace("/", "-")}`, r), role: "refuter", artifact: roundPath("refutations.json", r), request: `Try to refute this blocking finding. The relevant files are inlined; there is no checkout to read. Return JSON with decision (refuted, upheld or unclear) and evidence.\n\n${block(`finding id="${a.finding_id}"`, JSON.stringify(finding ?? {}, null, 2))}${bundle(r)}`, result: { line: "`RESULT: <refuted|upheld|unclear>`, the agent's decision", pattern: `^RESULT: ${a.decision}$` } });
+    }
   }
   const verdict = json("verdict.json");
   if (verdict !== null) {

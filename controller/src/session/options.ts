@@ -17,7 +17,7 @@ import { sessionEnv, type SessionEnv } from "./env.ts";
 import { guardHook, type Denial } from "./guard.ts";
 
 /** Stages that run a model session (gates and publish are factoryctl's own). */
-export type SessionStage = "triage" | "spec" | "build" | "review" | "approve" | "summarize";
+export type SessionStage = "triage" | "spec" | "build" | "review" | "refute" | "approve" | "summarize";
 
 export const REGISTRIES = ["registry.npmjs.org", "pypi.org", "files.pythonhosted.org"];
 

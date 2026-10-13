@@ -29,7 +29,7 @@ export interface BudgetsPolicy {
   wall_clock_minutes: number;
   max_remediation_rounds: number;
   calibration: { multiplier: number; min_runs_per_tier: number };
-  stage_fraction: Record<"triage" | "spec" | "build" | "review" | "approve" | "summarize", number>;
+  stage_fraction: Record<"triage" | "spec" | "build" | "review" | "refute" | "approve" | "summarize", number>;
 }
 
 /** RELEASE.json of an installed release (schemas/release.schema.json). */

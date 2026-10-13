@@ -31,6 +31,7 @@ A run goes checkout → triage → spec → rounds of build → gates → review
 
   A step is done while its latest commit was made from the inputs it has now and its files are intact. So `resume` continues from the first step that is not done, and a changed input re-runs every step downstream of it. At the start of every run, recovery rolls a committed `.pending` forward and deletes any other. A re-run build starts from the base commit with an empty work directory.
 - **Spec approvals** are bound to the spec they were given on (`spec_digest`): a spec that runs again reopens the gate, through `BLOCKED` when the build had already started.
+- **Refuter pass (P1-03):** each blocking finding of a round goes to one refuter session, which sees the bundle and the read-only candidate, like the reviewers. Its answers are committed as `refutations.json` (`refuted`, `upheld` or `unclear`). Only the findings it did not refute count as blocking: they start a remediation round, and an approval never passes them.
 - **Remediation rounds (P1-01):**
   - Red gates, or a blocking finding from a reviewer, start another round. Its build gets the failures as data in its prompt and starts from the previous round's candidate.
   - Round 1 keeps the flat layout. Round `n` keeps its build, gates, reviews and remediation under `rounds/<n>/`, with labels suffixed `-r<n>`.

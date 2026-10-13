@@ -151,8 +151,16 @@
               },
               "inputs": {
                 "type": "object",
+                "description": "The digest of each file the step read; an optional input that does not exist is recorded as \"missing\", so its later appearance re-runs the step.",
                 "additionalProperties": {
-                  "$ref": "defs.schema.json#/$defs/digest"
+                  "anyOf": [
+                    {
+                      "$ref": "defs.schema.json#/$defs/digest"
+                    },
+                    {
+                      "const": "missing"
+                    }
+                  ]
                 }
               },
               "artifacts": {
