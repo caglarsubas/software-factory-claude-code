@@ -9,7 +9,7 @@ import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse, stringify } from "yaml";
 import type { GatesResult } from "../../../gates/src/run.ts";
 import { memoryGitHub, type MemoryGitHub } from "../github/testing.ts";
@@ -29,6 +29,10 @@ import { CATEGORIES } from "../task/taxonomy.ts";
 import { captureTask } from "../evals/capture.ts";
 import { specDigest } from "./commit.ts";
 import { ProtocolError, runTask, type Deps } from "./pipeline.ts";
+
+// Each test drives git, the event store and every stage, several rounds in some: on a loaded CI
+// runner (the kill-point suite spawns factoryctl processes alongside) one takes several seconds.
+vi.setConfig({ testTimeout: 30_000 });
 
 const validator = createValidator();
 const release = loadRelease(validator);
