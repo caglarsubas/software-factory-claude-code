@@ -21,6 +21,7 @@ import type { Release } from "../release.ts";
 import { verifyRelease } from "../release/install.ts";
 import type { Validator } from "../schemas/validate.ts";
 import { ENV_ALLOWLIST } from "../session/env.ts";
+import { latestRound, roundPath } from "../stages/rounds.ts";
 import type { EventStore, FactoryEvent } from "../store/events.ts";
 import { currentState, currentStatePayload } from "../task/lifecycle.ts";
 import { readTask } from "../task/task.ts";
@@ -77,7 +78,11 @@ const gateDir = (home: Home): string => join(home.gates, "G0");
 const beginPath = (home: Home): string => join(gateDir(home), "begin.json");
 /** The sessions a full run has: G0-1 needs each, live. */
 const SESSIONS = ["triage", "spec", "build", "review-code", "review-security", "approve", "summarize"];
-const ARTIFACTS = ["task.json", "spec.md", "spec.yaml", "gates.json", "review-code.json", "review-security.json", "verdict.json", "summary.json", "publish.json", "manifest.json"];
+/** The round's own files come from its latest round (P1-01): earlier rounds' red gates are history. */
+const artifacts = (dir: string): string[] => {
+  const n = latestRound(dir);
+  return ["task.json", "spec.md", "spec.yaml", roundPath("gates.json", n), roundPath("review-code.json", n), roundPath("review-security.json", n), "verdict.json", "summary.json", "publish.json", "manifest.json"];
+};
 const sha256 = (data: Buffer): string => `sha256:${createHash("sha256").update(data).digest("hex")}`;
 /** Git rewrites its index, a stat cache, on read-only commands such as a shell prompt's `git status`. */
 const checkoutDigest = (path: string): TreeDigest => treeDigest(path, (rel) => rel === ".git/index");
@@ -112,7 +117,9 @@ function dryRunProblems(i: G0Inputs, id: string, repo: string): { problems: stri
   if (currentState(events) !== "NEEDS_HUMAN" || payload["gate"] !== "merge") problems.push(`state ${currentState(events)}, not at the merge gate`);
   if (!pr.startsWith(`https://github.com/${repo}/pull/`) || !/\/pull\/[0-9]+$/.test(pr)) problems.push(`no PR on ${repo}`);
   const dir = runDir(i.home, id);
-  const missing = ARTIFACTS.filter((f) => !existsSync(join(dir, f)));
+  const wanted = artifacts(dir);
+  const gatesPath = wanted[3] ?? "gates.json";
+  const missing = wanted.filter((f) => !existsSync(join(dir, f)));
   if (missing.length > 0) problems.push(`missing ${missing.join(", ")}`);
   const sessions = sessionsOf(events);
   const labels = new Set(sessions.map((e) => String(e.payload["label"])));
@@ -140,7 +147,7 @@ function dryRunProblems(i: G0Inputs, id: string, repo: string): { problems: stri
       if (publish.head_commit !== manifest.candidate_commit) problems.push("the pushed commit is not the reviewed candidate");
     }
   }
-  if (!missing.includes("gates.json") && !(JSON.parse(readFileSync(join(dir, "gates.json"), "utf8")) as { passed: boolean }).passed) problems.push("gates did not pass");
+  if (!missing.includes(gatesPath) && !(JSON.parse(readFileSync(join(dir, gatesPath), "utf8")) as { passed: boolean }).passed) problems.push("gates did not pass");
   if (!missing.includes("verdict.json") && (JSON.parse(readFileSync(join(dir, "verdict.json"), "utf8")) as { decision: string }).decision !== "approve") problems.push("verdict is not approve");
   return { problems, pr, sessions: sessions.length, usd };
 }

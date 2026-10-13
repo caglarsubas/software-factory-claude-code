@@ -20,6 +20,18 @@ export interface ToolsPolicy {
   forbidden: { pattern: string; reason: string }[];
 }
 
+export type BudgetTier = "R0" | "R1" | "R2" | "R3" | "Restricted";
+
+/** policies/budgets.yaml (schemas/budgets-policy.schema.json). */
+export interface BudgetsPolicy {
+  task_usd: Record<BudgetTier, number>;
+  default_monthly_cap_usd: number;
+  wall_clock_minutes: number;
+  max_remediation_rounds: number;
+  calibration: { multiplier: number; min_runs_per_tier: number };
+  stage_fraction: Record<"triage" | "spec" | "build" | "review" | "approve" | "summarize", number>;
+}
+
 /** RELEASE.json of an installed release (schemas/release.schema.json). */
 export interface ReleaseInfo {
   schema_version: 1;
@@ -45,6 +57,7 @@ export interface Release {
   info: ReleaseInfo | null;
   config: FactoryConfig;
   tools: ToolsPolicy;
+  budgets: BudgetsPolicy;
 }
 
 export function readReleaseInfo(root: string, validator: Validator): ReleaseInfo | null {
@@ -66,5 +79,6 @@ export function loadRelease(validator: Validator, root: string = process.env["FA
     info: readReleaseInfo(root, validator),
     config: loadYaml(join(root, "config/factory.yaml"), "factory-config.schema.json", validator) as FactoryConfig,
     tools: loadYaml(join(root, "policies/tools.yaml"), "tools-policy.schema.json", validator) as ToolsPolicy,
+    budgets: loadYaml(join(root, "policies/budgets.yaml"), "budgets-policy.schema.json", validator) as BudgetsPolicy,
   };
 }

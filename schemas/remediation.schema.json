@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/remediation.schema.json",
+  "title": "Remediation",
+  "description": "What a round left to fix, written by factoryctl after a round's gates or reviews fail (P1-01): the next build gets the items, or the task stops when an item repeats or the rounds run out.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "task_id": {
+      "$ref": "defs.schema.json#/$defs/taskId"
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The round whose gates or reviews failed."
+    },
+    "source": {
+      "enum": [
+        "gates",
+        "review"
+      ]
+    },
+    "decision": {
+      "enum": [
+        "remediate",
+        "stop"
+      ]
+    },
+    "reason": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "repeated": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^(gate|finding):[0-9a-f]{16}$"
+      },
+      "uniqueItems": true
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^(gate|finding):[0-9a-f]{16}$"
+          },
+          "kind": {
+            "enum": [
+              "gate",
+              "finding"
+            ]
+          },
+          "ref": {
+            "$ref": "defs.schema.json#/$defs/text",
+            "description": "The gate's name, or the reviewer and finding id."
+          },
+          "file": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "title": {
+            "$ref": "defs.schema.json#/$defs/text"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 8000
+          }
+        },
+        "required": [
+          "fingerprint",
+          "kind",
+          "ref",
+          "title",
+          "detail"
+        ]
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "round",
+    "source",
+    "decision",
+    "reason",
+    "repeated",
+    "items"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "remediate"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "repeated": {
+            "type": "array",
+            "maxItems": 0
+          }
+        }
+      }
+    }
+  ]
+}

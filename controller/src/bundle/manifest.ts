@@ -11,7 +11,7 @@ import type { Validator } from "../schemas/validate.ts";
 import type { EventStore } from "../store/events.ts";
 
 /** Not content of the bundle: the manifest itself, derived copies and raw transcripts (kept under their own retention). */
-const EXCLUDED = new Set(["manifest.json", "bundle", "transcripts"]);
+const EXCLUDED = new Set(["manifest.json", "bundle", "transcripts", "heartbeat.json"]);
 
 const digest = (data: Buffer | string): string => `sha256:${createHash("sha256").update(data).digest("hex")}`;
 
@@ -32,11 +32,13 @@ export interface ManifestInputs {
   validator: Validator;
   release: Release;
   risk: RiskPolicy;
+  /** The latest round's build.json, relative to the run directory. */
+  build?: string;
   now?: Date;
 }
 
 export function writeManifest(i: ManifestInputs): Record<string, unknown> {
-  const build = JSON.parse(readFileSync(join(i.dir, "build.json"), "utf8")) as { base_commit: string; candidate_commit: string };
+  const build = JSON.parse(readFileSync(join(i.dir, i.build ?? "build.json"), "utf8")) as { base_commit: string; candidate_commit: string };
   const models: { stage: string; alias: string; model_id: string }[] = [];
   const costs = new Map<string, { usd: number; input_tokens: number; output_tokens: number }>();
   for (const e of i.store.events(i.taskId)) {

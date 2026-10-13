@@ -6,3 +6,6 @@ default_monthly_cap_usd: 300
 wall_clock_minutes: 90
 max_remediation_rounds: 3
 calibration: {multiplier: 1.5, min_runs_per_tier: 20}
+# The soft per-session cap (the SDK's maxBudgetUsd) as a share of the task budget, capped by
+# what remains of it; the controller enforces the task budget itself after every session.
+stage_fraction: {triage: 0.05, spec: 0.15, build: 0.5, review: 0.15, approve: 0.1, summarize: 0.05}

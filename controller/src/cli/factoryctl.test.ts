@@ -137,6 +137,26 @@ describe("factoryctl", { timeout: 30_000 }, () => {
     expect(factoryctl(["report", "--week", "2026-42"]).stderr).toContain("a week is YYYY-Www");
   });
 
+  it("stops an over-budget task with budget_exceeded and records the tier budgets (P1-01)", () => {
+    expect(factoryctl(["task", "create", "--profile", profilePath, "--title", "Billing rounding", "--body-file", body, "--untrusted", "--remote", remote]).stdout.trim()).toBe("T-0003");
+    // Triage runs at the highest tier's budget; this one reports more than all of it.
+    const dir = join(root, "over-budget");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "triage.ndjson"), answer("claude-haiku-5-5", { kind: "fix", proposed_tier: "R1", uncertain: false, duplicate_of: null, summary: "Adjust rounding." }).map((m) => JSON.stringify(m.type === "result" ? { ...m, total_cost_usd: 70 } : m)).join("\n") + "\n");
+    const r = factoryctl(["run", "T-0003", "--replay", dir]);
+    expect(r.status).toBe(1);
+    expect(r.stdout.trim()).toBe("T-0003 FAILED");
+    expect(r.stderr).toMatch(/triage failed \(budget_exceeded\): the task spent \$70\.00 of its Restricted budget \$60\.00/);
+    expect(factoryctl(["report", "T-0003"]).stdout).toMatch(/^T-0003 {2}FAILED {2}budget_exceeded/m);
+
+    const b = factoryctl(["budgets"]);
+    expect(b.status, b.stderr).toBe(0);
+    expect(b.stdout).toMatch(/^R1 +\$12\.00 {2}initial +0 {2}—$/m);
+    expect(b.stdout).toMatch(/^20[0-9]{2}-[0-9]{2} {2}example\/ts-mini: \$0\.00 of \$300\.00$/m);
+    const recorded = JSON.parse(readFileSync(join(home, "budgets/calibration.json"), "utf8")) as { tiers: Record<string, { budget: number; source: string }> };
+    expect(recorded.tiers["R0"]).toMatchObject({ budget: 3, source: "initial" });
+  });
+
   it("installs releases only from the operator, and only from a version tag", () => {
     expect(factoryctl(["release", "status"]).stdout.trim()).toBe("no release installed");
     expect(factoryctl(["release", "install", "v0.1.0"], { CLAUDECODE: "1" }).stderr).toContain("release install refuses to run inside a Claude Code session");

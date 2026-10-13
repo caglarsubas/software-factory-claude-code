@@ -123,6 +123,34 @@ The evidence lives in `$FACTORY_HOME/runs/T-0001/`:
 
 The event store (`$FACTORY_HOME/factory.db`) is append-only. Never edit it. To keep a copy, back up the whole `$FACTORY_HOME` while no task runs.
 
+## Budgets and limits
+
+Every task runs inside four limits (P1-01):
+
+| Limit | What happens |
+|---|---|
+| The task's budget, by tier | The task fails as `budget_exceeded`. Before triage the task is budgeted at the highest tier; afterwards at the highest tier any step has found. |
+| A session's share of that budget | The session stops at its `maxBudgetUsd`, and the task fails as `budget_exceeded`. |
+| 90 minutes of active time | The task fails as `wall_clock`. Time spent waiting for you at a gate does not count. |
+| The target's monthly cap (`budgets.monthly_usd` in its profile) | The task **pauses**: a run stops before its next step and the task keeps its state. Resume it next month, or after raising the cap. |
+
+The Console workspace's spend limit stays the backstop behind all four.
+
+Tier budgets start at the values in `policies/budgets.yaml`. While a tier has fewer than 20 live runs that reached the merge gate, its budget is the most any of them cost × 1.5, never below the initial value; after 20 runs it is frozen. To see the budgets and each target's spend this month, and to record them for G1-5:
+
+```bash
+factoryctl budgets   # writes $FACTORY_HOME/budgets/calibration.json
+```
+
+### Remediation rounds
+
+When the gates fail, or a reviewer reports a blocking finding, the builder gets another round, with the failures in its prompt. The task stops when:
+
+- the same failure comes back after a round (`gate_fail` or `review_block`);
+- three remediation rounds, four builds in all, did not clear it.
+
+A gate that errored, rather than failed, is an infrastructure problem: the task fails as `gate_fail` without another round. `factoryctl report T-0001` shows each round's sessions; `rounds/<n>/` in the run directory holds each later round's files.
+
 ## Failure taxonomy and weekly review
 
 Every failed task carries exactly one category (P1-07):
@@ -137,7 +165,7 @@ Every failed task carries exactly one category (P1-07):
 | `permission_denied` | the builder failed or made no change while the guard denied its tool calls |
 | `api_error` | a session or `factoryctl` itself failed |
 | `merge_conflict` | the task's branch moved on the remote |
-| `wall_clock` | the task ran out of time (P1-01) |
+| `wall_clock` | the task used up its 90 minutes of active time |
 | `human_rejected` | you rejected it with `factoryctl reject` |
 
 Once a week, run `factoryctl report --week 2026-W42` (the ISO week, in UTC) and add the row it prints to the weekly table in STATUS. It counts the live tasks created that week by outcome: aggregates only, which is all the public repository may hold. Replayed tasks never count.

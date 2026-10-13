@@ -396,6 +396,245 @@ describe("the commit protocol (P1-02)", () => {
   });
 });
 
+/** Round n's build: one more file in scope, and its report. */
+const roundBuild = (taskId: string, n: number): SDKMessage[] => [
+  assistant(pins["sonnet"] ?? "", [
+    toolUse("Write", { file_path: join(worktreeDir(world.home, taskId), `src/round${String(n)}.ts`), content: `export const round = ${String(n)};\n` }),
+    toolUse("Write", { file_path: join(runDir(world.home, taskId), `work/build-r${String(n)}`, "build-report.md"), content: `Round ${String(n)}.\n` }),
+  ]),
+  result(pins["sonnet"] ?? "", { costUsd: 0.5 }),
+];
+/** Gates whose result each call takes from the list, then passes. */
+const gatesSequence = (summaries: (string | null)[], status: "fail" | "error" = "fail"): Deps["runGates"] => {
+  let call = 0;
+  return async (o) => {
+    const summary = summaries[call++] ?? null;
+    const green = await passingGates()(o);
+    return summary === null ? green : { ...green, passed: false, gates: [{ name: "test", status, duration_ms: 1, summary }] };
+  };
+};
+/** Round 2's clean reviews. */
+const reviewsR2 = (): Partial<Transcripts> => ({
+  "review-code-r2": answer(pins["sonnet"] ?? "", { findings: [], summary: "Fixed." }),
+  "review-security-r2": answer(pins["opus"] ?? "", { findings: [], summary: "No security-relevant change." }),
+});
+const blocking = { id: "F-1", severity: "blocking", category: "correctness", file: "src/cart.ts", line: 3, title: "isEmpty treats a cart of zero-quantity lines as non-empty", failure_scenario: "isEmpty([{ sku: 'a', quantity: 0 }]) returns false.", fix: "Ignore lines with quantity 0.", confidence: 90 };
+const committedLabels = (id: string): string[] => world.store.events(id).filter((e) => e.type === "artifact_committed").map((e) => String(e.payload["label"]));
+const failure = (id: string): Record<string, unknown> | undefined => world.store.events(id).find((e) => e.type === "stage_failed")?.payload;
+
+describe("remediation rounds (P1-01)", () => {
+  it("sends red gates back to the builder with the failure, and publishes the round that passed", async () => {
+    const id = newTask();
+    const runner = replayRunner(transcripts(id, { "build-r2": roundBuild(id, 2), ...reviewsR2() }));
+    expect(await run(id, deps(runner, { runGates: gatesSequence(["2 of 7 tests failed: cart.test.ts:14 expected true"]) }))).toBe("NEEDS_HUMAN");
+    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "spec", "build", "build-r2", "review-code-r2", "review-security-r2", "approve", "summarize"]);
+    expect(states(id)).toEqual(["TRIAGED", "SPECIFIED", "BUILDING", "VERIFYING", "REMEDIATING", "BUILDING", "VERIFYING", "REVIEWING", "POLICY", "NEEDS_HUMAN"]);
+    const prompt = runner.requests.find((r) => r.label === "build-r2")?.prompt ?? "";
+    expect(prompt).toContain("<findings>\n- [gate test] the test gate failed\n  2 of 7 tests failed: cart.test.ts:14 expected true\n</findings>");
+    const dir = runDir(world.home, id);
+    const r1 = JSON.parse(readFileSync(join(dir, "build.json"), "utf8")) as { candidate_commit: string };
+    const r2 = JSON.parse(readFileSync(join(dir, "rounds/2/build.json"), "utf8")) as { start_commit: string; candidate_commit: string; round: number };
+    // Round 2 builds on round 1's candidate; the PR carries round 2's.
+    expect(r2).toMatchObject({ round: 2, start_commit: r1.candidate_commit });
+    expect(remoteBranch(id)).toBe(r2.candidate_commit);
+    expect(JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"))).toMatchObject({ candidate_commit: r2.candidate_commit });
+    expect(JSON.parse(readFileSync(join(dir, "remediation.json"), "utf8"))).toMatchObject({ round: 1, source: "gates", decision: "remediate" });
+    expect(validator.validate("remediation.schema.json", JSON.parse(readFileSync(join(dir, "remediation.json"), "utf8"))).errors).toEqual([]);
+    expect(committedLabels(id)).toEqual(["checkout", "triage", "spec", "build", "gates", "remediation", "build-r2", "gates-r2", "review-code-r2", "review-security-r2", "policy", "approve", "summarize", "publish"]);
+  });
+
+  it("sends a blocking finding back to the builder, and passes when the next round's reviews are clean", async () => {
+    const id = newTask();
+    const runner = replayRunner(transcripts(id, {
+      "review-code": answer(pins["sonnet"] ?? "", { findings: [blocking], summary: "One blocking bug." }),
+      "build-r2": roundBuild(id, 2),
+      ...reviewsR2(),
+    }));
+    expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
+    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "spec", "build", "review-code", "review-security", "build-r2", "review-code-r2", "review-security-r2", "approve", "summarize"]);
+    expect(runner.requests.find((r) => r.label === "build-r2")?.prompt).toContain("[finding code-reviewer F-1] src/cart.ts:3 isEmpty treats a cart of zero-quantity lines as non-empty");
+    // The judges see round 2's reviews, under their usual names.
+    expect(readFileSync(join(runDir(world.home, id), "bundle/review-code.json"), "utf8")).toContain('"summary": "Fixed."');
+    expect(currentStatePayload(world.store.events(id))["gate"]).toBe("merge");
+  });
+
+  it("stops when the same failure comes back after a round, before any reviewer runs", async () => {
+    const id = newTask();
+    const runner = replayRunner(transcripts(id, { "build-r2": roundBuild(id, 2) }));
+    // The line number moved; the failure is the same.
+    expect(await run(id, deps(runner, { runGates: gatesSequence(["2 of 7 tests failed: cart.test.ts:14", "2 of 8 tests failed: cart.test.ts:19"]) }))).toBe("FAILED");
+    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "spec", "build", "build-r2"]);
+    expect(failure(id)).toMatchObject({ stage: "gates", category: "gate_fail", cause: "repeated_finding" });
+    expect(JSON.parse(readFileSync(join(runDir(world.home, id), "rounds/2/remediation.json"), "utf8"))).toMatchObject({ decision: "stop", repeated: [expect.stringMatching(/^gate:/) as string] });
+    expect(remoteBranch(id)).toBe("");
+  });
+
+  it("stops a blocking finding that survives its remediation round as review_block", async () => {
+    const id = newTask();
+    const runner = replayRunner(transcripts(id, {
+      "review-code": answer(pins["sonnet"] ?? "", { findings: [blocking], summary: "One blocking bug." }),
+      "build-r2": roundBuild(id, 2),
+      "review-code-r2": answer(pins["sonnet"] ?? "", { findings: [{ ...blocking, id: "F-7", line: 9 }], summary: "Still there." }),
+      "review-security-r2": answer(pins["opus"] ?? "", { findings: [], summary: "Fine." }),
+    }));
+    expect(await run(id, deps(runner))).toBe("FAILED");
+    expect(failure(id)).toMatchObject({ stage: "review", category: "review_block", cause: "repeated_finding" });
+  });
+
+  it("stops after the policy's remediation rounds: at most four builds", async () => {
+    const id = newTask();
+    const runner = replayRunner(transcripts(id, { "build-r2": roundBuild(id, 2), "build-r3": roundBuild(id, 3), "build-r4": roundBuild(id, 4) }));
+    const red = gatesSequence(["alpha broke", "beta broke", "gamma broke", "delta broke"]);
+    expect(await run(id, deps(runner, { runGates: red }))).toBe("FAILED");
+    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "spec", "build", "build-r2", "build-r3", "build-r4"]);
+    expect(failure(id)).toMatchObject({ category: "gate_fail", cause: "rounds_exhausted" });
+    expect(release.budgets.max_remediation_rounds).toBe(3);
+  });
+
+  it("fails a gate infrastructure error without a remediation round (D5)", async () => {
+    const id = newTask();
+    const runner = replayRunner(transcripts(id));
+    expect(await run(id, deps(runner, { runGates: gatesSequence(["image pull failed"], "error") }))).toBe("FAILED");
+    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "spec", "build"]);
+    expect(failure(id)).toMatchObject({ stage: "gates", category: "gate_fail", cause: "gate_error" });
+  });
+
+  it("resumes mid-round without re-running a committed step", async () => {
+    const id = newTask();
+    const t = transcripts(id, { "build-r2": roundBuild(id, 2), ...reviewsR2() });
+    const inner = replayRunner(t);
+    // A halt during round 2's build stops the run; the resume runs only what round 2 still needs.
+    const halting: SessionRunner = { kind: "replay", run: (req) => {
+      if (req.label === "build-r2") setHalt(world.home, "operator", "drill");
+      return inner.run(req);
+    } };
+    const red = gatesSequence(["2 of 7 tests failed"]);
+    expect(await run(id, deps(halting, { runGates: red }))).toBe("BUILDING");
+    clearHalt(world.home);
+    const resumed = replayRunner(t);
+    expect(await run(id, deps(resumed, { runGates: passingGates() }))).toBe("NEEDS_HUMAN");
+    expect(resumed.requests.map((r) => r.label)).toEqual(["build-r2", "review-code-r2", "review-security-r2", "approve", "summarize"]);
+  });
+});
+
+describe("budgets and limits (P1-01)", () => {
+  const fraction = release.budgets.stage_fraction;
+
+  it("gives every session an explicit turn limit and a budget cap from its stage's share", async () => {
+    const id = newTask();
+    const runner = replayRunner(transcripts(id));
+    await run(id, deps(runner));
+    const caps = new Map(world.store.events(id).filter((e) => e.type === "stage_started" && e.payload["runner"] !== undefined).map((e) => [String(e.payload["label"]), e.payload["cap_usd"]]));
+    for (const req of runner.requests) {
+      const agent = req.options.agent ?? "";
+      expect(req.options.maxTurns, req.label).toBe(req.options.agents?.[agent]?.maxTurns);
+      expect(req.options.maxTurns, req.label).toBeGreaterThan(0);
+      expect(req.options.maxBudgetUsd, req.label).toBe(caps.get(req.label));
+    }
+    // Before triage the task is budgeted at the highest tier; after it, at triage's R1.
+    expect(runner.requests[0]?.options.maxBudgetUsd).toBe(fraction.triage * release.budgets.task_usd.Restricted);
+    expect(runner.requests.find((r) => r.label === "build")?.options.maxBudgetUsd).toBe(fraction.build * release.budgets.task_usd.R1);
+  });
+
+  it("stops an over-budget task with budget_exceeded before the gates: no review session, no branch", async () => {
+    const id = newTask();
+    let gatesRan = false;
+    const t = transcripts(id);
+    const runner = replayRunner({ ...t, build: [...(t["build"] ?? []).slice(0, -1), result(pins["sonnet"] ?? "", { costUsd: release.budgets.task_usd.R1 + 1 })] });
+    const gates: Deps["runGates"] = (o) => {
+      gatesRan = true;
+      return passingGates()(o);
+    };
+    expect(await run(id, deps(runner, { runGates: gates }))).toBe("FAILED");
+    expect(failure(id)).toMatchObject({ stage: "build", category: "budget_exceeded" });
+    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "spec", "build"]);
+    expect(gatesRan).toBe(false);
+    expect(remoteBranch(id)).toBe("");
+  });
+
+  it("pauses a task whose target has reached its monthly cap, without failing it; other targets run", async () => {
+    const capped = join(world.operatorCheckout, "..", "capped.yaml");
+    const other = join(world.operatorCheckout, "..", "other.yaml");
+    const base = parse(readFileSync(world.profilePath, "utf8")) as Record<string, unknown>;
+    writeFileSync(capped, stringify({ ...base, budgets: { monthly_usd: 2 } }));
+    writeFileSync(other, stringify({ ...base, target: { repo: "example/other", default_branch: "main", visibility: "private" }, budgets: { monthly_usd: 2 } }));
+    const make = (profilePath: string) => createTask(world.home, world.store, validator, { profilePath, title: "Add isEmpty", body: "Add isEmpty.", trust: "operator", admittedBy: "operator", remote: world.remote }).id;
+    // Earlier live spend on the capped target this month, and replayed spend that does not count.
+    const spent = make(capped);
+    world.store.append({ task_id: spent, actor: { kind: "factoryctl", id: "factoryctl" }, type: "stage_started", payload: { stage: "build", label: "build", runner: "sdk", env_keys: [], cap_usd: 6 } });
+    world.store.append({ task_id: spent, actor: { kind: "factoryctl", id: "factoryctl" }, type: "stage_completed", payload: { stage: "build", label: "build", cost_usd: 2.5, runner: "sdk" } });
+    const id = make(capped);
+    const runner = replayRunner(transcripts(id));
+    expect(await run(id, deps(runner))).toBe("RECEIVED");
+    expect(runner.requests).toHaveLength(0);
+    expect(world.store.events(id).find((e) => e.type === "command" && e.payload["command"] === "paused")?.payload).toMatchObject({ reason: "monthly_cap", spent_usd: 2.5, cap_usd: 2 });
+    expect(world.store.events(id).some((e) => e.type === "stage_failed")).toBe(false);
+    const elsewhere = make(other);
+    expect(await run(elsewhere, deps(replayRunner(transcripts(elsewhere))))).toBe("NEEDS_HUMAN");
+  });
+
+  it("counts only active time against the wall clock: a wait at the spec gate does not", async () => {
+    let clock = Date.parse("2026-10-13T08:00:00Z");
+    const ticking = (inner: SessionRunner, minutes: number): SessionRunner => ({ kind: "replay", run: (req) => {
+      clock += minutes * 60_000;
+      return inner.run(req);
+    } });
+    const now = () => new Date(clock);
+    const gatedSpec = (id: string) => transcripts(id, { spec: answer(pins["opus"] ?? "", spec({ human_gate: { required: true, reason: "touches billing" } })) });
+
+    const id = newTask();
+    expect(await run(id, deps(ticking(replayRunner(gatedSpec(id)), 5), { now }))).toBe("NEEDS_HUMAN");
+    clock += 300 * 60_000;
+    approveSpec(id);
+    expect(await run(id, deps(ticking(replayRunner(gatedSpec(id)), 5), { now }))).toBe("NEEDS_HUMAN");
+    expect(currentStatePayload(world.store.events(id))["gate"]).toBe("merge");
+
+    // 20 minutes a session: 40 before the gate, then build and the reviews pass 90.
+    const slow = newTask();
+    expect(await run(slow, deps(ticking(replayRunner(gatedSpec(slow)), 20), { now }))).toBe("NEEDS_HUMAN");
+    clock += 300 * 60_000;
+    approveSpec(slow);
+    const runner = replayRunner(gatedSpec(slow));
+    expect(await run(slow, deps(ticking(runner, 20), { now }))).toBe("FAILED");
+    expect(failure(slow)).toMatchObject({ stage: "review", category: "wall_clock" });
+    expect(runner.requests.map((r) => r.label)).toEqual(["build", "review-code", "review-security"]);
+  });
+
+  it("aborts a session in flight when the wall clock runs out", async () => {
+    const id = newTask();
+    let clock = Date.parse("2026-10-13T08:00:00Z");
+    const now = () => new Date(clock);
+    // A first run that used all but 50 ms of the wall clock, stopped at the spec gate.
+    const t = transcripts(id, { spec: answer(pins["opus"] ?? "", spec({ human_gate: { required: true, reason: "touches billing" } })) });
+    const first = replayRunner(t);
+    const spending: SessionRunner = { kind: "replay", run: (req) => {
+      clock += req.label === "spec" ? release.budgets.wall_clock_minutes * 60_000 - 50 : 0;
+      return first.run(req);
+    } };
+    expect(await run(id, deps(spending, { now }))).toBe("NEEDS_HUMAN");
+    approveSpec(id);
+    // The build waits until it is aborted, as a live session does.
+    const waiting: SessionRunner = { kind: "replay", run: (req) => new Promise((_, reject) => {
+      req.options.abortController?.signal.addEventListener("abort", () => {
+        reject(new Error("Claude Code process aborted by user"));
+      });
+    }) };
+    expect(await run(id, deps(waiting, { now }))).toBe("FAILED");
+    expect(failure(id)).toMatchObject({ stage: "build", category: "wall_clock" });
+  });
+
+  it("reconstructs a killed run's end from its heartbeat", async () => {
+    const id = newTask();
+    const at = (min: number) => new Date(Date.parse("2026-10-13T08:00:00Z") + min * 60_000).toISOString();
+    const started = world.store.append({ task_id: id, actor: { kind: "factoryctl", id: "factoryctl" }, type: "command", payload: { command: "run_started", at: at(0), pid: 1 } });
+    writeFileSync(join(runDir(world.home, id), "heartbeat.json"), JSON.stringify({ run_seq: started.seq, at: at(30) }));
+    await run(id, deps(replayRunner(transcripts(id)), { now: () => new Date(at(500)) }));
+    const ended = world.store.events(id).filter((e) => e.type === "command" && e.payload["command"] === "run_ended");
+    expect(ended[0]?.payload).toMatchObject({ at: at(30), reason: "killed", reconstructed: true });
+    expect(ended.at(-1)?.payload).toMatchObject({ reason: "waiting: merge gate" });
+  });
+});
+
 describe("resume, gates and cancellation", () => {
   it("stops at the spec gate for a human, then resumes without re-running finished stages", async () => {
     const id = newTask();
@@ -441,16 +680,6 @@ describe("resume, gates and cancellation", () => {
     expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
     expect(runner.requests.map((r) => r.label)).not.toContain("triage");
     expect(states(id)[0]).toBe("TRIAGED");
-  });
-
-  it("fails on red gates without spending reviewer tokens", async () => {
-    const id = newTask();
-    const runner = replayRunner(transcripts(id));
-    const red: Deps["runGates"] = async (o) => ({ ...(await passingGates()(o)), passed: false, gates: [{ name: "test", status: "fail", duration_ms: 1, summary: "exit 1" }] });
-    expect(await run(id, deps(runner, { runGates: red }))).toBe("FAILED");
-    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "spec", "build"]);
-    expect(world.store.events(id).find((e) => e.type === "stage_failed")?.payload).toMatchObject({ category: "gate_fail" });
-    expect(remoteBranch(id)).toBe("");
   });
 
   it("fails a rejected verdict, a schema-invalid spec and a session that ran out of turns, each with its category", async () => {
