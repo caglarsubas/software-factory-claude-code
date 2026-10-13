@@ -9,6 +9,7 @@ import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { afterAll, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 import { REPO_ROOT } from "../policy/load.ts";
+import { isoWeek, WEEK_HEADER } from "../report/report.ts";
 import { answer } from "../session/transcript.ts";
 
 const CLI = join(REPO_ROOT, "controller/src/cli/factoryctl.ts");
@@ -109,6 +110,31 @@ describe("factoryctl", { timeout: 30_000 }, () => {
     expect(factoryctl(["unhalt", "--reason", "again"]).stderr).toContain("the factory is not halted");
     const log = readFileSync(join(home, "halt.log"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as { command: string; reason: string });
     expect(log.map((l) => `${l.command}: ${l.reason}`)).toEqual(["halt: drill", "unhalt: drill over"]);
+  });
+
+  it("records an operator's rejection as human_rejected, and reports the task and its week (P1-07)", () => {
+    expect(factoryctl(["task", "create", "--profile", profilePath, "--title", "Billing rounding", "--body-file", body, "--untrusted", "--remote", remote]).stdout.trim()).toBe("T-0002");
+    expect(factoryctl(["run", "T-0002", "--replay", transcriptsDir()]).stdout.trim()).toBe("T-0002 NEEDS_HUMAN (gate: spec)");
+    expect(factoryctl(["reject", "T-0002", "--reason", "wrong scope"], { CLAUDECODE: "1" }).stderr).toContain("reject refuses to run inside a Claude Code session");
+    expect(factoryctl(["reject", "T-0002"]).stderr).toContain("--reason is required");
+    const rejected = factoryctl(["reject", "T-0002", "--reason", "wrong scope"]);
+    expect(rejected.status, rejected.stderr).toBe(0);
+    expect(rejected.stdout.trim()).toBe("T-0002 FAILED (human_rejected)");
+    expect(factoryctl(["reject", "T-0002", "--reason", "again"]).stderr).toContain("already ended");
+
+    const report = factoryctl(["report", "T-0002"]);
+    expect(report.status, report.stderr).toBe(0);
+    expect(report.stdout).toMatch(/^T-0002 {2}FAILED {2}human_rejected {2}replayed {2}rounds 1$/m);
+    expect(report.stdout).toMatch(/^triage +replay +1 +3 +1,200 +300 +0\.0 +0\.05$/m);
+    expect(report.stdout).toMatch(/^total .* 0\.10$/m);
+
+    const week = isoWeek(new Date());
+    const row = factoryctl(["report", "--week", week]);
+    expect(row.status, row.stderr).toBe(0);
+    expect(row.stdout).toContain(WEEK_HEADER);
+    // Both tasks ran replayed sessions: a week row never counts them.
+    expect(row.stdout).toContain(`| ${week} | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | $0.00 in total; 2 replayed, not counted |`);
+    expect(factoryctl(["report", "--week", "2026-42"]).stderr).toContain("a week is YYYY-Www");
   });
 
   it("installs releases only from the operator, and only from a version tag", () => {

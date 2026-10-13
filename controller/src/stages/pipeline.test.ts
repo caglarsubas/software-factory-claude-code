@@ -25,6 +25,7 @@ import { answer, assistant, result, text, toolUse } from "../session/transcript.
 import { EventStore } from "../store/events.ts";
 import { currentState, currentStatePayload } from "../task/lifecycle.ts";
 import { createTask } from "../task/task.ts";
+import { CATEGORIES } from "../task/taxonomy.ts";
 import { runTask, type Deps } from "./pipeline.ts";
 
 const validator = createValidator();
@@ -344,6 +345,57 @@ describe("resume, gates and cancellation", () => {
       expect(await run(id, deps(replayRunner(transcripts(id, over))))).toBe("FAILED");
       expect(world.store.events(id).find((e) => e.type === "stage_failed")?.payload["category"]).toBe(category);
       expect(remoteBranch(id)).toBe("");
+    }
+  });
+
+  it("records each session's duration, runner and round on stage_completed (P1-07)", async () => {
+    const id = newTask();
+    const t = transcripts(id);
+    await run(id, deps(replayRunner({ ...t, triage: [...(t["triage"] ?? []).slice(0, -1), result(pins["haiku"] ?? "", { structured: (t["triage"]?.at(-1) as { structured_output?: unknown } | undefined)?.structured_output, durationMs: 4321 })] })));
+    const completed = world.store.events(id).filter((e) => e.type === "stage_completed");
+    expect(completed.find((e) => e.payload["label"] === "triage")?.payload).toMatchObject({ duration_ms: 4321, runner: "replay", round: 1 });
+    for (const e of completed) {
+      expect(typeof e.payload["duration_ms"], String(e.payload["label"])).toBe("number");
+      expect(e.payload["round"], String(e.payload["label"])).toBe(1);
+    }
+  });
+
+  it("files every failure path under exactly one category of the taxonomy (P1-07)", async () => {
+    const wtOf = (id: string): string => worktreeDir(world.home, id);
+    const workOf = (id: string): string => join(runDir(world.home, id), "work/build");
+    const cases: { name: string; over: (id: string) => Partial<Transcripts>; category: string; cause?: string; stage: string; setup?: (id: string) => void; runner?: (inner: SessionRunner) => SessionRunner }[] = [
+      { name: "a builder that records a failure", stage: "build", category: "gate_fail", cause: "build_failed", over: (id) => ({
+        build: [assistant(pins["sonnet"] ?? "", [toolUse("Write", { file_path: join(workOf(id), "build-failure.json"), content: '{"reason":"the tests stay red"}' })]), result(pins["sonnet"] ?? "")],
+      }) },
+      { name: "a builder that changes nothing", stage: "build", category: "gate_fail", cause: "no_change", over: () => ({ build: [result(pins["sonnet"] ?? "")] }) },
+      { name: "a builder whose every edit is denied", stage: "build", category: "permission_denied", cause: "no_change", over: (id) => ({
+        build: [assistant(pins["sonnet"] ?? "", [toolUse("Write", { file_path: join(wtOf(id), ".github/workflows/ci.yml"), content: "on: push\n" })]), result(pins["sonnet"] ?? "")],
+      }) },
+      { name: "a session over its budget", stage: "build", category: "budget_exceeded", cause: "error_max_budget_usd", over: () => ({ build: [result(pins["sonnet"] ?? "", { subtype: "error_max_budget_usd" })] }) },
+      { name: "a session that errors", stage: "spec", category: "api_error", cause: "error_during_execution", over: () => ({ spec: [result(pins["opus"] ?? "", { subtype: "error_during_execution" })] }) },
+      { name: "a runner that throws", stage: "run", category: "api_error", over: () => ({}), runner: (inner) => ({
+        kind: "replay",
+        run: (req) => (req.label === "review-code" ? Promise.reject(new Error("connection reset")) : inner.run(req)),
+      }) },
+      { name: "a branch that moved on the remote", stage: "publish", category: "merge_conflict", cause: "push_rejected", over: () => ({}), setup: (id) => {
+        const other = join(world.operatorCheckout, "..", `other-${id}`);
+        sh(world.operatorCheckout, ["clone", "-q", world.remote, other]);
+        writeFileSync(join(other, "OTHER.md"), "someone else\n");
+        sh(other, ["add", "-A"]);
+        sh(other, ["commit", "-qm", "other"]);
+        sh(other, ["push", "-q", "origin", `HEAD:refs/heads/factory/${id}`]);
+      } },
+    ];
+    for (const c of cases) {
+      const id = newTask();
+      c.setup?.(id);
+      const inner = replayRunner(transcripts(id, c.over(id)));
+      await expect(run(id, deps(c.runner?.(inner) ?? inner)).catch(() => "FAILED"), c.name).resolves.toBe("FAILED");
+      const failed = world.store.events(id).filter((e) => e.type === "stage_failed");
+      expect(failed, c.name).toHaveLength(1);
+      expect(failed[0]?.payload, c.name).toMatchObject({ stage: c.stage, category: c.category, ...(c.cause === undefined ? {} : { cause: c.cause }) });
+      expect(CATEGORIES, c.name).toContain(failed[0]?.payload["category"]);
+      expect(currentStatePayload(world.store.events(id)), c.name).toMatchObject({ category: c.category });
     }
   });
 

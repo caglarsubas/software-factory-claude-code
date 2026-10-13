@@ -8,6 +8,8 @@
 //   factoryctl status [T-0001]
 //   factoryctl cancel T-0001
 //   factoryctl approve T-0001 --gate spec --reason TEXT
+//   factoryctl reject T-0001 --reason TEXT   end a task the operator will not merge (human_rejected)
+//   factoryctl report [T-0001 | --week YYYY-Www]  per-stage metrics, or the weekly taxonomy row
 //   factoryctl halt [--reason TEXT]          kill switch v0: stop every session and run now
 //   factoryctl unhalt --reason TEXT
 //   factoryctl release install TAG [--source DIR] | use TAG|SHA | status
@@ -29,12 +31,13 @@ import { doctor } from "../doctor.ts";
 import { beginG0, evaluateG0, writeEvidence } from "../gate/g0.ts";
 import { restCommitChecks, restGitHub } from "../github/client.ts";
 import { clearHalt, describeHalt, readHalt, setHalt } from "../halt.ts";
-import { acquireRunLock, ensureHome, factoryHome, readLock, type Home } from "../home.ts";
+import { acquireRunLock, ensureHome, factoryHome, readLock, runDir, type Home } from "../home.ts";
 import { loadRelease } from "../release.ts";
 import { checkReleaseFiles, findRelease, installRelease, listReleases, pinnedSha, pinRelease, writeShim } from "../release/install.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { replayRunner } from "../session/replay.ts";
 import { sdkRunner } from "../session/runner.ts";
+import { isoWeek, taskReport, WEEK_HEADER, weekRow, weekRowMarkdown, type TaskReport } from "../report/report.ts";
 import { runTask } from "../stages/pipeline.ts";
 import { EventStore } from "../store/events.ts";
 import { currentState, currentStatePayload, isTerminal, transition } from "../task/lifecycle.ts";
@@ -77,6 +80,31 @@ function haltLog(home: Home, entry: Record<string, unknown>): void {
 
 function keyFile(home: Home): string {
   return process.env["FACTORY_API_KEY_FILE"] ?? join(home.secrets, "anthropic.key");
+}
+
+/** The review artifacts' findings, for the per-task report; a run without reviews has none. */
+function reviewsOf(home: Home, taskId: string): { findings: { severity: string }[] }[] {
+  return ["review-code.json", "review-security.json"].flatMap((name) => {
+    try {
+      return [JSON.parse(readFileSync(join(runDir(home, taskId), name), "utf8")) as { findings: { severity: string }[] }];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function printTaskReport(r: TaskReport): void {
+  const n = (v: number | null): string => (v === null ? "—" : v.toLocaleString("en-US"));
+  const min = (ms: number | null): string => (ms === null ? "—" : (ms / 60_000).toFixed(1));
+  const outcome = r.category === null ? "" : `  ${r.category}${r.cause === null ? "" : ` (${r.cause})`}`;
+  out(`${r.taskId}  ${r.state}${r.gate === null ? "" : ` (gate: ${r.gate})`}${r.tier === null ? "" : `  tier ${r.tier}`}${outcome}  ${r.live ? "live" : r.sessions === 0 ? "no sessions" : "replayed"}  rounds ${String(r.rounds)}`);
+  const row = (cells: string[]): void => {
+    out(cells.map((c, i) => (i < 2 ? c.padEnd(i === 0 ? 16 : 7) : c.padStart(i === 2 ? 5 : 10))).join(" "));
+  };
+  row(["stage", "runner", "round", "turns", "in tokens", "out tokens", "minutes", "cost $"]);
+  for (const s of r.stages) row([`${s.label}${s.ok ? "" : " ✗"}`, s.runner, String(s.round), n(s.numTurns), n(s.inputTokens), n(s.outputTokens), min(s.durationMs), s.costUsd.toFixed(2)]);
+  row(["total", "", "", "", n(r.totals.inputTokens), n(r.totals.outputTokens), min(r.totals.durationMs), r.totals.costUsd.toFixed(2)]);
+  if (r.findings !== null) out(`findings: ${Object.entries(r.findings).map(([k, v]) => `${k} ${String(v)}`).join(", ")}`);
 }
 
 async function drive(home: Home, store: EventStore, taskId: string, replay: string | undefined): Promise<void> {
@@ -139,6 +167,7 @@ async function main(): Promise<void> {
       replay: { type: "string" },
       gate: { type: "string" },
       reason: { type: "string" },
+      week: { type: "string" },
       source: { type: "string" },
       begin: { type: "boolean" },
       checkout: { type: "string", multiple: true },
@@ -296,6 +325,36 @@ async function main(): Promise<void> {
         out(`${id} spec approved; continue with: factoryctl resume ${id}`);
         return;
       }
+      case "reject": {
+        // The operator's "no" to a task's result: P1-07's human_rejected (a PR closed unmerged maps to it with P1-02).
+        operatorOnly("reject");
+        const id = taskArg(positionals, 1, store);
+        if (values.reason === undefined || values.reason.trim() === "") fail("--reason is required");
+        const events = store.events(id);
+        const at = currentState(events);
+        if (isTerminal(at)) fail(`${id} has already ended`);
+        const by = { kind: "operator" as const, id: operator() };
+        const stage = typeof currentStatePayload(events)["gate"] === "string" ? `${String(currentStatePayload(events)["gate"])}-gate` : at.toLowerCase();
+        store.append({ task_id: id, actor: by, type: "command", payload: { command: "reject", reason: values.reason } });
+        store.append({ task_id: id, actor: { kind: "factoryctl", id: "factoryctl" }, type: "stage_failed", payload: { stage, category: "human_rejected", reason: values.reason } });
+        transition(store, id, "FAILED", { stage, category: "human_rejected", reason: values.reason, by: by.id });
+        const lock = readLock(home);
+        if (lock?.task_id === id) process.kill(lock.pid, "SIGTERM");
+        out(`${id} FAILED (human_rejected)${currentStatePayload(events)["gate"] === "merge" ? "; close its PR on GitHub" : ""}`);
+        return;
+      }
+      case "report": {
+        if (positionals[1] !== undefined) {
+          const id = taskArg(positionals, 1, store);
+          printTaskReport(taskReport(store.events(id), reviewsOf(home, id)));
+          return;
+        }
+        const row = weekRow(store.allEvents(), values.week ?? isoWeek(new Date()));
+        out(`week ${row.week} (UTC, tasks created that week; live sessions only)`);
+        out(WEEK_HEADER);
+        out(weekRowMarkdown(row));
+        return;
+      }
       case "gate": {
         if (positionals[1] !== "G0") fail("usage: factoryctl gate G0 --begin [--checkout DIR]... | gate G0 [--repo OWNER/NAME]");
         const validator = createValidator();
@@ -322,7 +381,7 @@ async function main(): Promise<void> {
         return;
       }
       default:
-        fail("usage: factoryctl task create | run | resume | status | cancel | approve | halt | unhalt | release | gate | doctor");
+        fail("usage: factoryctl task create | run | resume | status | cancel | approve | reject | report | halt | unhalt | release | gate | doctor");
     }
   } finally {
     store.close();
