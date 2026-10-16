@@ -366,6 +366,15 @@ describe("the commit protocol (P1-02)", () => {
     for (const label of ["review-code", "review-security", "approve", "summarize"]) {
       expect(runner.requests.find((r) => r.label === label)?.prompt, label).toContain("decisions.json");
     }
+    // The approver and summarizer are told the reviewers' reports by the names they have in the bundle.
+    for (const label of ["approve", "summarize"]) {
+      const prompt = runner.requests.find((r) => r.label === label)?.prompt ?? "";
+      expect(prompt, label).toContain("review-code.json and review-security.json");
+      expect(prompt, label).not.toContain("review-*");
+      for (const file of ["review-code.json", "review-security.json"]) expect(existsSync(join(runDir(world.home, id), "bundle", file)), file).toBe(true);
+    }
+    // The builder keeps to its worktree and task directory, and leaves checks it cannot run to the preflight.
+    expect(runner.requests.find((r) => r.label === "build")?.prompt).toContain("never look for tools or files elsewhere on the machine");
     const bundle = JSON.parse(readFileSync(join(runDir(world.home, id), "bundle/decisions.json"), "utf8")) as { decisions: { reason: string }[] };
     expect(bundle.decisions.map((d) => d.reason)).toEqual(["option (a): document the intended limits"]);
   });

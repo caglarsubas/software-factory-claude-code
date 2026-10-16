@@ -9,6 +9,8 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 ### Fixed
 
 - **A builder can undo a change it did not mean to make.** The guard now allows `git restore <file>` (without a source) and `git checkout [HEAD] -- <file>` for any unprotected, non-secret file in the worktree, inside the spec's scope or not. These only throw away uncommitted changes. A tool the guard cannot see into, such as `uv run` rewriting `uv.lock`, can change a file outside the scope, and before this fix the builder could not discard it: the preflight then refused the dirty tree, and the task failed as `permission_denied`. Protected paths, the worktree root, pathspec patterns and any other source (`--source`, a branch or an older commit) are still checked as writes; eight new bypass variants pin that.
+- **The approver and summarizer read the reviews.** Their prompts named "the review-*.json files" without the names, and both guessed: the approver tried a dozen names before finding them, and the summarizer looked for `review-code-reviewer.json`, never read either report, and wrote that the reviews were missing. The prompts now name `review-code.json` and `review-security.json`, and `refutations.json` only when there is one.
+- **The builder keeps to its worktree.** The worktree has no installed dependencies, so a builder looking for a type checker searched the machine and ran one from another directory in your home. The build prompt now says to work only with the worktree and task directory and to leave checks it cannot run to the preflight, which runs them in a container. The prompt also tells the builder to discard a file a command changed by accident.
 
 ## [0.3.0] - 2026-10-16
 
