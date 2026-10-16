@@ -212,7 +212,9 @@ describe("a task through every stage, replayed", () => {
     expect(world.github.prs[0]?.body).toContain("Adds `isEmpty`");
 
     // Judges never get the builder's report; the operator checkout is untouched (G0-3).
-    expect(readdirSync(join(dir, "bundle")).sort()).toEqual(["changed-files.txt", "diff.patch", "gates.json", "policy.json", "review-code.json", "review-security.json", "spec.md", "spec.yaml", "verdict.json"]);
+    expect(readdirSync(join(dir, "bundle")).sort()).toEqual(["changed-files.txt", "decisions.json", "diff.patch", "gates.json", "policy.json", "review-code.json", "review-security.json", "spec.md", "spec.yaml", "verdict.json"]);
+    // No human gate was passed, so the judges are told of no decision.
+    expect(JSON.parse(readFileSync(join(dir, "bundle/decisions.json"), "utf8"))).toEqual({ schema_version: 1, decisions: [] });
     expect(treeHash(world.operatorCheckout)).toBe(before);
   });
 
@@ -350,6 +352,22 @@ describe("the commit protocol (P1-02)", () => {
     const after = replayRunner(changed);
     expect(await run(id, deps(after))).toBe("NEEDS_HUMAN");
     expect(after.requests.map((r) => r.label)).toEqual(["build", "review-code", "review-security", "approve", "summarize"]);
+    // The judges see the approval that holds, on this spec, and not the one given on the earlier spec.
+    const { decisions } = JSON.parse(readFileSync(join(runDir(world.home, id), "bundle/decisions.json"), "utf8")) as { decisions: { gate: string; decision: string; reason: string }[] };
+    expect(decisions).toEqual([expect.objectContaining({ gate: "spec", decision: "approved", by: "operator", reason: "scope reviewed" })]);
+  });
+
+  it("tells every judge of the operator's spec-gate decision, so none re-opens it", async () => {
+    const id = newTask();
+    await run(id, deps(replayRunner(gated(id))));
+    world.store.append({ task_id: id, actor: { kind: "operator", id: "operator" }, type: "command", payload: { command: "approve", gate: "spec", reason: "option (a): document the intended limits", spec_digest: specDigest(runDir(world.home, id)) } });
+    const runner = replayRunner(gated(id));
+    expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
+    for (const label of ["review-code", "review-security", "approve", "summarize"]) {
+      expect(runner.requests.find((r) => r.label === label)?.prompt, label).toContain("decisions.json");
+    }
+    const bundle = JSON.parse(readFileSync(join(runDir(world.home, id), "bundle/decisions.json"), "utf8")) as { decisions: { reason: string }[] };
+    expect(bundle.decisions.map((d) => d.reason)).toEqual(["option (a): document the intended limits"]);
   });
 
   it("sends a spec that changed after the build started back to the spec gate", async () => {
