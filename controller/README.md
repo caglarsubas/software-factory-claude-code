@@ -6,6 +6,9 @@ The factory's control plane (ROADMAP §2). Version 0 (P0-07) runs one task at a 
 pnpm factoryctl task create --profile profile.yaml --title "…" --body-file task.md [--untrusted] [--remote URL]
 pnpm factoryctl run T-0001          # until the task needs a human or ends
 pnpm factoryctl resume T-0001       # the same, after a stop, an approval, a halt, a crash, or a merged or closed PR
+pnpm factoryctl run T-0001 --attach # the same, with each session's messages as they arrive
+pnpm factoryctl pause T-0001        # hold before the next step; resume lifts it
+pnpm factoryctl takeover T-0001     # your Claude Code in its worktree; the result goes back through the gates
 pnpm factoryctl approve T-0001 --gate spec --reason "…"
 pnpm factoryctl status [T-0001]
 pnpm factoryctl cancel T-0001
@@ -38,6 +41,11 @@ A run goes checkout → triage → spec → rounds of build → gates → review
 - **Processes (P1-02, `proc.ts`):** the run lock and every session process are named by pid and start time, so a reused pid is never mistaken for them.
   - Each session runs in its own process group (the SDK's `spawnClaudeCodeProcess`) and is registered in `procs/` while it lives.
   - A run that starts after one died kills the dead run's process groups and removes its gate containers.
+- **Attach, pause and takeover (P1-04):**
+  - `--attach` prints each session's messages through a runner observer (`session/attach.ts`).
+  - A pause is a `command` event. The pipeline checks for it before each step, never mid-step, so committed work is kept; `resume` records the `unpause`.
+  - `takeover` (`stages/takeover.ts`, `session/takeover-session.ts`) runs the operator's pinned Claude Code in the worktree, under the build session's walls and in auto mode. `stage_completed` records the session id it resumes.
+  - On exit, the operator's head is committed again as the latest round's `build.json`, from the same inputs. The build stays done, every step that reads `build.json` runs again, and the task moves back to `BUILDING`.
 - **Spec approvals** are bound to the spec they were given on (`spec_digest`): a spec that runs again reopens the gate, through `BLOCKED` when the build had already started.
 - **Refuter pass (P1-03):** each blocking finding of a round goes to one refuter session, which sees the bundle and the read-only candidate, like the reviewers. Its answers are committed as `refutations.json` (`refuted`, `upheld` or `unclear`). Only the findings it did not refute count as blocking: they start a remediation round, and an approval never passes them.
 - **Remediation rounds (P1-01):**

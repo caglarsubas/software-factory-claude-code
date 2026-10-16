@@ -23,6 +23,10 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
   - Resource attributes name its task, stage, label, round, tier, agent and release.
   - `doctor` shows the setting.
 - **Alias alarm (P1-06).** A session that runs on a model ID no pin names, or whose alias resolves to a new ID, records an `alarm`. `report` lists alarms, and `doctor` warns about them.
+- **Watch, pause and take over (P1-04).**
+  - `factoryctl run|resume --attach` streams each session's messages.
+  - `factoryctl pause` holds a task before its next step, until `resume`.
+  - `factoryctl takeover` opens your pinned Claude Code in the task's worktree, resuming its live build session, under the build session's walls in auto mode. Your result goes back through the gates and every review on `resume`.
 - `report T-…` lists a session killed before it reported, charged its cap, so every run's cost adds up to what the budget counted.
 - `FACTORY_GITHUB_API_URL` points `factoryctl` at GitHub Enterprise: https only, or http on loopback.
 

@@ -18,7 +18,8 @@ export function memoryGitHub(headOf: (repo: string, branch: string) => string = 
   const issueComments: MemoryGitHub["issueComments"] = [];
   const checks: MemoryGitHub["checks"] = [];
   const writes: string[] = [];
-  const view = (p: PullRequestInput & PullRequest): PullRequest => ({ number: p.number, url: p.url, state: p.state, merged: p.merged, headSha: p.headSha });
+  // An open PR follows its branch, as GitHub's does.
+  const view = (p: PullRequestInput & PullRequest): PullRequest => ({ number: p.number, url: p.url, state: p.state, merged: p.merged, headSha: p.state === "open" ? headOf(p.repo, p.head) || p.headSha : p.headSha });
   return {
     prs,
     issueComments,

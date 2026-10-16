@@ -103,6 +103,23 @@ The evidence lives in `$FACTORY_HOME/runs/T-0001/`:
 
 `manifest.json` holds digests of every artifact, the commits judged, the release and its commit, the model IDs and the cost per stage.
 
+### Watch, pause and take over
+
+- **Watch:** `factoryctl run T-0001 --attach`, or `resume --attach`. You see a line for each message as the session works: what it says, each tool call with the file or command it touches, tool errors, and each session's result with its cost.
+- **Pause:** `factoryctl pause T-0001 [--reason …]`. The task stops before its next step, once the step in flight has committed. Nothing fails, and the task shows `(paused)` in `status`.
+  - `run` refuses a paused task; `factoryctl resume T-0001` lifts the pause and continues.
+  - To stop at once, use `cancel`, which ends the task, or `halt`, which stops everything.
+- **Take over:** `factoryctl takeover T-0001` opens your own Claude Code in the task's worktree. It resumes the last live build session if there is one, and starts a new session if there isn't.
+  - **What it runs under:** the walls of a build session.
+    - Settings, plugin and guard come from the installed release; only the release's settings apply (`--setting-sources ""`).
+    - The sandbox is required.
+    - The environment is allowlisted: no token or key from your shell.
+    - The permission mode is `auto`, because you are at the keyboard. It is never `bypassPermissions`.
+  - **Version check:** it refuses to start unless `claude --version` (or `FACTORY_CLAUDE_BIN`) is the pinned Claude Code.
+  - **When you exit:** your changes, committed or not, become the candidate, and the task goes back to `BUILDING`. `factoryctl resume T-0001` then runs the gates, every review, the approval, the summary and the push again on your commits, to the same PR. A takeover result is never merged on your word alone.
+  - **Not metered:** your session's cost is not charged to the task.
+  - **Not inside Claude Code:** `takeover` refuses to run inside a Claude Code session.
+
 ## Approve
 
 - **Spec gate:** read `spec.md` and `spec.yaml`, then approve and continue:
@@ -135,6 +152,8 @@ The evidence lives in `$FACTORY_HOME/runs/T-0001/`:
 | "T-0001 was started by a factoryctl without the commit protocol" | The task began on v0.1.x. Finish it with that release (`factoryctl release use v0.1.2`), or create a new task. |
 | "T-0001 is running (pid …)" | Another `factoryctl` holds the run lock. A lock whose process has died, or whose pid now belongs to another process, is cleared on the next run; `halt`, `cancel` and `reject` never signal such a pid. |
 | A task `FAILED` | `factoryctl report T-0001` gives its category, one of the ten in [the taxonomy](#failure-taxonomy-and-weekly-review), and the cost of each stage. A failed task is final: fix the cause, then create a new task. |
+| A task should stop for now | `factoryctl pause T-0001`; it holds before its next step until `factoryctl resume T-0001`. |
+| A task needs a hand | `factoryctl takeover T-0001`; your result goes back through the gates and reviews on `resume`. |
 | A task should stop for good | `factoryctl cancel T-0001`. A running session is signalled and the task ends at once. |
 | A new release misbehaves | `factoryctl release use v0.1.0` pins an earlier installed release; `factoryctl release status` lists them and verifies each one's files. |
 | `release status` or `doctor` says a release was modified | Do not use it. Remove it with `chmod -R u+w` and `rm -rf`, then install the tag again. |

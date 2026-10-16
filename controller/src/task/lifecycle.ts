@@ -58,3 +58,9 @@ export function transition(store: EventStore, taskId: string, to: State, payload
   store.append({ task_id: taskId, actor: { kind: "factoryctl", id: "factoryctl" }, type: "state_changed", from, to, payload });
   return to;
 }
+
+/** Whether the operator's latest pause (`factoryctl pause`) is still in force: `resume` lifts it. */
+export function isPaused(events: readonly FactoryEvent[]): boolean {
+  const last = events.findLast((e) => e.type === "command" && (e.payload["command"] === "pause" || e.payload["command"] === "unpause"));
+  return last?.payload["command"] === "pause";
+}
