@@ -1,7 +1,7 @@
 // Test support for releases: a factory source repository built from this checkout's working
 // tree (so tests install the code under test, committed or not), tagged like a release.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { REPO_ROOT } from "../policy/load.ts";
 
@@ -15,9 +15,20 @@ function git(cwd: string, args: string[]): string {
   return r.stdout.trim();
 }
 
+/**
+ * This checkout's files: git's tracked and unignored files in a work tree. The gates run the
+ * suite on an exported commit with no .git, which holds only tracked files, so there every file
+ * but the installed dependencies is the same set.
+ */
+function sourceFiles(): string[] {
+  const listed = spawnSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: REPO_ROOT, encoding: "utf8" });
+  if (listed.status === 0) return listed.stdout.split("\0").filter((f) => f !== "" && existsSync(join(REPO_ROOT, f)));
+  return readdirSync(REPO_ROOT, { recursive: true, encoding: "utf8" }).filter((f) => !f.split("/").some((part) => part === "node_modules" || part === ".git") && !lstatSync(join(REPO_ROOT, f)).isDirectory());
+}
+
 /** A repository at `dest` holding this checkout's tracked and unignored files, tagged `tag`; returns the tagged commit. */
 export function factorySource(dest: string, tag = RELEASE_TAG, origin = "https://github.com/example/software-factory.git"): string {
-  const files = git(REPO_ROOT, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]).split("\0").filter((f) => f !== "" && existsSync(join(REPO_ROOT, f)));
+  const files = sourceFiles();
   for (const f of files) {
     mkdirSync(dirname(join(dest, f)), { recursive: true });
     cpSync(join(REPO_ROOT, f), join(dest, f), { verbatimSymlinks: true });
