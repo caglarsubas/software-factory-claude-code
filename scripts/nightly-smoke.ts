@@ -63,7 +63,13 @@ try {
   const created = factoryctl(["task", "create", "--profile", profilePath, "--title", "Document the listOrders limits", "--body-file", join(fixture.dir, "tasks/docs-limits.md"), "--untrusted", "--remote", remote]);
   const id = created.stdout.trim();
   if (created.status !== 0 || !/^T-[0-9]{4,}$/.test(id)) throw new Error("task create failed");
-  const run = factoryctl(["run", id]);
+  let run = factoryctl(["run", id]);
+  // The spec-writer may rightly stop for a human (ts-mini's docs task touches code with a seeded
+  // bug). The smoke is its own operator: it approves its fixture spec once and resumes.
+  if (run.stdout.trim() === `${id} NEEDS_HUMAN (gate: spec)`) {
+    if (factoryctl(["approve", id, "--gate", "spec", "--reason", "nightly smoke: approves its own fixture spec"]).status !== 0) throw new Error("approve failed");
+    run = factoryctl(["resume", id]);
+  }
   factoryctl(["report", id]);
   if (run.stdout.trim() !== `${id} NEEDS_HUMAN (gate: merge)`) throw new Error(`${id} did not reach the merge gate`);
   process.stdout.write(`smoke passed: ${id} reached the merge gate\n`);
