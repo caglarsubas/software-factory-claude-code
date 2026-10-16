@@ -30,6 +30,15 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 - The run lock records the runner's start time: `halt`, `cancel` and `reject` never signal a pid the system has given to another process, and such a lock is cleared.
 
+### Fixed
+
+- **Eval judging (#27, #28).** The `factory-evals` judge graders failed correct answers:
+  - their rubrics asked for checks a judge cannot make from the reply alone, or for details a correct reply may leave out;
+  - the Haiku judge, which must answer in one word, failed replies it passes when asked to explain.
+
+  The judge is now Sonnet, and each rubric names only the conclusion that separates a pass from a block. A failing case now names its failed graders and the reply its judge saw.
+- **Nightly smoke task.** It approves its own fixture spec when the spec-writer rightly stops for a human, so it can reach the merge gate (#27).
+
 ## [0.2.0] - 2026-10-13
 
 Phase 1, first release: the factory now enforces budgets and limits, gets crash-safe artifacts and bounded remediation, files every failure under one category, and checks its judges with an eval suite. Counted Phase 1 tasks run on this release.
