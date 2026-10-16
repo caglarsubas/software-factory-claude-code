@@ -2,7 +2,7 @@
 // in place of a model. The run to a merge gate with real container gates is in
 // factoryctl.int.test.ts.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -10,7 +10,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 import { REPO_ROOT } from "../policy/load.ts";
 import { isoWeek, WEEK_HEADER } from "../report/report.ts";
-import { answer } from "../session/transcript.ts";
+import { answer, assistant, result, toolUse } from "../session/transcript.ts";
 
 const CLI = join(REPO_ROOT, "controller/src/cli/factoryctl.ts");
 const root = mkdtempSync(join(tmpdir(), "factoryctl-"));
@@ -195,6 +195,64 @@ describe("factoryctl", { timeout: 30_000 }, () => {
     const http = factoryctl(["run", "T-0001"], { FACTORY_GITHUB_API_URL: "http://ghe.example" });
     expect(http.status).toBe(2);
     expect(http.stderr).toContain("FACTORY_GITHUB_API_URL must be https, or http on a loopback address");
+  });
+
+  it("pauses a task, streams it with --attach, and sends a takeover back through the gates (P1-04)", () => {
+    expect(factoryctl(["task", "create", "--profile", profilePath, "--title", "Add isEmpty", "--body-file", body, "--untrusted", "--remote", remote]).stdout.trim()).toBe("T-0005");
+    const dir = join(root, "full");
+    mkdirSync(dir, { recursive: true });
+    const write = (label: string, messages: SDKMessage[]) => {
+      writeFileSync(join(dir, `${label}.ndjson`), messages.map((m) => JSON.stringify(m)).join("\n") + "\n");
+    };
+    const wt = join(home, "worktrees", "T-0005");
+    write("triage", answer("claude-haiku-5-5", { kind: "feature", proposed_tier: "R1", uncertain: false, duplicate_of: null, summary: "Add an emptiness check." }));
+    write("spec", answer("claude-opus-5-5", { objective: "Report whether a cart is empty", scope: { include: ["src/", "test/"], exclude: [] }, acceptance_criteria: [{ id: "AC-1", statement: "isEmpty works", verification: "node --test" }], invariants: [], risk_signals: [], required_evidence: ["unit_tests"], human_gate: { required: false }, markdown: "# Spec" }));
+    write("build", [assistant("claude-sonnet-5-5", [toolUse("Write", { file_path: join(wt, "src/empty.ts"), content: "export const isEmpty = (n: number): boolean => n === 0;\n" })]), result("claude-sonnet-5-5")]);
+    for (const label of ["review-code", "review-security"]) write(label, answer("claude-sonnet-5-5", { findings: [], summary: "Fine." }));
+    write("approve", answer("claude-opus-5-5", { decision: "approve", confidence: 90, criteria: [{ ac_id: "AC-1", met: true, evidence: "the test gate passes" }], blocking_findings: [], rationale: "Met." }));
+    write("summarize", answer("claude-haiku-5-5", { pr_body: "Adds isEmpty.", changelog: "Add isEmpty" }));
+    writeFileSync(join(dir, "replay.json"), JSON.stringify({ gates: {} }));
+
+    // A paused task does not run until resume lifts the pause.
+    expect(factoryctl(["pause", "T-0005", "--reason", "not yet"]).stdout).toContain("T-0005 paused; continue it with: factoryctl resume T-0005");
+    expect(factoryctl(["status", "T-0005"]).stdout).toContain("(paused)");
+    const refused = factoryctl(["run", "T-0005", "--replay", dir]);
+    expect(refused.status).toBe(2);
+    expect(refused.stderr).toContain("T-0005 is paused; continue it with: factoryctl resume T-0005");
+    const resumed = factoryctl(["resume", "T-0005", "--attach", "--replay", dir]);
+    expect(resumed.stdout.trim()).toBe("T-0005 NEEDS_HUMAN (gate: merge)");
+    expect(resumed.stderr).toContain(`  build │ → Write ${join(wt, "src/empty.ts")}`);
+    expect(resumed.stderr).toMatch(/ {2}approve │ ■ success: 3 turns, \$0\.05, 1s/);
+
+    // A stand-in for the operator's Claude Code: it records how it was started and edits the worktree.
+    const seen = join(root, "takeover-seen.json");
+    const fake = join(root, "fake-claude.mjs");
+    writeFileSync(fake, `#!/usr/bin/env node
+import { appendFileSync, writeFileSync } from "node:fs";
+if (process.argv.includes("--version")) { process.stdout.write(process.env.FAKE_VERSION ?? "2.1.286 (Claude Code)\\n"); process.exit(0); }
+writeFileSync(${JSON.stringify(seen)}, JSON.stringify({ args: process.argv.slice(2), env: Object.keys(process.env).sort(), cwd: process.cwd() }));
+appendFileSync("src/empty.ts", "// reviewed by hand\\n");
+`);
+    chmodSync(fake, 0o755);
+    expect(factoryctl(["takeover", "T-0005"], { FACTORY_CLAUDE_BIN: fake, CLAUDECODE: "1" }).stderr).toContain("takeover refuses to run inside a Claude Code session");
+    expect(factoryctl(["takeover", "T-0005"], { FACTORY_CLAUDE_BIN: join(root, "nowhere") }).stderr).toContain("is not Claude Code 2.1.286");
+    const took = factoryctl(["takeover", "T-0005"], { FACTORY_CLAUDE_BIN: fake, FACTORY_GITHUB_TOKEN: "must-not-reach-it", ANTHROPIC_API_KEY: "nor-this" });
+    expect(took.status, took.stderr).toBe(0);
+    expect(took.stdout).toMatch(/T-0005: candidate [0-9a-f]{12} → [0-9a-f]{12}; it goes through the gates and every review again: factoryctl resume T-0005/);
+    const launched = JSON.parse(readFileSync(seen, "utf8")) as { args: string[]; env: string[]; cwd: string };
+    expect(launched.cwd).toBe(wt);
+    // Replayed sessions are not resumable: a new session, in auto mode, under the release's plugin and settings.
+    expect(launched.args).not.toContain("--resume");
+    expect(launched.args.join(" ")).toMatch(/--permission-mode auto --settings \S+takeover\.settings\.json --setting-sources {2}--strict-mcp-config --plugin-dir \S+/);
+    expect(launched.env.filter((k) => /TOKEN|API_KEY|SSH_AUTH/.test(k))).toEqual([]);
+    const settings = JSON.parse(readFileSync(launched.args[launched.args.indexOf("--settings") + 1] ?? "", "utf8")) as { permissions: { defaultMode: string; disableBypassPermissionsMode: string }; sandbox: { enabled: boolean; failIfUnavailable: boolean }; apiKeyHelper: string };
+    expect(settings).toMatchObject({ permissions: { defaultMode: "auto", disableBypassPermissionsMode: "disable" }, sandbox: { enabled: true, failIfUnavailable: true } });
+    expect(settings.apiKeyHelper).toContain(join(home, "secrets"));
+    expect(factoryctl(["status", "T-0005"]).stdout).toContain("T-0005  BUILDING");
+
+    const again = factoryctl(["resume", "T-0005", "--replay", dir]);
+    expect(again.stdout.trim()).toBe("T-0005 NEEDS_HUMAN (gate: merge)");
+    expect(spawnSync("git", ["-C", remote, "show", "factory/T-0005:src/empty.ts"], { encoding: "utf8" }).stdout).toContain("// reviewed by hand");
   });
 
   it("rejects unknown tasks and commands", () => {

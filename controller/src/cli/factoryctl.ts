@@ -3,8 +3,10 @@
 // doctor, the kill switch, releases and gate evidence.
 //
 //   factoryctl task create --profile FILE --title TEXT --body-file FILE [--untrusted] [--remote URL]
-//   factoryctl run T-0001 [--replay DIR]     drive a task until it needs a human or ends
-//   factoryctl resume T-0001 [--replay DIR]  the same, after a stop, a halt or a crash
+//   factoryctl run T-0001 [--attach] [--replay DIR]     drive a task until it needs a human or ends
+//   factoryctl resume T-0001 [--attach] [--replay DIR]  the same, after a stop, a pause, a halt or a crash
+//   factoryctl pause T-0001 [--reason TEXT]  stop the task at its next step boundary, until resume
+//   factoryctl takeover T-0001               open its build session yourself; the result goes back through the gates
 //   factoryctl status [T-0001]
 //   factoryctl cancel T-0001
 //   factoryctl approve T-0001 --gate spec --reason TEXT
@@ -27,6 +29,7 @@ import { spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { parse } from "yaml";
 import { engineHost, killGateContainers, PROXY_ENV, removeTaskContainers } from "../../../gates/src/container.ts";
 import { runGates } from "../../../gates/src/run.ts";
 import { ensureImage } from "../../../gates/src/image.ts";
@@ -35,7 +38,7 @@ import { doctor } from "../doctor.ts";
 import { beginG0, evaluateG0, writeEvidence } from "../gate/g0.ts";
 import { githubApiUrl, GitHubError, isLoopbackApi, restCommitChecks, restGitHub } from "../github/client.ts";
 import { clearHalt, describeHalt, readHalt, setHalt } from "../halt.ts";
-import { acquireRunLock, ensureHome, factoryHome, liveHolder, runDir, type Home } from "../home.ts";
+import { acquireRunLock, ensureHome, factoryHome, liveHolder, runDir, worktreeDir, type Home } from "../home.ts";
 import { reap } from "../proc.ts";
 import { loadRelease } from "../release.ts";
 import { checkReleaseFiles, findRelease, installRelease, listReleases, pinnedSha, pinRelease, writeShim } from "../release/install.ts";
@@ -51,8 +54,12 @@ import { isoWeek, taskReport, WEEK_HEADER, weekRow, weekRowMarkdown, type TaskRe
 import { specDigest } from "../stages/commit.ts";
 import { runTask } from "../stages/pipeline.ts";
 import { EventStore } from "../store/events.ts";
-import { currentState, currentStatePayload, isTerminal, transition } from "../task/lifecycle.ts";
+import { currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
 import { createTask, loadProfile, readTask } from "../task/task.ts";
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { describeMessage } from "../session/attach.ts";
+import { takeoverLaunch, versionMatches } from "../session/takeover-session.ts";
+import { applyTakeover, checkTakeover, resumableSession, TakeoverError } from "../stages/takeover.ts";
 
 const out = (s: string): void => {
   process.stdout.write(`${s}\n`);
@@ -128,9 +135,21 @@ function apiUrl(): string {
   }
 }
 
-async function drive(home: Home, store: EventStore, taskId: string, replay: string | undefined): Promise<void> {
+interface DriveOptions {
+  replay: string | undefined;
+  /** `resume` lifts a pause; `run` refuses a paused task. */
+  resume: boolean;
+  attach: boolean;
+}
+
+async function drive(home: Home, store: EventStore, taskId: string, o: DriveOptions): Promise<void> {
+  const { replay } = o;
   const halt = readHalt(home);
   if (halt !== null) fail(`the factory is ${describeHalt(halt)}; lift it with: factoryctl unhalt --reason "…"`);
+  if (isPaused(store.events(taskId))) {
+    if (!o.resume) fail(`${taskId} is paused; continue it with: factoryctl resume ${taskId}`);
+    store.append({ task_id: taskId, actor: { kind: "operator", id: operator() }, type: "command", payload: { command: "unpause" } });
+  }
   const validator = createValidator();
   const release = loadRelease(validator);
   const token = process.env["FACTORY_GITHUB_TOKEN"];
@@ -189,6 +208,9 @@ async function drive(home: Home, store: EventStore, taskId: string, replay: stri
         ...(process.env["FACTORY_GATES_CA_FILE"] === undefined ? {} : { gatesCaFile: process.env["FACTORY_GATES_CA_FILE"] }),
         log,
         telemetry,
+        ...(o.attach ? { observe: (label: string, m: SDKMessage) => {
+          for (const l of describeMessage(m)) process.stderr.write(`  ${label} │ ${l}\n`);
+        } } : {}),
         ...(probe === undefined ? {} : { probe }),
       },
     });
@@ -196,6 +218,52 @@ async function drive(home: Home, store: EventStore, taskId: string, replay: stri
     const halted = readHalt(home) === null ? "" : " (halted)";
     out(`${taskId} ${state}${typeof payload["gate"] === "string" ? ` (gate: ${payload["gate"]})` : ""}${typeof payload["pr_url"] === "string" ? ` ${payload["pr_url"]}` : ""}${halted}`);
     if (state === "FAILED") process.exitCode = 1;
+  } finally {
+    lock.release();
+  }
+}
+
+/**
+ * `takeover` (P1-04): the operator's own Claude Code in the task's worktree, under the build
+ * session's walls; whatever it leaves goes back through the gates and every judge on `resume`.
+ */
+function takeover(home: Home, store: EventStore, taskId: string): void {
+  operatorOnly("takeover");
+  const halt = readHalt(home);
+  if (halt !== null) fail(`the factory is ${describeHalt(halt)}; lift it with: factoryctl unhalt --reason "…"`);
+  try {
+    checkTakeover(home, store, taskId);
+  } catch (e) {
+    fail(e instanceof TakeoverError ? e.message : String(e));
+  }
+  const validator = createValidator();
+  const release = loadRelease(validator);
+  const bin = process.env["FACTORY_CLAUDE_BIN"] ?? "claude";
+  const version = spawnSync(bin, ["--version"], { encoding: "utf8" });
+  // A binary that is missing has no output at all.
+  const reported = typeof version.stdout === "string" ? version.stdout.trim() : "";
+  if (version.status !== 0 || !versionMatches(reported, release.config.claude_code.version)) {
+    fail(`${bin} is not Claude Code ${release.config.claude_code.version} (it reports ${reported === "" ? "nothing" : reported}); install the pinned version or point FACTORY_CLAUDE_BIN at it`);
+  }
+  const task = readTask(home, taskId);
+  const profile = loadProfile(task.target.profile, validator);
+  const spec = parse(readFileSync(join(runDir(home, taskId), "spec.yaml"), "utf8")) as { scope: { include: string[]; exclude: string[] } };
+  const lock = acquireRunLock(home, taskId);
+  try {
+    const sessionId = resumableSession(store.events(taskId));
+    const launch = takeoverLaunch({
+      home, taskId, release, validator, keyFile: keyFile(home), worktree: worktreeDir(home, taskId), taskDir: join(runDir(home, taskId), "work", "takeover"),
+      protectedPaths: [...profile.protected_paths.map((p) => p.glob), ...profile.restricted.map((r) => r.glob)], scope: spec.scope, sessionId, bin,
+      ...(process.env["TERM"] === undefined ? {} : { term: process.env["TERM"] }),
+    });
+    out(`${taskId}: ${sessionId === null ? "a new session" : `session ${sessionId}`} in ${launch.cwd}, auto mode in the sandbox; exit to hand your commits back to the gates`);
+    const r = spawnSync(launch.command, launch.args, { cwd: launch.cwd, env: launch.env, stdio: "inherit" });
+    const result = applyTakeover(home, store, taskId, operator(), { session_id: sessionId, exit_code: r.status });
+    out(result.changed
+      ? `${taskId}: candidate ${result.from.slice(0, 12)} → ${result.to.slice(0, 12)}; it goes through the gates and every review again: factoryctl resume ${taskId}`
+      : `${taskId}: no change; the task is where it was`);
+  } catch (e) {
+    fail(e instanceof TakeoverError ? e.message : e instanceof Error ? e.message : String(e));
   } finally {
     lock.release();
   }
@@ -219,6 +287,7 @@ async function main(): Promise<void> {
       begin: { type: "boolean" },
       checkout: { type: "string", multiple: true },
       repo: { type: "string" },
+      attach: { type: "boolean" },
     },
   });
   const home = factoryHome();
@@ -334,7 +403,22 @@ async function main(): Promise<void> {
       }
       case "run":
       case "resume":
-        await drive(home, store, taskArg(positionals, 1, store), values.replay);
+        await drive(home, store, taskArg(positionals, 1, store), { replay: values.replay, resume: command === "resume", attach: values.attach === true });
+        return;
+      case "pause": {
+        const id = taskArg(positionals, 1, store);
+        const events = store.events(id);
+        if (isTerminal(currentState(events))) fail(`${id} has already ended`);
+        if (isPaused(events)) {
+          out(`${id} is already paused; continue it with: factoryctl resume ${id}`);
+          return;
+        }
+        store.append({ task_id: id, actor: { kind: "operator", id: operator() }, type: "command", payload: { command: "pause", reason: values.reason ?? "no reason given" } });
+        out(liveHolder(home)?.task_id === id ? `${id} pauses at its next step boundary; continue it with: factoryctl resume ${id}` : `${id} paused; continue it with: factoryctl resume ${id}`);
+        return;
+      }
+      case "takeover":
+        takeover(home, store, taskArg(positionals, 1, store));
         return;
       case "status": {
         const ids = positionals[1] === undefined ? store.taskIds() : [taskArg(positionals, 1, store)];
@@ -345,7 +429,7 @@ async function main(): Promise<void> {
           const events = store.events(id);
           const payload = currentStatePayload(events);
           const gate = typeof payload["gate"] === "string" ? ` gate=${payload["gate"]}` : "";
-          const running = lock?.task_id === id ? " (running)" : "";
+          const running = lock?.task_id === id ? " (running)" : isPaused(events) ? " (paused)" : "";
           out(`${id}  ${currentState(events).padEnd(12)}${gate}${running}  ${readTask(home, id).title}`);
         }
         return;
@@ -481,7 +565,7 @@ async function main(): Promise<void> {
         return;
       }
       default:
-        fail("usage: factoryctl task create | run | resume | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor");
+        fail("usage: factoryctl task create | run | resume | pause | takeover | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor");
     }
   } finally {
     store.close();

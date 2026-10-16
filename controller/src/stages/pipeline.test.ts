@@ -31,6 +31,8 @@ import { CATEGORIES } from "../task/taxonomy.ts";
 import { captureTask } from "../evals/capture.ts";
 import { specDigest } from "./commit.ts";
 import { ProtocolError, runTask, type Deps } from "./pipeline.ts";
+import { applyTakeover, checkTakeover, resumableSession } from "./takeover.ts";
+import { describeMessage } from "../session/attach.ts";
 
 // Each test drives git, the event store and every stage, several rounds in some: on a loaded CI
 // runner (the kill-point suite spawns factoryctl processes alongside) one takes several seconds.
@@ -586,6 +588,96 @@ describe("the refuter pass (P1-03)", () => {
     await run(id, deps(runner));
     expect(runner.requests.some((r) => r.label.startsWith("refute"))).toBe(false);
     expect(existsSync(join(runDir(world.home, id), "refutations.json"))).toBe(false);
+  });
+});
+
+describe("attach, pause and takeover (P1-04)", () => {
+  it("sends a takeover's commits back through the gates and every review, to the same PR", async () => {
+    const id = newTask();
+    let gateRuns: string[] = [];
+    const gates: Deps["runGates"] = (o, label) => {
+      gateRuns.push(`${label} ${spawnSync("git", ["-C", o.worktree, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim()}`);
+      return passingGates()(o, label);
+    };
+    expect(await run(id, deps(replayRunner(transcripts(id)), { runGates: gates }))).toBe("NEEDS_HUMAN");
+    const before = remoteBranch(id);
+    gateRuns = [];
+
+    // The operator edits the worktree and leaves without committing.
+    const wt = worktreeDir(world.home, id);
+    writeFileSync(join(wt, "src/cart.ts"), `${readFileSync(join(wt, "src/cart.ts"), "utf8")}\n// Empty carts are valid.\n`);
+    const result = applyTakeover(world.home, world.store, id, "operator", { session_id: null, exit_code: 0 });
+    expect(result).toMatchObject({ changed: true, round: 1, from: before });
+    expect(currentStatePayload(world.store.events(id))).toMatchObject({ round: 1, takeover: true });
+    expect(states(id).slice(-2)).toEqual(["NEEDS_HUMAN", "BUILDING"]);
+
+    const runner = replayRunner(transcripts(id));
+    expect(await run(id, deps(runner, { runGates: gates }))).toBe("NEEDS_HUMAN");
+    // The build stays the operator's; the gates and every judge run on it.
+    expect(gateRuns).toEqual([`gates ${result.to}`]);
+    expect(runner.requests.map((r) => r.label)).toEqual(["review-code", "review-security", "approve", "summarize"]);
+    expect(remoteBranch(id)).toBe(result.to);
+    expect(world.github.prs).toHaveLength(1);
+    expect(currentStatePayload(world.store.events(id))).toMatchObject({ gate: "merge" });
+    const build = JSON.parse(readFileSync(join(runDir(world.home, id), "build.json"), "utf8")) as { candidate_commit: string; takeover: { from_commit: string } };
+    expect(build).toMatchObject({ candidate_commit: result.to, takeover: { by: "operator", from_commit: before } });
+  });
+
+  it("leaves a task where it was when the takeover changed nothing", async () => {
+    const id = newTask();
+    await run(id, deps(replayRunner(transcripts(id))));
+    const commits = world.store.events(id).filter((e) => e.type === "artifact_committed").length;
+    expect(applyTakeover(world.home, world.store, id, "operator")).toMatchObject({ changed: false });
+    expect(world.store.events(id).filter((e) => e.type === "artifact_committed")).toHaveLength(commits);
+    expect(currentStatePayload(world.store.events(id))).toMatchObject({ gate: "merge" });
+  });
+
+  it("refuses a takeover before anything was built", () => {
+    const id = newTask();
+    expect(() => {
+      checkTakeover(world.home, world.store, id);
+    }).toThrow(/no committed build/);
+  });
+
+  it("pauses at the next step boundary without failing, and resumes there", async () => {
+    const id = newTask();
+    const t = transcripts(id);
+    // The operator pauses while triage runs.
+    const pausing: SessionRunner = {
+      kind: "replay",
+      run: async (req) => {
+        const outcome = await replayRunner(t).run(req);
+        if (req.label === "triage") world.store.append({ task_id: id, actor: { kind: "operator", id: "operator" }, type: "command", payload: { command: "pause", reason: "lunch" } });
+        return outcome;
+      },
+    };
+    expect(await run(id, deps(pausing))).toBe("TRIAGED");
+    expect(world.store.events(id).filter((e) => e.type === "artifact_committed").map((e) => e.payload["label"])).toEqual(["checkout", "triage"]);
+    expect(world.store.events(id).findLast((e) => e.type === "command" && e.payload["command"] === "run_ended")?.payload["reason"]).toBe("paused");
+    // Paused, a run does nothing; once lifted, it continues from spec.
+    const idle = replayRunner(t);
+    expect(await run(id, deps(idle))).toBe("TRIAGED");
+    expect(idle.requests).toEqual([]);
+    world.store.append({ task_id: id, actor: { kind: "operator", id: "operator" }, type: "command", payload: { command: "unpause" } });
+    const rest = replayRunner(t);
+    expect(await run(id, deps(rest))).toBe("NEEDS_HUMAN");
+    expect(rest.requests[0]?.label).toBe("spec");
+  });
+
+  it("shows every session's messages to an attached operator, and records live session ids for takeover", async () => {
+    const id = newTask();
+    const seen: string[] = [];
+    await run(id, deps(replayRunner(transcripts(id)), { observe: (label, m) => seen.push(`${label} ${m.type}`) }));
+    expect(seen).toContain("build assistant");
+    expect(seen).toContain("summarize result");
+    const first = transcripts(id)["build"]?.[0];
+    if (first === undefined) throw new Error("no build transcript");
+    const lines = describeMessage(first);
+    expect(lines).toEqual(["Adding isEmpty and its test.", `→ Write ${join(worktreeDir(world.home, id), "src/cart.ts")}`, `→ Write ${join(worktreeDir(world.home, id), "test/empty.test.ts")}`, "→ Bash git add -A && git commit -m 'Add isEmpty'", `→ Write ${join(runDir(world.home, id), "work/build/build-report.md")}`]);
+    // Replayed sessions are not resumable; a live one is.
+    expect(resumableSession(world.store.events(id))).toBeNull();
+    world.store.append({ task_id: id, actor: { kind: "factoryctl", id: "factoryctl" }, type: "stage_completed", payload: { stage: "build", label: "build", runner: "sdk", session_id: "4f6c" } });
+    expect(resumableSession(world.store.events(id))).toBe("4f6c");
   });
 });
 

@@ -28,9 +28,10 @@ import { loadRiskPolicy } from "../policy/load.ts";
 import type { BudgetTier, Release } from "../release.ts";
 import type { Validator } from "../schemas/validate.ts";
 import { prepareSession, type StageSpec } from "../session/options.ts";
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionRunner, StageOutcome } from "../session/runner.ts";
 import type { EventStore, FactoryEvent, State } from "../store/events.ts";
-import { canMove, currentState, currentStatePayload, isTerminal, transition } from "../task/lifecycle.ts";
+import { canMove, currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
 import { loadProfile, readTask, type Profile, type Task } from "../task/task.ts";
 import { buildCategory, sdkCategory, type Category } from "../task/taxonomy.ts";
 import { describeAlarm, modelAlarms, type Telemetry } from "../telemetry.ts";
@@ -59,6 +60,8 @@ export interface Deps {
   now?: () => Date;
   /** OTel export for every session (P1-06); absent or null when the operator has not turned it on. */
   telemetry?: Telemetry | null;
+  /** `run --attach`: every message of every session, as it arrives. */
+  observe?: (label: string, m: SDKMessage) => void;
   /** Test-only kill points (`--replay` with `kill_at`): called at named instants of a run; absent in a real run. */
   probe?: (point: string) => void;
 }
@@ -297,7 +300,11 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     deps.log(`${taskId}: ${spec.label} (cap ${usd(cap)})`);
     const transcript = join(dir, "transcripts", `${spec.label}.ndjson`);
     rmSync(transcript, { force: true });
-    const outcome = await deps.runner.run({ label: spec.label, prompt: spec.prompt, options: prepared.options, transcript, denials: prepared.denials });
+    const observe = deps.observe;
+    const outcome = await deps.runner.run({
+      label: spec.label, prompt: spec.prompt, options: prepared.options, transcript, denials: prepared.denials,
+      ...(observe === undefined ? {} : { observe: (m: SDKMessage) => { observe(spec.label, m); } }),
+    });
     const routing = release.config.routing[spec.agent];
     // The alias alarm (P1-06): against the pins, and against what earlier live sessions of the alias ran on.
     const alarms = modelAlarms(routing?.model ?? "", outcome.models, release.config.model_pins, store.allEvents());
@@ -316,6 +323,8 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       runner: deps.runner.kind,
       round,
       denied: outcome.denied,
+      // A live session can be resumed by `factoryctl takeover` (P1-04).
+      session_id: outcome.sessionId,
     });
     for (const a of alarms) {
       store.append({ task_id: taskId, actor: { kind: "factoryctl", id: "factoryctl" }, type: "alarm", payload: { label: spec.label, ...a } });
@@ -701,6 +710,12 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   const noExit = (): void => undefined;
   async function runStep(step: Step): Promise<void> {
     checkStop();
+    // A pause (P1-04) holds only here, between steps: work a step already paid for is committed first.
+    if (isPaused(store.events(taskId))) {
+      endReason = "paused";
+      deps.log(`${taskId}: paused before ${step.label}; continue with: factoryctl resume ${taskId}`);
+      throw new Stop();
+    }
     currentStage = step.stage;
     const stepInputs = inputsOf(dir, step.inputs);
     const fresh = freshness(dir, store.events(taskId), step.label, stepInputs);

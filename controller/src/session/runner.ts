@@ -16,6 +16,8 @@ export interface StageRequest {
   transcript: string;
   /** Denials the in-process guard records (shared with the guard hook). */
   denials: Denial[];
+  /** Sees every message as it arrives (`run --attach`). */
+  observe?: (m: SDKMessage) => void;
 }
 
 export interface StageOutcome {
@@ -69,6 +71,7 @@ export async function collect(stream: AsyncIterable<SDKMessage>, req: StageReque
   };
   for await (const m of stream) {
     sink(m);
+    req.observe?.(m);
     if (m.type !== "result") continue;
     outcome.subtype = m.subtype;
     outcome.ok = m.subtype === "success" && !m.is_error;
