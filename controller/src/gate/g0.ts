@@ -30,16 +30,18 @@ export interface Snapshot extends TreeDigest {
   path: string;
 }
 
+export type GateId = "G0" | "G1";
+
 export interface Begin {
   schema_version: 1;
-  gate: "G0";
+  gate: GateId;
   started_at: string;
   release: { sha: string; tag: string } | null;
   checkouts: Snapshot[];
 }
 
 export interface Criterion {
-  id: "G0-1" | "G0-2" | "G0-3" | "G0-4" | "G0-5";
+  id: `${GateId}-${number}`;
   criterion: string;
   status: "pass" | "fail" | "human";
   detail: string;
@@ -48,7 +50,7 @@ export interface Criterion {
 
 export interface Evidence {
   schema_version: 1;
-  gate: "G0";
+  gate: GateId;
   generated_at: string;
   release: { sha: string; tag: string; files_digest: string } | null;
   /** The automated criteria (G0-1 to G0-4) all pass; G0-5 is the operator's signature. */
@@ -74,8 +76,8 @@ export interface G0Inputs {
   now?: Date;
 }
 
-const gateDir = (home: Home): string => join(home.gates, "G0");
-const beginPath = (home: Home): string => join(gateDir(home), "begin.json");
+const gateDir = (home: Home, gate: GateId = "G0"): string => join(home.gates, gate);
+const beginPath = (home: Home, gate: GateId = "G0"): string => join(gateDir(home, gate), "begin.json");
 /** The sessions a full run has: G0-1 needs each, live. */
 const SESSIONS = ["triage", "spec", "build", "review-code", "review-security", "approve", "summarize"];
 /** The round's own files come from its latest round (P1-01): earlier rounds' red gates are history. */
@@ -85,28 +87,30 @@ const artifacts = (dir: string): string[] => {
 };
 const sha256 = (data: Buffer): string => `sha256:${createHash("sha256").update(data).digest("hex")}`;
 /** Git rewrites its index, a stat cache, on read-only commands such as a shell prompt's `git status`. */
-const checkoutDigest = (path: string): TreeDigest => treeDigest(path, (rel) => rel === ".git/index");
+export const checkoutDigest = (path: string): TreeDigest => treeDigest(path, (rel) => rel === ".git/index");
 
-/** Snapshot the operator checkouts before the dry runs (G0-3 compares them afterwards). */
-export function beginG0(home: Home, release: Release, checkouts: string[], now: Date = new Date()): Begin {
+/** Snapshot the operator checkouts before the gate's runs (G0-3 and G1-3 compare them afterwards). */
+export function beginGate(home: Home, gate: GateId, release: Release, checkouts: string[], now: Date = new Date()): Begin {
   if (checkouts.length === 0) throw new Error("name at least one operator checkout (--checkout DIR)");
   const begin: Begin = {
     schema_version: 1,
-    gate: "G0",
+    gate,
     started_at: now.toISOString(),
     release: release.info === null ? null : { sha: release.info.sha, tag: release.info.tag },
     checkouts: checkouts.map((path) => ({ path, ...checkoutDigest(path) })),
   };
-  mkdirSync(gateDir(home), { recursive: true, mode: 0o700 });
-  writeFileSync(beginPath(home), `${JSON.stringify(begin, null, 2)}\n`, { mode: 0o600 });
+  mkdirSync(gateDir(home, gate), { recursive: true, mode: 0o700 });
+  writeFileSync(beginPath(home, gate), `${JSON.stringify(begin, null, 2)}\n`, { mode: 0o600 });
   return begin;
 }
 
-export function readBegin(home: Home): Begin | null {
-  return existsSync(beginPath(home)) ? (JSON.parse(readFileSync(beginPath(home), "utf8")) as Begin) : null;
+export const beginG0 = (home: Home, release: Release, checkouts: string[], now: Date = new Date()): Begin => beginGate(home, "G0", release, checkouts, now);
+
+export function readBegin(home: Home, gate: GateId = "G0"): Begin | null {
+  return existsSync(beginPath(home, gate)) ? (JSON.parse(readFileSync(beginPath(home, gate), "utf8")) as Begin) : null;
 }
 
-const sessionsOf = (events: FactoryEvent[]): FactoryEvent[] => events.filter((e) => e.type === "stage_started" && typeof e.payload["runner"] === "string");
+export const sessionsOf = (events: FactoryEvent[]): FactoryEvent[] => events.filter((e) => e.type === "stage_started" && typeof e.payload["runner"] === "string");
 
 /** Why a task is not a complete live dry run on `repo` with the installed release; empty when it is. */
 function dryRunProblems(i: G0Inputs, id: string, repo: string): { problems: string[]; pr: string; sessions: number; usd: number } {
@@ -290,14 +294,16 @@ export async function evaluateG0(i: G0Inputs): Promise<Evidence> {
 
 const cell = (s: string): string => s.replaceAll("|", "\\|").replaceAll("\n", " ");
 
-/** The evidence PR body: what STATUS's Gate G0 table gets, and what the operator confirms. */
+/** The evidence PR body: what STATUS's gate table gets, and what the operator confirms. */
 export function evidenceMarkdown(e: Evidence): string {
   const date = e.generated_at.slice(0, 10);
+  const automated = e.criteria.filter((c) => c.status !== "human").map((c) => c.id);
+  const human = e.criteria.filter((c) => c.status === "human").map((c) => c.id);
   const lines = [
-    "## Gate G0 evidence",
+    `## Gate ${e.gate} evidence`,
     "",
-    `Drafted by \`factoryctl gate G0\` on ${date}${e.release === null ? " from a development checkout" : ` with release \`${e.release.tag}\` (\`${e.release.sha}\`, files ${e.release.files_digest})`}.`,
-    `Automated criteria (G0-1 to G0-4): **${e.passed ? "all pass" : "not all pass"}**. G0-5 is the operator's signature: approving this PR.`,
+    `Drafted by \`factoryctl gate ${e.gate}\` on ${date}${e.release === null ? " from a development checkout" : ` with release \`${e.release.tag}\` (\`${e.release.sha}\`, files ${e.release.files_digest})`}.`,
+    `Automated criteria (${automated[0] ?? ""} to ${automated.at(-1) ?? ""}): **${e.passed ? "all pass" : "not all pass"}**. ${human.join(" and ")} is the operator's signature: approving this PR.`,
     "",
     "| ID | Criterion | Status | Evidence | Date | Signed by |",
     "|---|---|---|---|---|---|",
@@ -312,9 +318,10 @@ export function evidenceMarkdown(e: Evidence): string {
 }
 
 export function writeEvidence(home: Home, e: Evidence): { json: string; markdown: string } {
-  mkdirSync(gateDir(home), { recursive: true, mode: 0o700 });
-  const json = join(gateDir(home), "evidence.json");
-  const markdown = join(gateDir(home), "evidence.md");
+  const dir = gateDir(home, e.gate);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const json = join(dir, "evidence.json");
+  const markdown = join(dir, "evidence.md");
   writeFileSync(json, `${JSON.stringify(e, null, 2)}\n`, { mode: 0o600 });
   writeFileSync(markdown, evidenceMarkdown(e), { mode: 0o600 });
   return { json, markdown };

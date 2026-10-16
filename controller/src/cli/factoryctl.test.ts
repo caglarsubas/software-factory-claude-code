@@ -167,7 +167,7 @@ describe("factoryctl", { timeout: 30_000 }, () => {
   });
 
   it("opens the G0 evidence window on a checkout and drafts the evidence", { timeout: 120_000 }, () => {
-    expect(factoryctl(["gate", "G1"]).status).toBe(2);
+    expect(factoryctl(["gate", "G2"]).status).toBe(2);
     const begin = factoryctl(["gate", "G0", "--begin", "--checkout", seed]);
     expect(begin.status, begin.stderr).toBe(0);
     expect(begin.stdout).toMatch(/^snapshot .*seed: [0-9]+ files, sha256:[0-9a-f]{64}$/m);
@@ -180,6 +180,15 @@ describe("factoryctl", { timeout: 30_000 }, () => {
     expect(gate.stdout).toMatch(/^human {2}G0-5 /m);
     expect(existsSync(join(home, "gates/G0/evidence.json"))).toBe(true);
     expect(readFileSync(join(home, "gates/G0/evidence.md"), "utf8")).toContain("## Gate G0 evidence");
+
+    // G1 checks its own criteria, from a window of its own.
+    const g1 = factoryctl(["gate", "G1"]);
+    expect(g1.status).toBe(1);
+    expect(g1.stdout).toMatch(/^fail {3}G1-3 {2}no snapshot: run `factoryctl gate G1 --begin` before the last counted task/m);
+    expect(g1.stdout).toMatch(/^fail {3}G1-1 {2}factory CI: no installed release to check CI on$/m);
+    expect(g1.stdout).toMatch(/^pass {3}G1-5 {2}recorded .* from [0-9]+ completed runs, and equal to the rule applied to the event store now$/m);
+    expect(g1.stdout).toMatch(/^human {2}G1-6 /m);
+    expect(readFileSync(join(home, "gates/G1/evidence.md"), "utf8")).toContain("## Gate G1 evidence");
   });
 
   it("keeps test-only injection off anything that leaves the machine, and the token off plain http (P1-02)", () => {
