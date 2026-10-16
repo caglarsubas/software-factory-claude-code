@@ -4,6 +4,18 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-16
+
+### Fixed
+
+- **The factory's own tests pass in the gate image.** The first task on this repository failed its gates whatever it changed. Three causes:
+  - the image had no `git`, which most of the pipeline suite needs to build fixture repositories;
+  - it had no `ps`, which the process-group test calls;
+  - the release test helper and `check:docs` listed files with `git ls-files`, but the gates run on an exported commit with no `.git`.
+
+  The image now carries `git` and `procps`, pinned by Debian version and checked when the image builds. Both listings fall back to the files on disk, which in an exported commit are exactly the tracked ones. The full suite passes in the image with the network off, the root read-only and no `.git`.
+- **This repository's gates run its docs checks.** The self profile's lint command adds `pnpm lint:md`, and its test command adds `pnpm check:docs`, so a docs task is judged on the checks a docs change can break.
+
 ## [0.3.1] - 2026-10-16
 
 ### Fixed
@@ -119,7 +131,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.1.2...v0.2.0

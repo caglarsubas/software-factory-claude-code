@@ -27,6 +27,13 @@ describe("gate image pins", () => {
     expect(external.length).toBe(2);
     for (const ref of external) expect(ref).toMatch(/^[\w.:/-]+@sha256:[0-9a-f]{64}$/);
   });
+  it("pin every Debian package by version, and carry git and ps for targets' test suites", () => {
+    const installs = [...dockerfile.matchAll(/apt-get install -y --no-install-recommends ([^\\\n]+)/g)].flatMap((m) => (m[1] ?? "").trim().split(/\s+/));
+    expect(installs.map((p) => p.split("=")[0]).sort()).toEqual(["git", "procps"]);
+    for (const p of installs) expect(p, p).toMatch(/^[a-z0-9.+-]+=\S+$/);
+    // The build itself fails if either is missing.
+    expect(dockerfile).toMatch(/&& git --version && ps --version/);
+  });
   it("reject downloads with no defined verifier", () => {
     expect(() => verification({ sha256: "0".repeat(64), url: "https://github.com/acme/tool/releases/download/v1.0.0/tool" }, "tool")).toThrow(/no signature/);
     expect(() => verification({ sha256: "0".repeat(64), url: "https://example.com/tool.tar.gz" }, "tool")).toThrow(/not a GitHub release/);

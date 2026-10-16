@@ -36,6 +36,10 @@ RUN mkdir /out \
  && install -m 0755 /dl/opengrep /out/opengrep
 
 FROM base
+# git and ps: a target's own tests often build repositories or inspect processes (this factory's do).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git=1:2.47.3-0+deb13u1 procps=2:4.0.4-9 \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=tools /out/ /usr/local/bin/
@@ -47,7 +51,8 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /tmp --shell /usr/sbin/nologin gates \
  && mkdir -p /data/candidate /data/base /cache /osv \
  && chown -R 10001:10001 /data /cache /osv \
- && node --version && uv --version && trufflehog --version && osv-scanner --version && opengrep --version
+ && node --version && uv --version && trufflehog --version && osv-scanner --version && opengrep --version \
+ && git --version && ps --version
 COPY rules/*.yaml /opt/gates/rules/
 COPY image/osv-seed/ /opt/gates/osv-seed/
 # Caches live on the per-target cache volume (/cache) and the shared OSV database volume (/osv);

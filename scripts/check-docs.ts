@@ -1,18 +1,21 @@
 // CLI: run the docs consistency checks over every tracked Markdown file.
 // Usage: node scripts/check-docs.ts   (exit 1 on any finding)
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { checkIdConsistency, checkLinks, checkModelIds, checkThreatModel, type Finding } from "./lib/docs-checks.ts";
 
 const ROADMAP = "docs/factory/ROADMAP.md";
 const STATUS = "docs/factory/STATUS.md";
 const THREAT_MODEL = "docs/factory/threat-model.md";
 
-const tracked = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "*.md"], {
-  encoding: "utf8",
-})
-  .split("\n")
-  .filter((path) => path !== "" && existsSync(path));
+// Git's tracked and unignored files in a work tree. The gates run this on an exported commit with
+// no .git, which holds only tracked files: there, every Markdown file outside the dependencies.
+const listed = spawnSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "*.md"], { encoding: "utf8" });
+const tracked = (
+  listed.status === 0
+    ? listed.stdout.split("\n")
+    : readdirSync(".", { recursive: true, encoding: "utf8" }).filter((path) => path.endsWith(".md") && !path.split("/").some((part) => part === "node_modules" || part === ".git") && lstatSync(path).isFile())
+).filter((path) => path !== "" && existsSync(path));
 
 const docs = new Map(tracked.map((path) => [path, readFileSync(path, "utf8")]));
 const roadmap = docs.get(ROADMAP);
