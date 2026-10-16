@@ -12,12 +12,12 @@ describe("eval-summary", () => {
     const pass = { name: "triage-docs-r0", arms: { with: [{ passed: true, score: 1, graders: [{ name: "result", passed: true }] }] }, aggregates: { score: 1, passRate: 1 } };
     const fail = {
       name: "review-code-no-test",
-      arms: { with: [{ passed: false, score: 0.33, error: null, graders: [{ name: "dispatch", passed: true }, { name: "result", passed: false, explanation: "expected RESULT: 1, saw RESULT: 0\nnothing blocking" }, { name: "judge", passed: false, explanation: "50% of the criteria, a: b" }] }] },
+      arms: { with: [{ passed: false, score: 0.33, error: null, graders: [{ name: "dispatch", passed: true }, { name: "result", passed: false, explanation: "expected RESULT: 1, saw RESULT: 0\nnothing blocking" }, { name: "judge", passed: false, explanation: "50% of the criteria, a: b", evidence: "RESULT: 0" }] }] },
       aggregates: { score: 0.33, passRate: 0 },
     };
     const result = { costUsd: 1, partial: false, cases: [pass, fail], aggregates: { casesTotal: 2, casesPassed: 1, overallScore: 0.67 } };
     expect(failureAnnotations(result, "evals")).toEqual([
-      "::error title=evals/review-code-no-test::evals/review-code-no-test failed (score 0.33)%0Aresult: expected RESULT: 1, saw RESULT: 0%0Anothing blocking%0Ajudge: 50%25 of the criteria, a: b",
+      "::error title=evals/review-code-no-test::evals/review-code-no-test failed (score 0.33)%0Aresult: expected RESULT: 1, saw RESULT: 0%0Anothing blocking%0Ajudge: 50%25 of the criteria, a: b%0A  judged: RESULT: 0",
     ]);
     expect(failureAnnotations({ ...result, cases: [pass] }, "evals")).toEqual([]);
     // A case with no completed run is a failure too.

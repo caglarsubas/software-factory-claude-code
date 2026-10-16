@@ -48,7 +48,7 @@ jobs:
           if [ -z "${ANTHROPIC_API_KEY}" ]; then echo "::error::the ANTHROPIC_API_KEY secret (software-factory-ci workspace) is not set"; exit 1; fi
           suite() {
             npx --yes @anthropic-ai/claude-code@2.1.286 plugin eval plugin --eval-dir "$1" \
-              --ablation none --runs 1 --threshold 0.8 --max-cost-usd "$2" --judge-model haiku \
+              --ablation none --runs 1 --threshold 0.8 --max-cost-usd "$2" --judge-model sonnet \
               --allow-tools Read --trust-plugin --no-publish -j 4 --json "$RUNNER_TEMP/$1.json"
           }
           summary() {

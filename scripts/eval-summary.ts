@@ -3,8 +3,8 @@
 //   node scripts/eval-summary.ts RESULT.json SUITE              one row of the job summary's table
 //   node scripts/eval-summary.ts RESULT.json SUITE --failures   one ::error annotation per failing case
 //
-// The annotations name each failing case, the graders it failed and why, so a red run says what
-// failed in its log and on the check run. Cases are fixture or self cases only (check-evals), so
+// The annotations name each failing case, the graders it failed and why (for a judge, the reply
+// it judged), so a red run says what failed in its log and on the check run. Cases are fixture or self cases only (check-evals), so
 // what they print may be public.
 import { readFileSync } from "node:fs";
 
@@ -12,6 +12,8 @@ interface GraderResult {
   name: string;
   passed: boolean;
   explanation?: string;
+  /** For an llm grader: what the judge was shown. */
+  evidence?: string;
 }
 
 interface Run {
@@ -56,7 +58,7 @@ export function failureAnnotations(result: EvalResult, suite: string): string[] 
       ? ["no run completed"]
       : failed.flatMap((r) => [
           ...(r.error ? [`error: ${clip(r.error)}`] : []),
-          ...(r.graders ?? []).filter((g) => !g.passed).map((g) => `${g.name}: ${clip(g.explanation ?? "failed")}`),
+          ...(r.graders ?? []).filter((g) => !g.passed).flatMap((g) => [`${g.name}: ${clip(g.explanation ?? "failed")}`, ...(g.evidence === undefined ? [] : [`  judged: ${clip(g.evidence)}`])]),
         ]);
     const score = c.aggregates === undefined ? "" : ` (score ${c.aggregates.score.toFixed(2)})`;
     return [`::error title=${property(`${suite}/${c.name}`)}::${data(`${suite}/${c.name} failed${score}\n${details.join("\n")}`)}`];
