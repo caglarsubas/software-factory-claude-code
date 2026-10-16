@@ -47,6 +47,7 @@ export function buildPrompt(ctx: { specYaml: string; taskDir: string; findings: 
     ctx.findings === null ? "" : `Findings from the previous round, to fix or answer in build-report.md:\n${ctx.findings}`,
     `Your task directory is ${ctx.taskDir}. Before you stop, write build-report.md there. If you cannot finish, write build-failure.json there with a "reason".`,
     "Commit your work in small local commits. When you try to stop, the preflight runs the gates on your last commit.",
+    "The preflight runs the target's setup, typecheck, lint and tests in a container; your working directory may have no installed dependencies. Work only with your working directory and task directory: never look for tools or files elsewhere on the machine. When a check cannot run locally, commit and let the preflight run it. If a command changes a file you did not mean to change (a lockfile, say), discard it with `git checkout -- <file>`.",
   ]
     .filter((p) => p !== "")
     .join("\n\n");
@@ -71,18 +72,18 @@ export function refutePrompt(ctx: { bundleDir: string; findingId: string; findin
   ].join("\n\n");
 }
 
-export function approvePrompt(ctx: { bundleDir: string; refutations?: boolean }): string {
+export function approvePrompt(ctx: { bundleDir: string; reviews: readonly string[]; refutations?: boolean }): string {
   return [
-    `Assess the evidence bundle at ${ctx.bundleDir}: spec.yaml, diff.patch, gates.json, policy.json, decisions.json and the review-*.json files${ctx.refutations === true ? ", and refutations.json: the refuter's answer to every blocking finding (only a refuted finding stops blocking)" : ""}.`,
+    `Assess the evidence bundle at ${ctx.bundleDir}: spec.yaml, diff.patch, gates.json, policy.json, decisions.json, the reviewers' reports ${ctx.reviews.join(" and ")}${ctx.refutations === true ? ", and refutations.json: the refuter's answer to every blocking finding (only a refuted finding stops blocking)" : ""}. These are all the files there are; do not look for others.`,
     "decisions.json holds the operator's decisions at the human gates. Each is settled: never report a choice recorded there as open, or as a finding.",
     "For every acceptance criterion in spec.yaml, record whether the evidence shows it is met, and which evidence.",
     "Return only the JSON your output format specifies.",
   ].join("\n\n");
 }
 
-export function summarizePrompt(ctx: { bundleDir: string }): string {
+export function summarizePrompt(ctx: { bundleDir: string; reviews: readonly string[]; refutations?: boolean }): string {
   return [
-    `Write the PR body and changelog line from the evidence bundle at ${ctx.bundleDir}: spec.yaml, verdict.json, policy.json, gates.json, decisions.json, the review-*.json files and, when present, refutations.json.`,
+    `Write the PR body and changelog line from the evidence bundle at ${ctx.bundleDir}: spec.yaml, verdict.json, policy.json, gates.json, decisions.json, the reviewers' reports ${ctx.reviews.join(" and ")}${ctx.refutations === true ? ", and refutations.json" : ""}. These are all the files there are; do not look for others.`,
     "decisions.json holds the operator's decisions at the human gates: report each as decided, with its reason, never as an open question.",
     "Return only the JSON your output format specifies.",
   ].join("\n\n");

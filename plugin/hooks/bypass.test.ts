@@ -27,6 +27,11 @@ const allowed: [string, string][] = [
   ["Write in scope", call("Write", { file_path: join(worktree, "src/orders/new.ts"), content: "" })],
   ["Write the build report", call("Write", { file_path: join(taskDir, "build-report.md"), content: "" })],
   ["Grep the worktree", call("Grep", { pattern: "export", path: worktree })],
+  // A tool the guard cannot see into rewrote a file outside the scope; throwing that away is allowed.
+  ["discard an out-of-scope change with checkout", bash("git checkout -- uv.lock")],
+  ["discard with checkout HEAD", bash("git checkout HEAD -- uv.lock pnpm-lock.yaml")],
+  ["discard with restore", bash("git restore uv.lock")],
+  ["discard staged and worktree changes", bash("git restore --staged --worktree -- uv.lock")],
 ];
 
 describe("guard denies every bypass variant (exit 2)", () => {

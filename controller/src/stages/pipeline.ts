@@ -533,6 +533,8 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     { label: "review-code", agent: "code-reviewer", focus: "correctness, maintainability and test adequacy, checked against every acceptance criterion and invariant in the spec" },
     { label: "review-security", agent: "security-reviewer", focus: "authorization, injection, secrets and data exposure; try to construct an exploit before you report one" },
   ] as const;
+  /** The names the reviewers' reports have in the bundle; the judges are told exactly these. */
+  const reviewFiles = REVIEWERS.map((r) => `${r.label}.json`);
   const reviewCopies = (n: number): [string, string][] => REVIEWERS.map((r) => [roundPath(`${r.label}.json`, n), `${r.label}.json`]);
 
   const review = (r: (typeof REVIEWERS)[number], n: number) => async (): Promise<Output[]> => {
@@ -635,7 +637,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     const refuted = has(roundPath("refutations.json", n));
     prepareBundle(n, [["policy.json", "policy.json"], ...reviewCopies(n), ...(refuted ? [[roundPath("refutations.json", n), "refutations.json"] as [string, string]] : [])]);
     const outcome = await session({
-      stage: "approve", agent: "approver", label: "approve", cwd: bundleDir, prompt: approvePrompt({ bundleDir, refutations: refuted }),
+      stage: "approve", agent: "approver", label: "approve", cwd: bundleDir, prompt: approvePrompt({ bundleDir, reviews: reviewFiles, refutations: refuted }),
       outputSchema: OUTPUTS.verdict(), extraDirs: [], guard: readOnlyGuard(bundleDir, workDir("approve")),
     });
     return [out("verdict.json", { schema_version: 1, task_id: taskId, candidate_commit: candidate(n), tier: decision.tier, ...(outcome.structured as object) }, "verdict.schema.json")];
@@ -653,7 +655,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   const summarize = (n: number) => async (): Promise<Output[]> => {
     prepareBundle(n, [["policy.json", "policy.json"], ...reviewCopies(n), ...(has(roundPath("refutations.json", n)) ? [[roundPath("refutations.json", n), "refutations.json"] as [string, string]] : []), ["verdict.json", "verdict.json"]]);
     const outcome = await session({
-      stage: "summarize", agent: "summarizer", label: "summarize", cwd: bundleDir, prompt: summarizePrompt({ bundleDir }),
+      stage: "summarize", agent: "summarizer", label: "summarize", cwd: bundleDir, prompt: summarizePrompt({ bundleDir, reviews: reviewFiles, refutations: has(roundPath("refutations.json", n)) }),
       outputSchema: OUTPUTS.summary(), extraDirs: [], guard: readOnlyGuard(bundleDir, workDir("summarize")),
     });
     return [out("summary.json", { schema_version: 1, task_id: taskId, ...(outcome.structured as object) }, "summary.schema.json")];
