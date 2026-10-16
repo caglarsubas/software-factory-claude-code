@@ -4,6 +4,10 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-16
+
+Phase 1, second release: the rest of the Phase 1 pipeline. Refutation, crash-safe side effects and the merge gate, telemetry, and watch, pause and take over. Counted Phase 1 tasks run on this release, because `v0.2.0` cannot record a merged PR.
+
 ### Added
 
 - **Refuter pass (P1-03).**
@@ -36,6 +40,7 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ### Fixed
 
+- **The judges know what you decided.** Every judge's bundle now carries `decisions.json`: your approvals at the spec gate that still hold, with their reasons. The reviewers, refuter, approver and summarizer are told these are settled. Before, a spec that asked you to choose between options read as undecided after you chose, and the approver raised your choice as a blocking finding.
 - **Eval judging (#27, #28).** The `factory-evals` judge graders failed correct answers:
   - their rubrics asked for checks a judge cannot make from the reply alone, or for details a correct reply may leave out;
   - the Haiku judge, which must answer in one word, failed replies it passes when asked to explain.
@@ -106,7 +111,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.1.0...v0.1.1

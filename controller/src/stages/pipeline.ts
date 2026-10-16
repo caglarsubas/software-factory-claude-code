@@ -513,6 +513,20 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     writeFileSync(join(bundleDir, "diff.patch"), diffPatch(worktree, c.base_commit, cand, DIFF_LIMIT));
     writeFileSync(join(bundleDir, "changed-files.txt"), changedFiles(worktree, c.base_commit, cand).map((f) => `${f.path}\t+${String(f.additions)}\t-${String(f.deletions)}`).join("\n") + "\n");
     for (const [from, to] of [["spec.yaml", "spec.yaml"], ["spec.md", "spec.md"], [roundPath("gates.json", n), "gates.json"], ...copies] as const) copyFileSync(join(dir, from), join(bundleDir, to));
+    writeFileSync(join(bundleDir, "decisions.json"), `${JSON.stringify({ schema_version: 1, decisions: humanDecisions() }, null, 2)}\n`);
+  };
+
+  /**
+   * The operator's decisions at the human gates that still hold: approvals given on the spec as it
+   * stands. Without them a judge re-opens a question the operator already settled (a spec that
+   * asked for a human to choose reads as undecided).
+   */
+  const humanDecisions = (): { gate: string; decision: string; by: string; at: string; reason: string }[] => {
+    const digest = specDigest(dir);
+    return store
+      .events(taskId)
+      .filter((e) => e.type === "command" && e.payload["command"] === "approve" && e.payload["gate"] === "spec" && e.payload["spec_digest"] === digest)
+      .map((e) => ({ gate: "spec", decision: "approved", by: e.actor.id, at: e.ts, reason: typeof e.payload["reason"] === "string" ? e.payload["reason"] : "" }));
   };
 
   const REVIEWERS = [
