@@ -164,10 +164,16 @@ function checkGit(cmd: SimpleCommand, config: GuardConfig): Decision {
       return ["add", "set-url", "rename", "remove", "rm", "set-head", "set-branches"].includes(rest[0]?.text ?? "") ? deny(`git remote ${rest[0]?.text ?? ""} is not allowed`) : ALLOW;
     case "config":
       return rest.some((w) => ["--get", "--get-all", "--list", "-l", "--get-regexp"].includes(w.text)) ? ALLOW : deny("changing git config is not allowed");
-    case "rm":
-    case "mv":
     case "checkout":
     case "restore":
+      if (discardsOnly(sub.text, rest) && discardable(rest, { ...cmd, cwd }, config)) return ALLOW;
+      for (const w of rest.filter(looksLikePath)) {
+        const d = checkWritePath(w, { ...cmd, cwd }, config);
+        if (!d.allow) return d;
+      }
+      return ALLOW;
+    case "rm":
+    case "mv":
       for (const w of rest.filter(looksLikePath)) {
         const d = checkWritePath(w, { ...cmd, cwd }, config);
         if (!d.allow) return d;
@@ -176,6 +182,35 @@ function checkGit(cmd: SimpleCommand, config: GuardConfig): Decision {
     default:
       return ALLOW;
   }
+}
+
+/**
+ * `git restore <paths>` without a source, or `git checkout [HEAD] -- <paths>`: these only throw away
+ * uncommitted changes. A tool the guard cannot see into (a package manager rewriting its lockfile)
+ * can change a file outside the scope, and the builder must be able to undo that.
+ */
+function discardsOnly(sub: string, rest: Word[]): boolean {
+  if (sub === "restore") return !rest.some((w) => w.dynamic || w.text === "-s" || w.text.startsWith("--source") || /^-[a-zA-Z]*s/.test(w.text) || w.text === "-p" || w.text === "--patch");
+  const sep = rest.findIndex((w) => w.text === "--");
+  return sep === 0 || (sep === 1 && rest[0]?.text === "HEAD");
+}
+
+/**
+ * Every path a discard names is a literal file inside the worktree that is neither protected nor
+ * secret. A discard restores from the index, which the builder can stage, so protected paths stay
+ * with checkWritePath; the worktree root and pathspec patterns are named file by file instead.
+ */
+function discardable(rest: Word[], cmd: SimpleCommand, config: GuardConfig): boolean {
+  const sep = rest.findIndex((w) => w.text === "--");
+  const paths = (sep === -1 ? rest : rest.slice(sep + 1)).filter((w) => sep !== -1 || !w.text.startsWith("-"));
+  if (paths.length === 0) return false;
+  return paths.every((w) => {
+    if (w.dynamic || w.glob || /[*?[:]/.test(w.text)) return false;
+    if (cmd.cwd === null && !isAbsolute(w.text)) return false;
+    const target = realResolve(cmd.cwd ?? "/", w.text);
+    const rel = inside(config.worktree, target);
+    return rel !== null && !isProtected(rel, config) && !isSecret(target, config);
+  });
 }
 
 /** The arguments a command writes to. */

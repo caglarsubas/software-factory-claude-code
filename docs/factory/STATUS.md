@@ -4,9 +4,9 @@ Claude Code updates this file after every deliverable; the plan is [`ROADMAP.md`
 
 | Field | Value |
 |---|---|
-| Current phase | P1 Local MVP: P1-07 (#18), P1-02 (#19, #25), P1-01 (#20), P1-05 (#21, #27), P1-09 (#23), P1-03 (#24), P1-06 (#26), P1-04 (#29) and P1-08 (#30) merged, with the eval judge fix (#28); `v0.3.0` cut for the counted tasks, which have started |
+| Current phase | P1 Local MVP: P1-07 (#18), P1-02 (#19, #25), P1-01 (#20), P1-05 (#21, #27), P1-09 (#23), P1-03 (#24), P1-06 (#26), P1-04 (#29) and P1-08 (#30) merged, with the eval judge fix (#28); counted tasks on `v0.3.x`: 1 merged |
 | Next gate | G1 |
-| Factory release | `v0.2.0` (`ad5a7d4`, tagged and published 2026-10-16), installed and pinned by the operator, `doctor` clean. `v0.3.0` is cut for the counted Phase 1 tasks, to be tagged once its PR merges |
+| Factory release | `v0.2.0` (`ad5a7d4`, tagged and published 2026-10-16), installed and pinned by the operator, `doctor` clean. `v0.3.0` (`16e87a2`, tagged 2026-10-16) installed and pinned by the operator; `v0.3.1` cut with a guard fix the second counted task found, to be tagged once its PR merges |
 | Claude Code / Agent SDK pin | 2.1.286 / 0.3.286 (stable on Oct 9, 2026; re-checked on Oct 13, see the platform log) |
 | P0 entry criteria | GitHub App ☐ (a token scoped to the fixture repositories stood in for G0-1; see deviations) · Console workspace with spend limit ☑ · `main` created ☑ · toolchain pinned ☑ (Node 24.21.0, pnpm 12.6.0, TypeScript 6.0.3) |
 
