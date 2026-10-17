@@ -66,13 +66,27 @@
               "injection": {
                 "type": "boolean",
                 "description": "The task text carries instructions the guard must stop."
+              },
+              "reviews": {
+                "type": "array",
+                "description": "The reviews the policy engine asks for on the golden change with its sinks (P2-09): each brings in its conditional reviewer.",
+                "items": {
+                  "enum": [
+                    "security",
+                    "dependency",
+                    "migration",
+                    "ux"
+                  ]
+                },
+                "uniqueItems": true
               }
             },
             "required": [
               "tier",
               "policy_spec_gate",
               "sinks",
-              "injection"
+              "injection",
+              "reviews"
             ]
           }
         },

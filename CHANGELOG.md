@@ -4,6 +4,24 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-17
+
+### Added
+
+- **The reviewer graph (P2-09).** Two read-only reviewers join a round when the risk policy asks for their review on the candidate's diff, besides the code and security reviewers that see every candidate. Their findings go to the refuter and block like any other.
+  - **Dependency reviewer:** runs when the change touches a dependency manifest. It checks whether each new or changed dependency is needed, and its identity (typosquats), pinning, install scripts and source.
+  - **Migration reviewer:** runs when the change touches a `migrations/` path. It checks what the migration does to existing rows, destructive steps, reversibility, ordering against the code, and locks.
+  - **Coverage:** each has its rubric, routing (sonnet, medium effort), tool policy, and evals, one held out each.
+- **Seeded fixture tasks:** `ts-mini` adds a pinned runtime dependency, and `py-mini` adds a SQLite store with a migration. Each seeded task now records the reviews the policy engine asks for.
+
+### Changed
+
+- **The ux-evaluator is deferred** by [ADR 0002](docs/factory/adr/0002-ux-evaluator-deferred.md) until a target with a UI and a preview deploy is admitted.
+
+### Fixed
+
+- **Concurrent opens of the event store or the replica.** They no longer fail with "database is locked" when another process holds the lock while the database switches to WAL; they wait up to the busy timeout.
+
 ## [0.8.0] - 2026-10-17
 
 ### Added
@@ -224,7 +242,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.5.0...v0.6.0

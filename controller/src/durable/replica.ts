@@ -112,7 +112,8 @@ export function syncReplica(home: Home, now: Date = new Date(), cache: { objects
   let lastId: number;
   let total: number;
   try {
-    replica.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;");
+    // The busy timeout comes first: switching to WAL takes a lock another syncing process may hold.
+    replica.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
     primary.exec("PRAGMA busy_timeout = 5000;");
     replica.exec("BEGIN IMMEDIATE");
     try {

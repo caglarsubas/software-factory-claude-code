@@ -154,22 +154,28 @@ const spec = (over: Record<string, unknown> = {}) => ({
 
 const CART = readFileSync(join(FIXTURE, "src/cart.ts"), "utf8");
 
-function transcripts(taskId: string, over: Partial<Transcripts> = {}): Transcripts {
+/** The build's tool calls: isEmpty and its test, plus any `extra` writes, committed. */
+function buildSteps(taskId: string, extra: ReturnType<typeof toolUse>[] = []): SDKMessage[] {
   const wt = worktreeDir(world.home, taskId);
   const work = join(runDir(world.home, taskId), "work/build");
+  return [
+    assistant(pins["sonnet"] ?? "", [
+      text("Adding isEmpty and its test."),
+      toolUse("Write", { file_path: join(wt, "src/cart.ts"), content: `${CART}\nexport const isEmpty = (lines: readonly Line[]): boolean => lines.length === 0;\n` }),
+      toolUse("Write", { file_path: join(wt, "test/empty.test.ts"), content: 'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { isEmpty } from "../src/cart.ts";\n\ntest("empty", () => {\n  assert.equal(isEmpty([]), true);\n});\n' }),
+      ...extra,
+      toolUse("Bash", { command: "git add -A && git commit -m 'Add isEmpty'" }),
+      toolUse("Write", { file_path: join(work, "build-report.md"), content: "Added isEmpty; AC-1 is covered by test/empty.test.ts.\n" }),
+    ]),
+    result(pins["sonnet"] ?? "", { costUsd: 1.2 }),
+  ];
+}
+
+function transcripts(taskId: string, over: Partial<Transcripts> = {}): Transcripts {
   return {
     triage: answer(pins["haiku"] ?? "", { kind: "feature", proposed_tier: "R1", uncertain: false, duplicate_of: null, summary: "Add an emptiness check for carts." }),
     spec: answer(pins["opus"] ?? "", spec()),
-    build: [
-      assistant(pins["sonnet"] ?? "", [
-        text("Adding isEmpty and its test."),
-        toolUse("Write", { file_path: join(wt, "src/cart.ts"), content: `${CART}\nexport const isEmpty = (lines: readonly Line[]): boolean => lines.length === 0;\n` }),
-        toolUse("Write", { file_path: join(wt, "test/empty.test.ts"), content: 'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { isEmpty } from "../src/cart.ts";\n\ntest("empty", () => {\n  assert.equal(isEmpty([]), true);\n});\n' }),
-        toolUse("Bash", { command: "git add -A && git commit -m 'Add isEmpty'" }),
-        toolUse("Write", { file_path: join(work, "build-report.md"), content: "Added isEmpty; AC-1 is covered by test/empty.test.ts.\n" }),
-      ]),
-      result(pins["sonnet"] ?? "", { costUsd: 1.2 }),
-    ],
+    build: buildSteps(taskId),
     "review-code": answer(pins["sonnet"] ?? "", { findings: [], summary: "The change meets AC-1." }),
     "review-security": answer(pins["opus"] ?? "", { findings: [], summary: "No security-relevant change." }),
     approve: answer(pins["opus"] ?? "", { decision: "approve", confidence: 90, criteria: [{ ac_id: "AC-1", met: true, evidence: "test/empty.test.ts passes in the test gate" }], blocking_findings: [], rationale: "AC-1 is met by a passing test." }),
@@ -619,6 +625,61 @@ describe("the refuter pass (P1-03)", () => {
     await run(id, deps(runner));
     expect(runner.requests.some((r) => r.label.startsWith("refute"))).toBe(false);
     expect(existsSync(join(runDir(world.home, id), "refutations.json"))).toBe(false);
+  });
+});
+
+describe("the reviewer graph (P2-09)", () => {
+  /** A build that changes `path` to `content` besides adding isEmpty, under a spec whose scope includes it. */
+  const changing = (id: string, path: string, content: string, over: Partial<Transcripts> = {}): Transcripts =>
+    transcripts(id, {
+      spec: answer(pins["opus"] ?? "", spec({ scope: { include: ["src/", "test/", path], exclude: [] } })),
+      build: buildSteps(id, [toolUse("Write", { file_path: join(worktreeDir(world.home, id), path), content })]),
+      ...over,
+    });
+  const manifest = `${JSON.stringify({ ...JSON.parse(readFileSync(join(FIXTURE, "package.json"), "utf8")) as object, dependencies: { zod: "4.1.12" } }, null, 2)}\n`;
+  const migration = "-- up\nALTER TABLE carts ADD COLUMN note TEXT NULL;\n";
+
+  it("adds the dependency reviewer when the candidate changes a manifest, and shows its report to the judges", async () => {
+    const id = newTask();
+    const runner = replayRunner(changing(id, "package.json", manifest, { "review-dependency": answer(pins["sonnet"] ?? "", { findings: [], summary: "zod is pinned and needed." }) }));
+    expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
+    expect(runner.requests.map((r) => r.label)).toEqual(["triage", "spec", "build", "review-code", "review-security", "review-dependency", "approve", "summarize"]);
+    const req = runner.requests.find((r) => r.label === "review-dependency");
+    expect(req?.options.agent).toBe("dependency-reviewer");
+    expect(req?.options.agents?.["dependency-reviewer"]?.disallowedTools).toEqual(expect.arrayContaining(["Bash", "Edit", "Write"]));
+    const dir = runDir(world.home, id);
+    expect(JSON.parse(readFileSync(join(dir, "review-dependency.json"), "utf8"))).toMatchObject({ reviewer: "dependency-reviewer", findings: [] });
+    expect(JSON.parse(readFileSync(join(dir, "policy.json"), "utf8"))).toMatchObject({ tier: "R2", reviews: ["dependency", "security"] });
+    expect(runner.requests.find((r) => r.label === "approve")?.prompt).toContain("review-dependency.json");
+    expect(readdirSync(join(dir, "bundle"))).toContain("review-dependency.json");
+  });
+
+  it("adds the migration reviewer for a migrations path, and its blocking finding goes to the refuter", async () => {
+    const id = newTask();
+    const finding = { id: "F-1", severity: "blocking", category: "migration", file: "src/migrations/0001_note.sql", line: 2, title: "no down migration", failure_scenario: "The change cannot be rolled back.", fix: "Add a down step.", confidence: 70 };
+    const scripted = (): Transcripts => changing(id, "src/migrations/0001_note.sql", migration, {
+      "review-migration": answer(pins["sonnet"] ?? "", { findings: [finding], summary: "One blocking finding." }),
+      "refute-migration-F-1": answer(pins["opus"] ?? "", { decision: "refuted", evidence: "The column is nullable and unused; dropping it is the rollback." }),
+    });
+    // A migrations path in the spec's scope is provisionally R3: the spec gate comes first.
+    expect(await run(id, deps(replayRunner(scripted())))).toBe("NEEDS_HUMAN");
+    approveSpec(id);
+    const runner = replayRunner(scripted());
+    expect(await run(id, deps(runner))).toBe("NEEDS_HUMAN");
+    expect(runner.requests.map((r) => r.label)).toEqual(["build", "review-code", "review-security", "review-migration", "refute-migration-F-1", "approve", "summarize"]);
+    expect(runner.requests.find((r) => r.label === "review-migration")?.options.agent).toBe("migration-reviewer");
+    expect(JSON.parse(readFileSync(join(runDir(world.home, id), "policy.json"), "utf8"))).toMatchObject({ tier: "R3", reviews: ["migration", "security"] });
+    const refutations = JSON.parse(readFileSync(join(runDir(world.home, id), "refutations.json"), "utf8")) as { refutations: unknown[] };
+    expect(refutations.refutations).toMatchObject([{ finding_id: "review-migration/F-1", decision: "refuted" }]);
+  });
+
+  it("runs neither conditional reviewer on a plain change", async () => {
+    const id = newTask();
+    const runner = replayRunner(transcripts(id));
+    await run(id, deps(runner));
+    expect(runner.requests.map((r) => r.label).filter((l) => l.startsWith("review-"))).toEqual(["review-code", "review-security"]);
+    expect(existsSync(join(runDir(world.home, id), "review-dependency.json"))).toBe(false);
+    expect(existsSync(join(runDir(world.home, id), "review-migration.json"))).toBe(false);
   });
 });
 

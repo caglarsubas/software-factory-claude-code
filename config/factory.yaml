@@ -14,6 +14,8 @@ routing:
   builder: {model: sonnet, effort: high, escalate_to: opus}
   code-reviewer: {model: sonnet, effort: high}
   security-reviewer: {model: opus, effort: high}
+  dependency-reviewer: {model: sonnet, effort: medium}
+  migration-reviewer: {model: sonnet, effort: medium}
   refuter: {model: sonnet, effort: high, escalate_to: opus}
   approver: {model: opus, effort: xhigh}
   summarizer: {model: haiku, effort: low}

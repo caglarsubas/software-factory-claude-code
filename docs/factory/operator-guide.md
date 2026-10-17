@@ -111,6 +111,8 @@ The evidence lives in `$FACTORY_HOME/runs/T-0001/`:
 
 - **Spec:** `spec.md` and `spec.yaml`.
 - **Results:** `gates.json`, `review-code.json`, `review-security.json`, `verdict.json` and `manifest.json`.
+  - From `v0.9.0` (P2-09) there may also be `review-dependency.json` or `review-migration.json`.
+  - The dependency reviewer runs when the change touches a dependency manifest, and the migration reviewer when it touches a `migrations/` path. The risk policy's `reviews` decide this (`policies/risk.yaml`).
 - **Sessions:** `transcripts/`, the recorded sessions.
 - **Builder report:** `work/build/build-report.md`. It is for you only, and the judges never see it.
 

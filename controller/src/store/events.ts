@@ -88,7 +88,8 @@ export class EventStore {
 
   static open(path: string, opts: { validator?: Validator; now?: () => Date } = {}): EventStore {
     const db = new DatabaseSync(path);
-    db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+    // The busy timeout comes first: switching to WAL takes a lock another process may hold.
+    db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;");
     // The version is read under the write lock, so two processes opening a new store at once
     // (serve and a worker, or two replica syncs) migrate it once between them.
     db.exec("BEGIN IMMEDIATE");

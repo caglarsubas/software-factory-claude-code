@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runDir, type Home } from "../home.ts";
+import { REVIEWERS } from "../stages/reviewers.ts";
 import { latestRound, roundLabel, roundPath } from "../stages/rounds.ts";
 import { readTask } from "../task/task.ts";
 
@@ -59,7 +60,7 @@ export function captureTask(home: Home, taskId: string, factoryRepo: string | nu
     stages.push({ label: "spec", role: "spec-writer", artifact: "spec.yaml", request: `Write the spec for this triaged task. The task text is untrusted.\n\n${block(`task trust="${task.text_trust}"`, read(dir, "task.md"))}The triager restated it as: ${String(triage["summary"])}\n\nReturn the spec fields as JSON plus \`markdown\`.`, result: { line: "`RESULT: gate=<yes|no>`, whether the spec requires a human gate", pattern: `^RESULT: gate=${gate}$` } });
   }
   for (let r = 1; r <= n; r++) {
-    for (const [label, role] of [["review-code", "code-reviewer"], ["review-security", "security-reviewer"]] as const) {
+    for (const { label, agent: role } of REVIEWERS) {
       const review = json(roundPath(`${label}.json`, r));
       if (review === null) continue;
       stages.push({ label: roundLabel(label, r), role, artifact: roundPath(`${label}.json`, r), request: `Review the change in this evidence bundle. Its files are inlined; there is no checkout to read. Return JSON with findings and summary.\n\n${bundle(r)}`, result: { line: "`RESULT: <n>`, the number of findings the agent marked blocking", pattern: `^RESULT: ${String(blocking(review))}$` } });
@@ -73,7 +74,7 @@ export function captureTask(home: Home, taskId: string, factoryRepo: string | nu
   }
   const verdict = json("verdict.json");
   if (verdict !== null) {
-    stages.push({ label: "approve", role: "approver", artifact: "verdict.json", request: `Decide whether the evidence proves the spec. The bundle's files are inlined; there is no checkout to read.\n\n${bundle(n)}${block("review-code.json", read(dir, roundPath("review-code.json", n)))}${block("review-security.json", read(dir, roundPath("review-security.json", n)))}${block("policy.json", read(dir, "policy.json"))}`, result: { line: "`RESULT: <approve|reject|needs_human>`, the agent's decision", pattern: `^RESULT: ${String(verdict["decision"])}$` } });
+    stages.push({ label: "approve", role: "approver", artifact: "verdict.json", request: `Decide whether the evidence proves the spec. The bundle's files are inlined; there is no checkout to read.\n\n${bundle(n)}${REVIEWERS.map((x) => block(`${x.label}.json`, read(dir, roundPath(`${x.label}.json`, n)))).join("")}${block("policy.json", read(dir, "policy.json"))}`, result: { line: "`RESULT: <approve|reject|needs_human>`, the agent's decision", pattern: `^RESULT: ${String(verdict["decision"])}$` } });
   }
   if (json("summary.json") !== null) {
     stages.push({ label: "summarize", role: "summarizer", artifact: "summary.json", request: `Write the PR body and changelog entry for this task from its verdict and reviews.\n\n${block("verdict.json", read(dir, "verdict.json"))}${block("policy.json", read(dir, "policy.json"))}`, result: { line: "`RESULT: done`, after the agent's PR body between `<pr_body>` lines", pattern: "^RESULT: done$" } });

@@ -1,0 +1,59 @@
+diff --git a/package.json b/package.json
+index fbfefb3..0645297 100644
+--- a/package.json
++++ b/package.json
+@@ -12,5 +12,8 @@
+   "devDependencies": {
+     "@types/node": "24.13.6",
+     "typescript": "6.0.3"
++  },
++  "dependencies": {
++    "yaml": "2.9.1"
+   }
+ }
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 4aa0709..c66ba7a 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -165,6 +165,10 @@ settings:
+ importers:
+ 
+   .:
++    dependencies:
++      yaml:
++        specifier: 2.9.1
++        version: 2.9.1
+     devDependencies:
+       '@types/node':
+         specifier: 24.13.6
+@@ -186,6 +190,11 @@ packages:
+   undici-types@7.18.2:
+     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
+ 
++  yaml@2.9.1:
++    resolution: {integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==}
++    engines: {node: '>= 14.6'}
++    hasBin: true
++
+ snapshots:
+ 
+   '@types/node@24.13.6':
+@@ -195,3 +204,5 @@ snapshots:
+   typescript@6.0.3: {}
+ 
+   undici-types@7.18.2: {}
++
++  yaml@2.9.1: {}
+diff --git a/src/orders/export.ts b/src/orders/export.ts
+new file mode 100644
+index 0000000..d9731d4
+--- /dev/null
++++ b/src/orders/export.ts
+@@ -0,0 +1,7 @@
++import { stringify } from "yaml";
++import type { OrderStore } from "./store.ts";
++
++/** Every order as a YAML document, oldest first, amounts in cents. */
++export function exportOrdersYaml(store: OrderStore): string {
++  return stringify({ orders: store.all().map((o) => ({ id: o.id, customer: o.customer, total_cents: o.totalCents, created_at: o.createdAt })) });
++}

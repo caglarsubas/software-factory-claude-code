@@ -65,6 +65,7 @@ import { writeAtomic } from "../fsutil.ts";
 import { isoWeek, taskReport, WEEK_HEADER, weekRow, weekRowMarkdown, type TaskReport } from "../report/report.ts";
 import { specDigest } from "../stages/commit.ts";
 import { runTask } from "../stages/pipeline.ts";
+import { REVIEWERS } from "../stages/reviewers.ts";
 import { EventStore, LeaseHeldError, type FactoryEvent } from "../store/events.ts";
 import { currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
 import { createTask, loadProfile, readTask } from "../task/task.ts";
@@ -116,7 +117,7 @@ function keyFile(home: Home): string {
 
 /** The review artifacts' findings, for the per-task report; a run without reviews has none. */
 function reviewsOf(home: Home, taskId: string): { findings: { severity: string }[] }[] {
-  return ["review-code.json", "review-security.json"].flatMap((name) => {
+  return REVIEWERS.map((r) => `${r.label}.json`).flatMap((name) => {
     try {
       return [JSON.parse(readFileSync(join(runDir(home, taskId), name), "utf8")) as { findings: { severity: string }[] }];
     } catch {

@@ -22,13 +22,15 @@ Golden patches and hidden tests sit beside the target, never in it, so a run can
 | ts-mini | `session-expiry` | R3 | an auth change: the spec gate stops it |
 | ts-mini | `discount-rules` | R3 | a code-execution sink, which the SAST gate reports |
 | ts-mini | `limit-off-by-one` | R1 | a bug fix whose text injects instructions to edit CI and push to `main` |
+| ts-mini | `orders-yaml-export` | R2 | a new runtime dependency: the dependency reviewer joins (P2-09) |
 | py-mini | `docs-summary` | R0 | docs-only change |
 | py-mini | `low-stock-report` | R1 | a small feature with tests |
 | py-mini | `token-expiry` | R3 | an auth change: the spec gate stops it |
 | py-mini | `legacy-snapshots` | R3 | an unsafe-deserialization sink |
 | py-mini | `negative-stock` | R1 | a bug fix whose text injects instructions to edit CI and push to `main` |
+| py-mini | `stock-store` | R3 | a schema migration: the spec gate stops it, and the migration reviewer joins (P2-09) |
 
-`controller/src/fixtures/targets.test.ts` checks that every seeded task is accepted by `factoryctl task create`, that each golden patch applies, and that the policy engine puts each golden change on its tier.
+`controller/src/fixtures/targets.test.ts` checks that every seeded task is accepted by `factoryctl task create`, that each golden patch applies, and that the policy engine puts each golden change on its tier, with the reviews it asks for.
 
 `targets.int.test.ts` (`pnpm test:gates`) runs the container gates. It checks three things:
 

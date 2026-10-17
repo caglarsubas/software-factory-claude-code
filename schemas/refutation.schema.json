@@ -28,7 +28,7 @@
         "properties": {
           "finding_id": {
             "type": "string",
-            "pattern": "^review-(code|security)/F-[0-9]+$",
+            "pattern": "^review-(code|security|dependency|migration)/F-[0-9]+$",
             "description": "The reviewer's artifact label and the finding's id: ids are unique only per reviewer."
           },
           "decision": {
