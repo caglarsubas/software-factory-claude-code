@@ -60,7 +60,10 @@ Commands that move the pin refuse to run inside a Claude Code session; only the 
 - the API key file's permissions, and that `ANTHROPIC_API_KEY` is unset;
 - the container engine and the sandbox prerequisites;
 - that the installed release is intact;
-- that the kill switch is off.
+- that the kill switch is off;
+- the replica: set, on another volume and caught up (P2-07);
+- that the runner's managed settings are what the release's policies generate (P2-08);
+- with `FACTORY_GITHUB_TOKEN` set, that this repository's `main` ruleset on GitHub matches `.github/rulesets/main.json` (P2-08). The token needs Administration: read; without it the check only warns. The target repositories' rulesets and the App's permissions join this check with P2-05.
 
 ## Releases
 
@@ -259,14 +262,30 @@ A gate that errored, rather than failed, is an infrastructure problem: the task 
 
 `factoryctl report T-0001` shows each stage's cost, tokens and minutes from the event store, telemetry or not. A session killed before it reported shows as `✗ killed`, charged its cap.
 
-To also export Claude Code's OpenTelemetry metrics and events, run a collector on this machine and point the factory at it:
+From `v0.8.0` (P2-08) every live run starts its own OpenTelemetry collector on loopback. Each session exports Claude Code's metrics and events to it, and the collector writes them to `$FACTORY_HOME/otel/<day>.ndjson`, kept for `retention_days.otel` (30 days). Nothing leaves the host.
+
+- **Tags:** resource attributes name each session's task, stage, label, round, tier, agent and release (`factory.task_id`, `factory.stage`, …).
+- **Redaction:** prompt and response text stay redacted.
+- **Runner sessions:** they will reach the collector through the gateway's route on their egress proxy.
+- **Uses:** `factoryctl slo` reads these files, and so does the G2-5 canary audit.
+
+To send the telemetry to a collector of your own instead, or to turn it off:
 
 ```bash
-export FACTORY_OTEL_ENDPOINT=http://127.0.0.1:4318   # loopback only; the collector forwards with its own credentials
+export FACTORY_OTEL_ENDPOINT=http://127.0.0.1:4318   # your collector; loopback only, it forwards with its own credentials
 export FACTORY_OTEL_PROTOCOL=http/protobuf           # or grpc, http/json
+export FACTORY_OTEL=off                              # no telemetry: G2-5's audit and the SLO panel lose it
 ```
 
-Every session then exports metrics and events. Resource attributes name its task, stage, label, round, tier, agent and release (`factory.task_id`, `factory.stage`, …). Prompt and response text stay redacted. A remote endpoint or one with credentials in it is refused: a session must never hold a credential or send data off the host. `doctor` shows the setting.
+A remote endpoint, or one with credentials in it, is refused: a session must never hold a credential or send data off the host. `doctor` shows the setting.
+
+**SLOs.** The SLO definitions, their targets and how each is measured are in [`slo.md`](slo.md); you approve them at G2. To see them measured:
+
+```bash
+factoryctl slo             # the last 4 weeks; --weeks N for another window
+```
+
+Each SLO shows its value, what it was measured on and whether it is met. An SLO the store cannot measure yet says so. Below the SLOs is a telemetry panel: per task, the exports, API requests and errors, and tool decisions.
 
 **The alias alarm** needs no telemetry. Every session reports the model IDs it ran on. An `alarm` event is recorded, and printed as `ALARM`, when either is true:
 

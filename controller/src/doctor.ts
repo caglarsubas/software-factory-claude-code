@@ -9,6 +9,7 @@ import { describeHalt, readHalt } from "./halt.ts";
 import type { Home } from "./home.ts";
 import type { Release } from "./release.ts";
 import { checkReleaseFiles } from "./release/install.ts";
+import { managedSettingsJson } from "./runner/managed.ts";
 import { EventStore } from "./store/events.ts";
 import { describeAlarm, telemetryConfig, TelemetryError, type ModelAlarm } from "./telemetry.ts";
 
@@ -78,7 +79,8 @@ export function doctor(home: Home, release: Release, keyFile: string, env: NodeJ
   add("kill switch", halt === null, halt === null ? "not engaged" : `${describeHalt(halt)}; lift with factoryctl unhalt --reason "…"`, "warn");
   try {
     const t = telemetryConfig(env);
-    add("telemetry", true, t === null ? "off; set FACTORY_OTEL_ENDPOINT to a local OTLP collector to export per-stage metrics" : `OTLP ${t.protocol} to ${t.endpoint}`);
+    const own = env["FACTORY_OTEL"] === "off" ? "off (FACTORY_OTEL=off): G2-5's audit and the SLO panels lose the sessions' telemetry" : `each live run's own collector, into ${join(home.root, "otel")}`;
+    add("telemetry", env["FACTORY_OTEL"] !== "off" || t !== null, t === null ? own : `OTLP ${t.protocol} to ${t.endpoint}`, "warn");
   } catch (e) {
     add("telemetry", false, e instanceof TelemetryError ? e.message : String(e));
   }
@@ -91,5 +93,71 @@ export function doctor(home: Home, release: Release, keyFile: string, env: NodeJ
     const latest = alarms.reduce<(typeof alarms)[number] | undefined>((a, e) => (a === undefined || e.ts > a.ts ? e : a), undefined);
     add("model alarms", latest === undefined, latest === undefined ? `no alias alarm in ${String(ALARM_DAYS)} days` : `${String(alarms.length)} alias alarm(s) in ${String(ALARM_DAYS)} days; latest ${latest.task_id} ${String(latest.payload["label"])}: ${describeAlarm(latest.payload as unknown as ModelAlarm)}`, "warn");
   }
+  // Managed settings (P2-08): the runner's file must be what this release's policies generate, so the image enforces this release.
+  try {
+    const shipped = readFileSync(join(release.root, "runner/managed-settings.json"), "utf8");
+    add("managed settings", shipped === managedSettingsJson(release), shipped === managedSettingsJson(release) ? "runner/managed-settings.json matches the release's policies and config" : "runner/managed-settings.json differs from what this release's policies generate: regenerate it (pnpm exec node controller/src/runner/generate.ts) and cut a release");
+  } catch {
+    add("managed settings", false, "runner/managed-settings.json is missing from the release");
+  }
   return checks;
+}
+
+interface Ruleset {
+  name: string;
+  target?: string;
+  enforcement?: string;
+  conditions?: { ref_name?: { include?: string[]; exclude?: string[] } };
+  bypass_actors?: { actor_id?: number | null; actor_type?: string }[];
+  rules?: { type: string; parameters?: Record<string, unknown> }[];
+}
+
+/** What differs between the ruleset a repository should have and the one GitHub enforces; empty when none. */
+export function rulesetDiff(expected: Ruleset, actual: Ruleset): string[] {
+  const diffs: string[] = [];
+  for (const k of ["target", "enforcement"] as const) if (expected[k] !== actual[k]) diffs.push(`${k} is ${String(actual[k])}, expected ${String(expected[k])}`);
+  const refs = (r: Ruleset): string => JSON.stringify({ include: [...(r.conditions?.ref_name?.include ?? [])].sort(), exclude: [...(r.conditions?.ref_name?.exclude ?? [])].sort() });
+  if (refs(expected) !== refs(actual)) diffs.push(`branches ${refs(actual)}, expected ${refs(expected)}`);
+  const bypass = (r: Ruleset): string => JSON.stringify((r.bypass_actors ?? []).map((b) => `${b.actor_type ?? "?"}:${String(b.actor_id ?? "")}`).sort());
+  if (bypass(expected) !== bypass(actual)) diffs.push(`bypass actors ${bypass(actual)}, expected ${bypass(expected)}`);
+  const actualRules = new Map((actual.rules ?? []).map((r) => [r.type, r.parameters ?? {}]));
+  for (const rule of expected.rules ?? []) {
+    const got = actualRules.get(rule.type);
+    if (got === undefined) {
+      diffs.push(`rule ${rule.type} is missing`);
+      continue;
+    }
+    for (const [k, v] of Object.entries(rule.parameters ?? {})) {
+      if (JSON.stringify(got[k]) !== JSON.stringify(v)) diffs.push(`${rule.type}.${k} is ${JSON.stringify(got[k])}, expected ${JSON.stringify(v)}`);
+    }
+    actualRules.delete(rule.type);
+  }
+  for (const extra of actualRules.keys()) diffs.push(`rule ${extra} is not in the expected ruleset`);
+  return diffs;
+}
+
+/**
+ * The repository ruleset check (P2-08): this repository's default-branch ruleset on GitHub
+ * against `.github/rulesets/main.json` in the release. Needs a token that may read rulesets; the
+ * target repositories' rulesets and the App's permissions join it with P2-05's governance wiring.
+ */
+export async function rulesetCheck(o: { repo: string; expected: Ruleset; token: string; api: string; fetchFn?: typeof fetch }): Promise<Check> {
+  const call = async (path: string): Promise<{ status: number; body: unknown }> => {
+    const r = await (o.fetchFn ?? fetch)(`${o.api}${path}`, { headers: { authorization: `Bearer ${o.token}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" }, redirect: "error" });
+    return { status: r.status, body: r.ok ? ((await r.json())) : null };
+  };
+  const name = `ruleset ${o.repo}`;
+  try {
+    const list = await call(`/repos/${o.repo}/rulesets`);
+    if (list.status === 403 || list.status === 404) return { name, status: "warn", detail: `the token cannot read ${o.repo}'s rulesets (it needs Administration: read)` };
+    if (list.status !== 200) return { name, status: "warn", detail: `GitHub answered ${String(list.status)}` };
+    const found = (list.body as { id: number; name: string }[]).find((r) => r.name === o.expected.name);
+    if (found === undefined) return { name, status: "fail", detail: `no ruleset named ${o.expected.name}: import .github/rulesets/main.json` };
+    const full = await call(`/repos/${o.repo}/rulesets/${String(found.id)}`);
+    if (full.status !== 200) return { name, status: "warn", detail: `GitHub answered ${String(full.status)} for ruleset ${String(found.id)}` };
+    const diffs = rulesetDiff(o.expected, full.body as Ruleset);
+    return diffs.length === 0 ? { name, status: "ok", detail: `${o.expected.name} matches .github/rulesets/main.json` } : { name, status: "fail", detail: diffs.join("; ") };
+  } catch (e) {
+    return { name, status: "warn", detail: `could not reach GitHub: ${e instanceof Error ? e.message : String(e)}` };
+  }
 }
