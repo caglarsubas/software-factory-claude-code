@@ -31,6 +31,8 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { parse } from "yaml";
 import { engineHost, killGateContainers, PROXY_ENV, removeTaskContainers } from "../../../gates/src/container.ts";
+import { killRunnerContainers, reapRunnerContainers } from "../runner/container.ts";
+import { reapTaskNetworks } from "../runner/network.ts";
 import { runGates } from "../../../gates/src/run.ts";
 import { ensureImage } from "../../../gates/src/image.ts";
 import { runBypassVariants } from "../../../plugin/hooks/bypass-cases.ts";
@@ -174,6 +176,9 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
   // Clean up after a run that died: its session process groups, and its gate containers.
   if (lock.stale !== null) log(`the run of ${lock.stale.task_id} (pid ${String(lock.stale.pid)}) ended without releasing its lock; cleaning up after it`);
   for (const c of reap(home)) log(`reaped ${c.task_id} ${c.label} (pid ${String(c.pid)}), left running by a run that died`);
+  // Runner containers and egress proxies (P2-01) a dead run left: the docker client dying does not stop them.
+  for (const name of reapRunnerContainers()) log(`removed runner container ${name}, left running by a run that died`);
+  for (const t of reapTaskNetworks()) log(`removed the egress proxy and network of ${t}, left by a run that died`);
   if (lock.stale !== null && injection.gates === undefined) {
     const removed = removeTaskContainers(lock.stale.task_id);
     if (removed > 0) log(`removed ${String(removed)} gate container(s) of ${lock.stale.task_id}`);
@@ -317,9 +322,10 @@ async function main(): Promise<void> {
       }
     }
     const containers = killGateContainers();
+    const runners = killRunnerContainers();
     out(`factory ${describeHalt(halt)}`);
     out(lock === null ? "no task was running" : `signalled ${lock.task_id} (pid ${String(lock.pid)}); it stops without failing and resumes later`);
-    out(`${String(containers)} gate container(s) stopped`);
+    out(`${String(containers)} gate container(s) and ${String(runners.length)} runner container(s) stopped`);
     out(`lift with: factoryctl unhalt --reason "…"`);
     return;
   }

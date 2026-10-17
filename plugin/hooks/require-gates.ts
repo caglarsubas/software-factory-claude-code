@@ -1,9 +1,12 @@
 // Stop and SubagentStop hook for the build stage: the builder may stop only after the
 // preflight passes (the gate runner, run on its committed HEAD) or after it recorded a
-// structured failure. The hook runs the preflight itself, so no file the builder could write
-// stands in for a passing result. The authoritative gates still run again in VERIFYING.
+// structured failure. On the host the hook runs the preflight itself, so no file the builder
+// could write stands in for a passing result. In the runner (P2-01) it asks factoryctl's
+// broker instead: it writes a bare request and reads the answer from a spool the runner mounts
+// read-only. The authoritative gates still run again in VERIFYING.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { block, loadConfig, readInput } from "./lib/io.ts";
 
@@ -29,18 +32,39 @@ if (existsSync(failurePath)) {
   }
 }
 
-const preflight = (JSON.parse(readFileSync(process.env["FACTORY_GUARD_CONFIG"] ?? "", "utf8")) as { preflight?: { argv?: unknown; timeout_ms?: unknown } }).preflight;
+const preflight = (JSON.parse(readFileSync(process.env["FACTORY_GUARD_CONFIG"] ?? "", "utf8")) as { preflight?: { argv?: unknown; broker?: { requests?: unknown; results?: unknown }; timeout_ms?: unknown } }).preflight;
+const timeout = Math.min(typeof preflight?.timeout_ms === "number" ? preflight.timeout_ms : MAX_PREFLIGHT_MS, MAX_PREFLIGHT_MS);
+const retry = "Commit your work, fix what failed and stop again, or write build-failure.json in the task directory with a reason.";
+
+const broker = preflight?.broker;
+if (broker !== undefined) {
+  const { requests, results } = broker;
+  if (typeof requests !== "string" || typeof results !== "string") block("the preflight broker is misconfigured; write build-failure.json in the task directory with a reason to stop");
+  const id = `${randomBytes(12).toString("hex")}.json`;
+  writeFileSync(join(requests, id), "{}\n");
+  const answer = join(results, id);
+  const deadline = Date.now() + timeout;
+  while (!existsSync(answer)) {
+    if (Date.now() > deadline) block(`the preflight did not answer within ${String(timeout / 1000)} s. ${retry}`);
+    // A synchronous wait: hooks are short-lived processes with nothing else to do.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  }
+  const result = JSON.parse(readFileSync(answer, "utf8")) as { status?: unknown; output?: unknown };
+  if (result.status === "pass") process.exit(0);
+  const output = typeof result.output === "string" ? result.output.trim().slice(-OUTPUT_TAIL) : "";
+  block(`the preflight did not pass. ${retry}${output === "" ? "" : `\n${output}`}`);
+}
+
 const argv = preflight?.argv;
 if (!Array.isArray(argv) || argv.length === 0 || !argv.every((a): a is string => typeof a === "string")) {
   block("no preflight is configured for this build; write build-failure.json in the task directory with a reason to stop");
 }
 const [program = "", ...args] = argv;
-const timeout = Math.min(typeof preflight?.timeout_ms === "number" ? preflight.timeout_ms : MAX_PREFLIGHT_MS, MAX_PREFLIGHT_MS);
 const r = spawnSync(program, args, { cwd: config.worktree, encoding: "utf8", timeout, maxBuffer: 64 * 1024 * 1024, shell: false });
 if (r.status === 0) process.exit(0);
 
 const why = r.error !== undefined ? (r.error.message.includes("ETIMEDOUT") ? `timed out after ${String(timeout / 1000)} s` : r.error.message) : `exit ${String(r.status)}`;
 const output = `${r.stdout}${r.stderr}`.trim().slice(-OUTPUT_TAIL);
 block(
-  `the preflight did not pass (${why}). Commit your work, fix what failed and stop again, or write build-failure.json in the task directory with a reason.${output === "" ? "" : `\n${output}`}`,
+  `the preflight did not pass (${why}). ${retry}${output === "" ? "" : `\n${output}`}`,
 );

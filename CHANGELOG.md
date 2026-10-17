@@ -4,6 +4,28 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-17
+
+### Added
+
+- **The runner container (P2-01).** Claude Code can run each stage session inside a runner container, while the Agent SDK, the in-process guard and every credential stay in `factoryctl` on the host. Live sessions in the runner stay off until the credential gateway (P2-02); this release ships the image, its controls and their conformance suite.
+  - **Image (`runner/Dockerfile`):**
+    - the Agent SDK's own CLI binary at the pinned version, checked against the SDK's manifest and npm's registry signature;
+    - bubblewrap, socat and git at exact versions;
+    - managed settings generated from the release's policies, with the four factory hooks as managed hooks;
+    - Docker's default seccomp profile plus the namespace calls the Bash sandbox needs.
+  - **Container:** each session runs as the operator's uid, with no capabilities and a read-only root. Mounts sit at their host paths, and the session's token is mounted read-only. Nothing under `$FACTORY_HOME/secrets` and no engine socket is ever mounted.
+  - **Network:** an internal network whose only exit is an egress proxy that allows HTTPS to the package registries. It refuses the host, private addresses, other ports and IP literals, and logs every request.
+  - **Preflight broker:** the builder's Stop hook asks `factoryctl` to run the gates on the host instead of needing the container engine.
+  - **Cleanup:** `halt`, reaping and abort remove runner containers and egress proxies.
+  - **Tests:** `pnpm test:runner` drives the pinned CLI in the image against a stub model. CI runs it on x64 and arm64.
+
+### Changed
+
+- **`verify-tools` covers the runner image** and checks npm registry tarballs against npm's pinned signing key.
+- **A guard config's preflight** is either a command or the broker's spools.
+- **The session env** may carry `HTTPS_PROXY`, `NO_PROXY` and `ANTHROPIC_BASE_URL` in the runner. The env evidence (G0-3, G1-3) accepts them.
+
 ## [0.3.3] - 2026-10-16
 
 ### Added
@@ -148,7 +170,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.0...v0.3.1

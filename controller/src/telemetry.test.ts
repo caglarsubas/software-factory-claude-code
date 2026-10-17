@@ -1,6 +1,6 @@
 // Telemetry configuration, the variables a session gets, and the alias alarm (P1-06).
 import { describe, expect, it } from "vitest";
-import { allowedEnvKeys, ENV_ALLOWLIST } from "./session/env.ts";
+import { allowedEnvKeys, ENV_ALLOWLIST, RUNNER_ENV } from "./session/env.ts";
 import type { FactoryEvent } from "./store/events.ts";
 import { describeAlarm, modelAlarms, OTEL_ENV, telemetryConfig, telemetryEnv } from "./telemetry.ts";
 
@@ -32,6 +32,12 @@ describe("telemetry configuration", () => {
     expect(allowedEnvKeys([...ENV_ALLOWLIST, ...OTEL_ENV].sort())).toBe(true);
     expect(allowedEnvKeys([...ENV_ALLOWLIST, "OTEL_EXPORTER_OTLP_HEADERS"].sort())).toBe(false);
     expect(allowedEnvKeys([...ENV_ALLOWLIST, ...OTEL_ENV.slice(1)].sort())).toBe(false);
+    // A runner session (P2-01) adds the proxy names, and the endpoint its CLI calls; never a key.
+    expect(allowedEnvKeys([...ENV_ALLOWLIST, "HTTPS_PROXY", "NO_PROXY"].sort())).toBe(true);
+    expect(allowedEnvKeys([...ENV_ALLOWLIST, ...RUNNER_ENV].sort())).toBe(true);
+    expect(allowedEnvKeys([...ENV_ALLOWLIST, ...OTEL_ENV, ...RUNNER_ENV].sort())).toBe(true);
+    expect(allowedEnvKeys([...ENV_ALLOWLIST, "ANTHROPIC_BASE_URL"].sort())).toBe(false);
+    expect(allowedEnvKeys([...ENV_ALLOWLIST, ...RUNNER_ENV, "ANTHROPIC_API_KEY"].sort())).toBe(false);
   });
 });
 
