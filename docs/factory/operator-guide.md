@@ -80,6 +80,16 @@ A release is a version tag on `main` whose version equals `plugin/.claude-plugin
 
 Tag and pin only from your own terminal: `release install` and `release use` refuse to run inside a Claude Code session.
 
+## Admit a target
+
+A repository becomes a factory target only when it has all three of these:
+
+1. **A test command that passes inside the gate image.** Passing in the repository's own CI is not enough: the gates run the test command in the gate image, so it must pass there.
+2. **CI.** The repository has its own CI, which runs on every PR.
+3. **A protected default branch.** For this repository, that protection is the ruleset in [`.github/rulesets/main.json`](../../.github/rulesets/main.json), imported under Settings → Rules → Rulesets.
+
+Admitting a target changes nothing on GitHub by itself: agents never push or hold credentials, and `factoryctl` performs every GitHub side effect.
+
 ## Run a task
 
 ```bash
