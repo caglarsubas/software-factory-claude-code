@@ -4,6 +4,10 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+### Added
+
+- **Eval cases for the reviewer graph (P2-09).** Each new reviewer has a case that should block and one that should pass: a typosquatted, unpinned dependency against a pinned devDependency, and a NOT NULL column with no backfill against an additive migration. Each also has a held-out block case: a dependency from a git branch with an install script, and a rename that drops a column. Both reviewers are judgment roles now, so the suite must keep a pass and a block case for each.
+
 ## [0.9.0] - 2026-10-17
 
 ### Added
