@@ -1,0 +1,52 @@
+diff --git a/src/inventory/migrations/0001_stock.sql b/src/inventory/migrations/0001_stock.sql
+new file mode 100644
+index 0000000..24b2e20
+--- /dev/null
++++ b/src/inventory/migrations/0001_stock.sql
+@@ -0,0 +1,5 @@
++CREATE TABLE stock (
++    sku TEXT PRIMARY KEY,
++    quantity INTEGER NOT NULL,
++    reorder_level INTEGER NOT NULL DEFAULT 0
++);
+diff --git a/src/inventory/store.py b/src/inventory/store.py
+new file mode 100644
+index 0000000..249584d
+--- /dev/null
++++ b/src/inventory/store.py
+@@ -0,0 +1,35 @@
++import sqlite3
++from pathlib import Path
++
++from inventory.stock import Item, Stock
++
++MIGRATIONS = Path(__file__).parent / "migrations"
++
++
++def open_store(path: str) -> sqlite3.Connection:
++    """Open the SQLite store at path, applying every migration it has not had yet."""
++    db = sqlite3.connect(path)
++    applied = db.execute("PRAGMA user_version").fetchone()[0]
++    for n, migration in enumerate(sorted(MIGRATIONS.glob("*.sql")), start=1):
++        if n > applied:
++            db.executescript(migration.read_text())
++            db.execute(f"PRAGMA user_version = {n}")
++    db.commit()
++    return db
++
++
++def save(db: sqlite3.Connection, stock: Stock) -> None:
++    with db:
++        db.execute("DELETE FROM stock")
++        db.executemany(
++            "INSERT INTO stock (sku, quantity, reorder_level) VALUES (?, ?, ?)",
++            [(i.sku, i.quantity, i.reorder_level) for i in stock.items.values()],
++        )
++
++
++def load(db: sqlite3.Connection) -> Stock:
++    stock = Stock()
++    rows = db.execute("SELECT sku, quantity, reorder_level FROM stock ORDER BY sku")
++    for sku, quantity, reorder_level in rows:
++        stock.items[sku] = Item(sku, quantity, reorder_level)
++    return stock

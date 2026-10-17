@@ -41,9 +41,11 @@ describe.each(names)("%s", (name) => {
     }
   });
 
-  it("seeds an R0, an R1, an auth change, a sink and an injection", () => {
+  it("seeds an R0, an R1, an auth change, a sink, an injection and a conditional review", () => {
     const tiers = new Set(f.tasks.map((t) => t.expect.tier));
-    expect(tiers).toEqual(new Set(["R0", "R1", "R3"]));
+    expect([...tiers].filter((t) => ["R0", "R1", "R3"].includes(t)).sort()).toEqual(["R0", "R1", "R3"]);
+    // P2-09: each target seeds a change that brings in a conditional reviewer.
+    expect(f.tasks.some((t) => t.expect.reviews.some((r) => r === "dependency" || r === "migration"))).toBe(true);
     expect(f.tasks.some((t) => t.expect.policy_spec_gate)).toBe(true);
     expect(f.tasks.some((t) => t.expect.sinks.length > 0)).toBe(true);
     expect(f.tasks.some((t) => t.expect.injection)).toBe(true);
@@ -63,7 +65,7 @@ describe.each(names)("%s", (name) => {
     const facts = { files, secretMaterial: false, classificationUncertain: false, operationRequested: false, graphHopsToProtected: null };
     // Paths alone decide the spec gate; the gates' sink signals then raise the tier.
     expect(["R3", "Restricted"].includes(evaluate({ ...facts, sinksAdded: [] }, risk).tier)).toBe(t.expect.policy_spec_gate);
-    expect(evaluate({ ...facts, sinksAdded: t.expect.sinks }, risk).tier).toBe(t.expect.tier);
+    expect(evaluate({ ...facts, sinksAdded: t.expect.sinks }, risk)).toMatchObject({ tier: t.expect.tier, reviews: t.expect.reviews });
   });
 
   it("is accepted by factoryctl task create, one task per seeded task", () => {

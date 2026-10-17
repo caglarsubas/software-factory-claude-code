@@ -1,0 +1,1 @@
+Finance wants the order list as a YAML file they can diff. Add an export that writes every order, oldest first, as YAML with snake_case keys and amounts in cents. Use the `yaml` package rather than writing a serialiser, pinned to an exact version.

@@ -48,6 +48,10 @@ A run goes checkout → triage → spec → rounds of build → gates → review
   - `takeover` (`stages/takeover.ts`, `session/takeover-session.ts`) runs the operator's pinned Claude Code in the worktree, under the build session's walls and in auto mode. `stage_completed` records the session id it resumes.
   - On exit, the operator's head is committed again as the latest round's `build.json`, from the same inputs. The build stays done, every step that reads `build.json` runs again, and the task moves back to `BUILDING`.
 - **Spec approvals** are bound to the spec they were given on (`spec_digest`): a spec that runs again reopens the gate, through `BLOCKED` when the build had already started.
+- **Reviewer graph (P2-09, `stages/reviewers.ts`):** the code and security reviewers see every candidate whose gates pass.
+  - The dependency and migration reviewers join a round when the policy engine's `reviews` for that round's candidate include theirs. The engine reads the candidate's diff, gate signals, triage and spec, all committed, so a resumed round picks the same reviewers.
+  - Their reports go to the refuter, the approver and the summarizer like the others.
+  - The ux-evaluator is deferred ([ADR 0002](../docs/factory/adr/0002-ux-evaluator-deferred.md)).
 - **Refuter pass (P1-03):** each blocking finding of a round goes to one refuter session, which sees the bundle and the read-only candidate, like the reviewers. Its answers are committed as `refutations.json` (`refuted`, `upheld` or `unclear`). Only the findings it did not refute count as blocking: they start a remediation round, and an approval never passes them.
 - **Remediation rounds (P1-01):**
   - Red gates, or a blocking finding from a reviewer, start another round. Its build gets the failures as data in its prompt and starts from the previous round's candidate.

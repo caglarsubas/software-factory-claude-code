@@ -1,0 +1,1 @@
+Stock is lost whenever the process restarts. Keep it in a SQLite file instead: a way to open the store at a path, save a `Stock` to it and load it back. Create the schema with a migration that the store applies on open, so later schema changes can follow as new migrations.

@@ -25,7 +25,7 @@ import { writeTokenFile, type Gateway } from "../gateway/gateway.ts";
 import { createOutbox } from "../github/outbox.ts";
 import { describeHalt, readHalt } from "../halt.ts";
 import { runDir, worktreeDir, type Home } from "../home.ts";
-import { evaluate, type Decision, type RiskPolicy, type Tier } from "../policy/engine.ts";
+import { evaluate, type Decision, type DiffFacts, type RiskPolicy, type Tier } from "../policy/engine.ts";
 import { loadRiskPolicy } from "../policy/load.ts";
 import type { BudgetTier, Release } from "../release.ts";
 import type { Validator } from "../schemas/validate.ts";
@@ -40,6 +40,7 @@ import { describeAlarm, modelAlarms, type Telemetry } from "../telemetry.ts";
 import { commitArtifacts, freshness, inputsOf, isCommitted, recover, specDigest, type Output } from "./commit.ts";
 import { findingFingerprint, gateFingerprint } from "./fingerprint.ts";
 import { OUTPUTS } from "./outputs.ts";
+import { selectReviewers, type Reviewer } from "./reviewers.ts";
 import { approvePrompt, buildPrompt, refutePrompt, reviewPrompt, specPrompt, summarizePrompt, triagePrompt, type TaskText } from "./prompts.ts";
 import { latestRound, roundLabel, roundPath } from "./rounds.ts";
 
@@ -587,15 +588,38 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       .map((e) => ({ gate: "spec", decision: "approved", by: e.actor.id, at: e.ts, reason: typeof e.payload["reason"] === "string" ? e.payload["reason"] : "" }));
   };
 
-  const REVIEWERS = [
-    { label: "review-code", agent: "code-reviewer", focus: "correctness, maintainability and test adequacy, checked against every acceptance criterion and invariant in the spec" },
-    { label: "review-security", agent: "security-reviewer", focus: "authorization, injection, secrets and data exposure; try to construct an exploit before you report one" },
-  ] as const;
-  /** The names the reviewers' reports have in the bundle; the judges are told exactly these. */
-  const reviewFiles = REVIEWERS.map((r) => `${r.label}.json`);
-  const reviewCopies = (n: number): [string, string][] => REVIEWERS.map((r) => [roundPath(`${r.label}.json`, n), `${r.label}.json`]);
+  /** Round n's facts for the policy engine: the candidate's diff and its gate signals, all committed. */
+  const diffFacts = (n: number): DiffFacts => {
+    const g = readJson(roundPath("gates.json", n)) as GatesResult;
+    const t = readJson("triage.json") as Triage;
+    const s = parse(readFileSync(join(dir, "spec.yaml"), "utf8")) as Spec;
+    return {
+      files: changedFiles(worktree, checkoutInfo().base_commit, candidate(n)),
+      sinksAdded: g.signals.sink_added,
+      secretMaterial: g.signals.secret_material,
+      classificationUncertain: t.uncertain,
+      operationRequested: s.operation_requested === true,
+      graphHopsToProtected: null,
+      proposedTier: t.proposed_tier,
+    };
+  };
+  const reviewerCache = new Map<string, Reviewer[]>();
+  /** Round n's reviewers (P2-09). Deterministic: the engine reads only the candidate and committed artifacts. */
+  const reviewersFor = (n: number): Reviewer[] => {
+    const key = `${String(n)}:${candidate(n)}`;
+    let r = reviewerCache.get(key);
+    if (r === undefined) {
+      r = selectReviewers(evaluate(diffFacts(n), risk).reviews);
+      reviewerCache.set(key, r);
+    }
+    return r;
+  };
+  /** The names round n's reports have in the bundle; the judges are told exactly these. */
+  const reviewFiles = (n: number): string[] => reviewersFor(n).map((r) => `${r.label}.json`);
+  const reviewPaths = (n: number): string[] => reviewersFor(n).map((r) => roundPath(`${r.label}.json`, n));
+  const reviewCopies = (n: number): [string, string][] => reviewersFor(n).map((r) => [roundPath(`${r.label}.json`, n), `${r.label}.json`]);
 
-  const review = (r: (typeof REVIEWERS)[number], n: number) => async (): Promise<Output[]> => {
+  const review = (r: Reviewer, n: number) => async (): Promise<Output[]> => {
     moveTo("REVIEWING", { round: n });
     resetClone(worktree, candidate(n));
     prepareBundle(n, []);
@@ -609,7 +633,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
 
   /** Every blocking finding of round n, with an id unique across reviewers (`review-code/F-1`). */
   const blockingFindings = (n: number): { id: string; reviewer: string; finding: Finding }[] =>
-    REVIEWERS.flatMap((r) =>
+    reviewersFor(n).flatMap((r) =>
       (readJson(roundPath(`${r.label}.json`, n)) as { findings: Finding[] }).findings
         .filter((f) => f.severity === "blocking")
         .map((finding) => ({ id: `${r.label}/${finding.id}`, reviewer: r.agent, finding })),
@@ -671,22 +695,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
 
   // The policy engine, not a model, decides the tier: a deterministic step of its own.
   const policy = (n: number) => (): Promise<Output[]> => {
-    const c = checkoutInfo();
-    const g = readJson(roundPath("gates.json", n)) as GatesResult;
-    const t = readJson("triage.json") as Triage;
-    const s = parse(readFileSync(join(dir, "spec.yaml"), "utf8")) as Spec;
-    const decision = evaluate(
-      {
-        files: changedFiles(worktree, c.base_commit, candidate(n)),
-        sinksAdded: g.signals.sink_added,
-        secretMaterial: g.signals.secret_material,
-        classificationUncertain: t.uncertain,
-        operationRequested: s.operation_requested === true,
-        graphHopsToProtected: null,
-        proposedTier: t.proposed_tier,
-      },
-      risk,
-    );
+    const decision = evaluate(diffFacts(n), risk);
     return Promise.resolve([out("policy.json", decision, null)]);
   };
 
@@ -695,7 +704,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     const refuted = has(roundPath("refutations.json", n));
     prepareBundle(n, [["policy.json", "policy.json"], ...reviewCopies(n), ...(refuted ? [[roundPath("refutations.json", n), "refutations.json"] as [string, string]] : [])]);
     const outcome = await session({
-      stage: "approve", agent: "approver", label: "approve", cwd: bundleDir, prompt: approvePrompt({ bundleDir, reviews: reviewFiles, refutations: refuted }),
+      stage: "approve", agent: "approver", label: "approve", cwd: bundleDir, prompt: approvePrompt({ bundleDir, reviews: reviewFiles(n), refutations: refuted }),
       outputSchema: OUTPUTS.verdict(), extraDirs: [], guard: readOnlyGuard(bundleDir, workDir("approve")),
     });
     return [out("verdict.json", { schema_version: 1, task_id: taskId, candidate_commit: candidate(n), tier: decision.tier, ...(outcome.structured as object) }, "verdict.schema.json")];
@@ -713,7 +722,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   const summarize = (n: number) => async (): Promise<Output[]> => {
     prepareBundle(n, [["policy.json", "policy.json"], ...reviewCopies(n), ...(has(roundPath("refutations.json", n)) ? [[roundPath("refutations.json", n), "refutations.json"] as [string, string]] : []), ["verdict.json", "verdict.json"]]);
     const outcome = await session({
-      stage: "summarize", agent: "summarizer", label: "summarize", cwd: bundleDir, prompt: summarizePrompt({ bundleDir, reviews: reviewFiles, refutations: has(roundPath("refutations.json", n)) }),
+      stage: "summarize", agent: "summarizer", label: "summarize", cwd: bundleDir, prompt: summarizePrompt({ bundleDir, reviews: reviewFiles(n), refutations: has(roundPath("refutations.json", n)) }),
       outputSchema: OUTPUTS.summary(), extraDirs: [], guard: readOnlyGuard(bundleDir, workDir("summarize")),
     });
     return [out("summary.json", { schema_version: 1, task_id: taskId, ...(outcome.structured as object) }, "summary.schema.json")];
@@ -865,17 +874,17 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       let clean = (readJson(roundPath("gates.json", n)) as GatesResult).passed;
       const reviewInputs = [roundPath("build.json", n), roundPath("gates.json", n), "spec.yaml", "spec.md"];
       if (clean) {
-        for (const r of REVIEWERS) await runStep({ label: roundLabel(r.label, n), stage: "review", inputs: reviewInputs, run: review(r, n), exit: noExit });
-        const reviews = REVIEWERS.map((r) => roundPath(`${r.label}.json`, n));
+        for (const r of reviewersFor(n)) await runStep({ label: roundLabel(r.label, n), stage: "review", inputs: reviewInputs, run: review(r, n), exit: noExit });
+        const reviews = reviewPaths(n);
         if (blockingFindings(n).length > 0) await runStep({ label: roundLabel("refute", n), stage: "refute", inputs: [...reviewInputs, ...reviews], run: refute(n), exit: noExit });
         clean = surviving(n).length === 0;
       }
       if (clean) break;
-      const remediationInputs = [...reviewInputs, ...(((readJson(roundPath("gates.json", n)) as GatesResult).passed) ? [...REVIEWERS.map((r) => roundPath(`${r.label}.json`, n)), roundPath("refutations.json", n)] : []), ...Array.from({ length: n - 1 }, (_, k) => roundPath("remediation.json", k + 1))];
+      const remediationInputs = [...reviewInputs, ...(((readJson(roundPath("gates.json", n)) as GatesResult).passed) ? [...reviewPaths(n), roundPath("refutations.json", n)] : []), ...Array.from({ length: n - 1 }, (_, k) => roundPath("remediation.json", k + 1))];
       await runStep({ label: roundLabel("remediation", n), stage: "remediation", inputs: remediationInputs, run: remediation(n), exit: remediationExit(n) });
     }
     const n = round;
-    const reviews = [...REVIEWERS.map((r) => roundPath(`${r.label}.json`, n)), roundPath("refutations.json", n)];
+    const reviews = [...reviewPaths(n), roundPath("refutations.json", n)];
     await runStep({ label: "policy", stage: "policy", inputs: [roundPath("build.json", n), roundPath("gates.json", n), "triage.json", "spec.yaml"], run: policy(n), exit: noExit });
     await runStep({ label: "approve", stage: "approve", inputs: ["policy.json", ...reviews], run: approve(n), exit: approveExit(n) });
     await runStep({ label: "summarize", stage: "summarize", inputs: ["verdict.json"], run: summarize(n), exit: noExit });

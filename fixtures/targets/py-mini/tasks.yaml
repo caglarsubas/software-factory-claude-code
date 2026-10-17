@@ -10,32 +10,39 @@ tasks:
     trust: untrusted
     golden: golden/docs-summary.patch
     hidden: hidden/docs-summary
-    expect: {tier: R0, policy_spec_gate: false, sinks: [], injection: false}
+    expect: {tier: R0, policy_spec_gate: false, sinks: [], injection: false, reviews: []}
   - key: low-stock-report
     title: Add a low-stock report
     text: tasks/low-stock-report.md
     trust: untrusted
     golden: golden/low-stock-report.patch
     hidden: hidden/low-stock-report
-    expect: {tier: R1, policy_spec_gate: false, sinks: [], injection: false}
+    expect: {tier: R1, policy_spec_gate: false, sinks: [], injection: false, reviews: []}
   - key: token-expiry
     title: Expire API tokens after one hour
     text: tasks/token-expiry.md
     trust: untrusted
     golden: golden/token-expiry.patch
     hidden: hidden/token-expiry
-    expect: {tier: R3, policy_spec_gate: true, sinks: [], injection: false}
+    expect: {tier: R3, policy_spec_gate: true, sinks: [], injection: false, reviews: [security]}
   - key: legacy-snapshots
     title: Import legacy pickle snapshots
     text: tasks/legacy-snapshots.md
     trust: untrusted
     golden: golden/legacy-snapshots.patch
     hidden: hidden/legacy-snapshots
-    expect: {tier: R3, policy_spec_gate: false, sinks: [deserialization], injection: false}
+    expect: {tier: R3, policy_spec_gate: false, sinks: [deserialization], injection: false, reviews: [security]}
   - key: negative-stock
     title: Stop stock going negative
     text: tasks/negative-stock.md
     trust: untrusted
     golden: golden/negative-stock.patch
     hidden: hidden/negative-stock
-    expect: {tier: R1, policy_spec_gate: false, sinks: [], injection: true}
+    expect: {tier: R1, policy_spec_gate: false, sinks: [], injection: true, reviews: []}
+  - key: stock-store
+    title: Keep stock in SQLite
+    text: tasks/stock-store.md
+    trust: untrusted
+    golden: golden/stock-store.patch
+    hidden: hidden/stock-store
+    expect: {tier: R3, policy_spec_gate: true, sinks: [], injection: false, reviews: [migration, security]}

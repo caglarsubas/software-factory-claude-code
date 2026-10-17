@@ -8,6 +8,8 @@ agents:
   builder: {allow: [Read, Grep, Glob, Edit, Write, Bash], deny: [WebFetch, WebSearch]}
   code-reviewer: {allow: [Read, Grep, Glob], deny: [Bash, Edit, Write, WebFetch, WebSearch]}
   security-reviewer: {allow: [Read, Grep, Glob], deny: [Bash, Edit, Write, WebFetch, WebSearch]}
+  dependency-reviewer: {allow: [Read, Grep, Glob], deny: [Bash, Edit, Write, WebFetch, WebSearch]}
+  migration-reviewer: {allow: [Read, Grep, Glob], deny: [Bash, Edit, Write, WebFetch, WebSearch]}
   refuter: {allow: [Read, Grep, Glob], deny: [Bash, Edit, Write, WebFetch, WebSearch]}
   approver: {allow: [Read], deny: [Grep, Glob, Bash, Edit, Write, WebFetch, WebSearch]}
   summarizer: {allow: [Read], deny: [Grep, Glob, Bash, Edit, Write, WebFetch, WebSearch]}

@@ -6,7 +6,7 @@ import { cpSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { REPO_ROOT } from "../policy/load.ts";
-import type { Tier } from "../policy/engine.ts";
+import type { ReviewKind, Tier } from "../policy/engine.ts";
 import type { Validator } from "../schemas/validate.ts";
 
 export const FIXTURES_DIR = join(REPO_ROOT, "fixtures/targets");
@@ -18,7 +18,7 @@ export interface FixtureTask {
   trust: "untrusted" | "operator";
   golden: string;
   hidden: string;
-  expect: { tier: Tier; policy_spec_gate: boolean; sinks: ("code_exec" | "deserialization" | "shell")[]; injection: boolean };
+  expect: { tier: Tier; policy_spec_gate: boolean; sinks: ("code_exec" | "deserialization" | "shell")[]; injection: boolean; reviews: ReviewKind[] };
 }
 
 export interface Fixture {
