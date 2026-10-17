@@ -43,7 +43,7 @@ import { reapTaskNetworks } from "../runner/network.ts";
 import { runGates } from "../../../gates/src/run.ts";
 import { ensureImage } from "../../../gates/src/image.ts";
 import { runBypassVariants } from "../../../plugin/hooks/bypass-cases.ts";
-import { doctor } from "../doctor.ts";
+import { doctor, rulesetCheck } from "../doctor.ts";
 import { beginGate, evaluateG0, writeEvidence } from "../gate/g0.ts";
 import { evaluateG1 } from "../gate/g1.ts";
 import { githubApiUrl, GitHubError, isLoopbackApi, restCommitChecks, restGitHub } from "../github/client.ts";
@@ -54,7 +54,9 @@ import { loadRelease } from "../release.ts";
 import { checkReleaseFiles, findRelease, installRelease, listReleases, pinnedSha, pinRelease, writeShim } from "../release/install.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { holdAt, isLocalRemote, killAt, probes, readInjection, replayedGates } from "../session/injection.ts";
-import { describeAlarm, telemetryConfig, TelemetryError, type ModelAlarm } from "../telemetry.ts";
+import { describeAlarm, telemetryConfig, TelemetryError, type ModelAlarm, type Telemetry } from "../telemetry.ts";
+import { otelDir, readOtel, startCollector, type Collector } from "../otel/collector.ts";
+import { measureSlos, otelPanel, windowTasks } from "../report/slo.ts";
 import { replayRunner } from "../session/replay.ts";
 import { sdkRunner } from "../session/runner.ts";
 import { calibrate, completedRuns, monthOf, monthSpend, TIERS } from "../budget/budget.ts";
@@ -63,7 +65,7 @@ import { writeAtomic } from "../fsutil.ts";
 import { isoWeek, taskReport, WEEK_HEADER, weekRow, weekRowMarkdown, type TaskReport } from "../report/report.ts";
 import { specDigest } from "../stages/commit.ts";
 import { runTask } from "../stages/pipeline.ts";
-import { EventStore, LeaseHeldError } from "../store/events.ts";
+import { EventStore, LeaseHeldError, type FactoryEvent } from "../store/events.ts";
 import { currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
 import { createTask, loadProfile, readTask } from "../task/task.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -168,7 +170,7 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
   const release = loadRelease(validator);
   const token = process.env["FACTORY_GITHUB_TOKEN"];
   const api = apiUrl();
-  let telemetry;
+  let telemetry: Telemetry | null = null;
   try {
     telemetry = telemetryConfig();
   } catch (e) {
@@ -218,8 +220,16 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
   const replica = keepReplica(home, log);
   // Live sessions call the credential gateway (P2-02), never the API with the key.
   let gateway: Gateway | null = null;
+  // Live sessions export telemetry to the run's own collector (P2-08), unless the operator named another or turned it off.
+  let collector: Collector | null = null;
   try {
-    if (replay === undefined) gateway = await startRunGateway({ home, store, prices: release.config.prices, keyFile: keyFile(home), log });
+    if (replay === undefined) {
+      if (telemetry === null && process.env["FACTORY_OTEL"] !== "off") {
+        collector = await startCollector({ dir: otelDir(home.root), retentionDays: release.config.retention_days.otel, log });
+        telemetry = { endpoint: collector.url, protocol: "http/json" };
+      }
+      gateway = await startRunGateway({ home, store, prices: release.config.prices, keyFile: keyFile(home), ...(collector === null ? {} : { otel: collector.url }), log });
+    }
     const state = await runTask({
       home, store, validator, release, taskId, abort,
       deps: {
@@ -256,6 +266,7 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
     if (state === "FAILED") process.exitCode = 1;
   } finally {
     await gateway?.close();
+    await collector?.close();
     replica.stop();
     kept.stop();
     lock?.release();
@@ -338,6 +349,7 @@ async function main(): Promise<void> {
       host: { type: "string" },
       port: { type: "string" },
       "max-tasks": { type: "string" },
+      weeks: { type: "string" },
     },
   });
   const home = factoryHome();
@@ -478,6 +490,13 @@ async function main(): Promise<void> {
   if (command === "doctor") {
     const release = loadRelease(createValidator());
     const checks = doctor(home, release, keyFile(home));
+    // This repository's ruleset on GitHub against the release's copy (P2-08), when a token may read it.
+    const token = process.env["FACTORY_GITHUB_TOKEN"];
+    if (token !== undefined) {
+      const self = parse(readFileSync(join(release.root, "profiles/self/profile.yaml"), "utf8")) as { target: { repo: string } };
+      const expected = JSON.parse(readFileSync(join(release.root, ".github/rulesets/main.json"), "utf8")) as Parameters<typeof rulesetCheck>[0]["expected"];
+      checks.push(await rulesetCheck({ repo: self.target.repo, expected, token, api: apiUrl() }));
+    }
     for (const c of checks) out(`${c.status.padEnd(4)}  ${c.name}: ${c.detail}`);
     process.exitCode = checks.some((c) => c.status === "fail") ? 1 : 0;
     return;
@@ -667,6 +686,31 @@ async function main(): Promise<void> {
         out(weekRowMarkdown(row));
         return;
       }
+      case "slo": {
+        // The SLOs over a rolling window (P2-08), then what the sessions' telemetry recorded.
+        const weeks = Number(values.weeks ?? "4");
+        if (!Number.isInteger(weeks) || weeks < 1) fail("--weeks takes a positive integer");
+        const release = loadRelease(createValidator());
+        const end = new Date();
+        const start = new Date(end.getTime() - weeks * 7 * 86_400_000);
+        const byTask = new Map<string, FactoryEvent[]>();
+        for (const e of store.allEvents()) byTask.set(e.task_id, [...(byTask.get(e.task_id) ?? []), e]);
+        const read = (task: string, path: string): string | null => {
+          try {
+            return readFileSync(join(runDir(home, task), path), "utf8");
+          } catch {
+            return null;
+          }
+        };
+        out(`SLOs over the ${String(weeks)} week(s) to ${end.toISOString().slice(0, 10)}: ${String(windowTasks(byTask, start, end))} live task(s) (docs/factory/slo.md)`);
+        for (const r of measureSlos({ byTask, read, budgets: release.budgets, start, end })) {
+          out(`${r.status.padEnd(12)}  ${r.name.padEnd(24)}  target ${r.target.padEnd(22)}  ${r.value}  (${r.basis})`);
+        }
+        const panel = otelPanel(readOtel(otelDir(home.root)).filter((x) => Date.parse(x.received_at) >= start.getTime()));
+        out(panel.length === 0 ? "telemetry: no exports in the window" : "telemetry (task: exports, API requests, API errors, tool decisions accepted/rejected):");
+        for (const p of panel) out(`  ${p.task}: ${String(p.exports)} exports, ${String(p.api_requests)} requests, ${String(p.api_errors)} errors, ${String(p.tool_decisions.accept)}/${String(p.tool_decisions.reject)} tool decisions`);
+        return;
+      }
       case "eval": {
         if (positionals[1] !== "capture") fail("usage: factoryctl eval capture T-0001");
         const id = taskArg(positionals, 2, store);
@@ -745,7 +789,7 @@ async function main(): Promise<void> {
         return;
       }
       default:
-        fail("usage: factoryctl task create | run | resume | pause | takeover | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor | serve | drain | replica | restore | drill");
+        fail("usage: factoryctl task create | run | resume | pause | takeover | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor | serve | drain | replica | restore | drill | slo");
     }
   } finally {
     store.close();

@@ -4,6 +4,14 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-17
+
+### Added
+
+- **Telemetry by default (P2-08).** Every live run starts its own OTLP collector on loopback, and sessions export Claude Code's metrics and events to it. The collector writes them to `$FACTORY_HOME/otel/<day>.ndjson` for 30 days; nothing leaves the host. `FACTORY_OTEL_ENDPOINT` still points sessions at a collector of your own, and `FACTORY_OTEL=off` turns telemetry off. The gateway forwards OTLP exports to it, the route runner sessions use once P2-05 turns them on.
+- **`factoryctl slo`.** It measures the SLOs of the new [docs/factory/slo.md](docs/factory/slo.md) over the last 4 weeks (`--weeks N`): the auto-merge-ready rate, reviewer precision, p90 cost per merged PR by tier, and the safety counters. Escaped defects are reported as not measured until the GitHub client reads reverts. A per-task telemetry panel follows.
+- **`doctor` drift checks.** It fails when the runner's managed settings differ from what the release generates. With `FACTORY_GITHUB_TOKEN`, it diffs this repository's `main` ruleset on GitHub against `.github/rulesets/main.json`.
+
 ## [0.7.0] - 2026-10-17
 
 ### Added
@@ -216,7 +224,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.4.0...v0.5.0

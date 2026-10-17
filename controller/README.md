@@ -104,6 +104,10 @@ Each session has its own working directory under `runs/<id>/work/`. Only the bui
 
 A live run starts the gateway (`gateway/gateway.ts`) on loopback. It is the only holder of the API key. The pipeline issues each session a token, good up to what is left of the task's hard budget, writes it to `$FACTORY_HOME/tokens/`, and revokes it when the session ends. The gateway forwards the Messages and token-counting routes, for a priced model, with the key in place of the token. It meters each response from its usage (`gateway/meter.ts`), prices it by `config/factory.yaml`'s `prices`, and records it as a `usage` event. Once a session's metered spend reaches its limit, the gateway refuses its next request and the pipeline fails the task as `budget_exceeded`. Budgets, the report and the manifest count metered cost (`budget/budget.ts`).
 
+## Telemetry and SLOs
+
+`otel/collector.ts` is the run's own OTLP/HTTP JSON collector: one NDJSON line per export, a file per UTC day under `$FACTORY_HOME/otel/`, pruned to the retention. The gateway forwards OTLP exports to it, the route runner sessions use once P2-05 turns them on. `report/slo.ts` measures the SLOs of [slo.md](../docs/factory/slo.md) and the per-task telemetry panel behind `factoryctl slo`. `doctor.ts` adds the managed-settings and repository-ruleset drift checks.
+
 ## Durability
 
 `durable/objects.ts` is a write-once, content-addressed object store. The commit protocol puts every artifact in it before writing the commit event, task creation puts the task's files in it, and each run's end stores its evidence as a tree, recorded by an `evidence_stored` event. `durable/replica.ts` copies new events by row id and missing objects to the replica, and restores an empty home from it. On its next run, a restored task rebuilds its clone from the candidate bundle its build committed (`stages/pipeline.ts`). `durable/drill.ts` holds the kill switch (`haltNow`) and the timed restore and kill-switch drills. The design is [ADR 0001](../docs/factory/adr/0001-replication-without-litestream.md).

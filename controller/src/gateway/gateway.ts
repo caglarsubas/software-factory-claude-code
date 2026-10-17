@@ -28,6 +28,8 @@ export const ANTHROPIC_API = "https://api.anthropic.com";
 const MAX_BODY = 32 * 1024 * 1024;
 const METERED = "/v1/messages";
 const ROUTES = new Set([METERED, "/v1/messages/count_tokens"]);
+/** OTLP exports (P2-08): a runner session reaches the run's collector only through the gateway's route. */
+const OTEL_ROUTES = new Set(["/v1/metrics", "/v1/logs", "/v1/traces"]);
 
 /** Request headers never forwarded: the session's credential, hop-by-hop headers, and what the gateway sets itself. */
 const DROP_REQUEST = new Set(["host", "authorization", "x-api-key", "connection", "keep-alive", "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade", "content-length", "accept-encoding", "cookie", "forwarded"]);
@@ -68,6 +70,8 @@ export interface GatewayOptions {
   hosts: string[];
   /** The kill switch: a description while the factory is halted, else null. */
   halted: () => string | null;
+  /** The run's OTel collector (P2-08), for runner sessions' telemetry; absent: OTLP exports are refused. */
+  otel?: string;
   /** Records a metered response on the task's ledger; a throw (a lost lease) revokes the session. */
   onUsage: (e: UsageEntry) => void;
   log: (line: string) => void;
@@ -110,6 +114,26 @@ async function readBody(req: IncomingMessage): Promise<Buffer | null> {
   return Buffer.concat(chunks);
 }
 
+/** An OTLP export, passed to the collector as it came: telemetry carries no credential and costs nothing. */
+async function forwardOtel(req: IncomingMessage, res: ServerResponse, url: string): Promise<void> {
+  const body = await readBody(req);
+  if (body === null) {
+    res.writeHead(413).end();
+    return;
+  }
+  const headers: Record<string, string> = {};
+  for (const k of ["content-type", "content-encoding"]) {
+    const v = req.headers[k];
+    if (typeof v === "string") headers[k] = v;
+  }
+  try {
+    const r = await fetch(url, { method: "POST", headers, body, redirect: "error" });
+    res.writeHead(r.status, { "content-type": r.headers.get("content-type") ?? "application/json" }).end(Buffer.from(await r.arrayBuffer()));
+  } catch {
+    res.writeHead(502).end();
+  }
+}
+
 export async function startGateway(o: GatewayOptions): Promise<Gateway> {
   const key = readFileSync(o.keyFile, "utf8").trim();
   if (key === "") throw new Error(`${o.keyFile} is empty`);
@@ -128,6 +152,10 @@ export async function startGateway(o: GatewayOptions): Promise<Gateway> {
     // The CLI's connectivity check: answered here, nothing upstream.
     if (req.method === "GET" && path === "/api/hello") {
       res.writeHead(200, { "content-type": "application/json" }).end("{}");
+      return;
+    }
+    if (req.method === "POST" && OTEL_ROUTES.has(path) && o.otel !== undefined) {
+      await forwardOtel(req, res, `${o.otel}${path}`);
       return;
     }
     if (req.method !== "POST" || !ROUTES.has(path)) {
@@ -302,11 +330,12 @@ export function ledger(store: EventStore): (e: UsageEntry) => void {
 }
 
 /** The gateway a live factoryctl run starts for its sessions: on loopback, metering to the store, refusing while halted. */
-export function startRunGateway(o: { home: Home; store: EventStore; prices: Prices; keyFile: string; log: (line: string) => void }): Promise<Gateway> {
+export function startRunGateway(o: { home: Home; store: EventStore; prices: Prices; keyFile: string; otel?: string; log: (line: string) => void }): Promise<Gateway> {
   return startGateway({
     prices: o.prices,
     keyFile: o.keyFile,
     hosts: ["127.0.0.1"],
+    ...(o.otel === undefined ? {} : { otel: o.otel }),
     halted: () => {
       const h = readHalt(o.home);
       return h === null ? null : describeHalt(h);
