@@ -4,6 +4,21 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-17
+
+### Added
+
+- **Leases and fencing (P2-03).** Every run takes its task's lease, and every write `factoryctl` makes carries the lease's epoch. The store refuses a write from any other epoch, in the write's own transaction, so a run whose task was taken over can change nothing more. A lifecycle transition now reads its state inside that transaction. `cancel` and `reject` take the lease over, stopping the run that held it first; a lease that lapses (5 minutes without renewal) belongs to a hung run, which is stopped before the task runs again.
+- **`factoryctl serve`.** A scheduler that runs tasks as worker processes, up to the concurrency limit, and never runs together two tasks whose scopes overlap on one target. Killing it leaves its workers running under their leases; the next `serve` takes over only the tasks whose holder is dead or hung.
+  - **Commands:** `pause`, `resume`, `cancel` and the new `drain` go through `serve` while it runs, and `run`, `takeover` and `reject` refuse until it stops.
+  - **API:** loopback only, with a token from `$FACTORY_HOME/secrets/serve.token` and Host and Origin checks.
+  - **Live sessions:** it runs replayed sessions only, until the credential gateway (P2-02).
+
+### Changed
+
+- **`factoryctl halt`** also signals every `serve` worker.
+- **`factoryctl status`** shows a task as running while its lease is held.
+
 ## [0.4.0] - 2026-10-17
 
 ### Added
@@ -170,7 +185,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.1...v0.3.2

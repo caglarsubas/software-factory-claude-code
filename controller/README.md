@@ -99,6 +99,12 @@ The conformance suite is `pnpm test:runner`.
 
 Each session has its own working directory under `runs/<id>/work/`. Only the builder writes, and only `build-report.md` or `build-failure.json`. The builder never reads the raw task text, and the judges read only the bundle (`runs/<id>/bundle/`), never the builder's report.
 
+## Leases and `serve`
+
+Every run takes its task's lease (`sched/lease.ts`), and the store fences every `factoryctl` write by the lease's epoch (`store/events.ts`): a writer whose lease was taken over can write nothing more. A lease is taken over only when its holder is dead, or lapsed and stopped first.
+
+`factoryctl serve` (`serve/serve.ts`) schedules worker processes by the rules in `sched/schedule.ts`: the concurrency limit, and overlapping scopes on one target kept apart. It is the single writer the CLI reaches through `serve/client.ts`. Its API (`serve/api.ts`) answers on loopback only, with the bound Host, its own Origin, the token and JSON writes.
+
 ## Git
 
 Each target has a bare mirror (`mirrors/`), and each task its own `git clone --shared` in `worktrees/<id>`. Every git write the builder makes therefore stays inside its sandboxed working directory.
