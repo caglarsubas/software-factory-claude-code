@@ -970,14 +970,25 @@ describe("resume, gates and cancellation", () => {
     let dead = false;
     const dying = new Proxy(world.store, {
       get(target, key) {
+        const dies = (e: Parameters<EventStore["append"]>[0]): void => {
+          if (dead || (e.type === "state_changed" && e.to === "TRIAGED")) {
+            dead = true;
+            throw new Error("killed");
+          }
+        };
         if (key === "append") {
           return (e: Parameters<EventStore["append"]>[0]) => {
-            if (dead || (e.type === "state_changed" && e.to === "TRIAGED")) {
-              dead = true;
-              throw new Error("killed");
-            }
+            dies(e);
             return target.append(e);
           };
+        }
+        // Transitions are built inside the write's transaction (P2-03).
+        if (key === "appendWith") {
+          return (taskId: string, build: Parameters<EventStore["appendWith"]>[1]) => target.appendWith(taskId, (events) => {
+            const e = build(events);
+            dies(e);
+            return e;
+          });
         }
         const v: unknown = Reflect.get(target, key);
         return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
