@@ -294,33 +294,33 @@ Every failed task carries exactly one category (P1-07):
 
 Once a week, run `factoryctl report --week 2026-W42` (the ISO week, in UTC) and add the row it prints to the weekly table in STATUS. It counts the live tasks created that week by outcome: aggregates only, which is all the public repository may hold. Replayed tasks never count.
 
-## Kill switch v0
+## Kill switch
 
-Use it the moment an agent does something you did not expect, or a credential may be exposed.
+Use it the moment an agent does something you did not expect, or a credential may be exposed. Choose the lightest step that is enough, and escalate.
 
-```bash
-factoryctl halt --reason "what you saw"
-```
+1. **Stop new work, gently.** `factoryctl pause` stops `serve` issuing work, and `factoryctl drain` lets running tasks finish and then stops `serve`. Use these when nothing is wrong with what is running.
+2. **Halt.** This stops every agent action on this host at once:
 
-It acts at once:
+   ```bash
+   factoryctl halt --reason "what you saw"
+   ```
 
-- writes `$FACTORY_HOME/HALT`;
-- signals the running task, and every `serve` worker, whose sessions abort;
-- stops every gate container and runner container;
-- makes the in-process guard deny every further tool call;
-- makes the credential gateway refuse every request and revoke every token.
+   - It writes `$FACTORY_HOME/HALT`.
+   - It signals the running task and every `serve` worker, whose sessions abort.
+   - It stops every gate container and runner container.
+   - It makes the in-process guard deny every further tool call.
+   - It makes the credential gateway refuse every request and revoke every token.
 
-While `HALT` exists, no run starts. A halted task does not fail: it stays where it stopped. Escalate by severity:
-
-1. **The halt alone:** stops every agent action on this host. `factoryctl status` shows `HALTED`.
-2. **A GitHub credential may be exposed:**
-   - revoke `FACTORY_GITHUB_TOKEN` on GitHub;
-   - close the factory's open PRs;
-   - delete the `factory/*` branches.
-3. **The Anthropic key may be exposed, or spend is running away:**
-   - disable the key in the Console, or set the workspace spend limit to $0;
-   - delete `$FACTORY_HOME/secrets/anthropic.key`.
-4. **A merged change is bad:** revert it on the target like any other commit.
+   While `HALT` exists, no run starts. A halted task does not fail: it stays where it stopped. `factoryctl status` shows `HALTED`.
+3. **Cut GitHub access, if a GitHub credential may be exposed.**
+   - From P2-05, suspend the factory App's installation: on GitHub, Settings → Applications → Installed GitHub Apps → the factory App → Configure → Suspend.
+   - Until then, revoke `FACTORY_GITHUB_TOKEN`.
+   - Close the factory's open PRs and delete the `factory/*` branches.
+4. **Rotate the Anthropic key, if it may be exposed or spend is running away.**
+   - Disable the key in the Console, or set the workspace spend limit to $0.
+   - Create a new key and replace `$FACTORY_HOME/secrets/anthropic.key` with it (`install -m 600 /dev/stdin …`).
+   - Sessions never held the key, only their own gateway tokens, which the halt revoked.
+5. **Revert a bad merge** on the target like any other commit.
 
 To restart, find and fix the cause, then lift the halt and continue:
 
@@ -331,7 +331,50 @@ factoryctl resume T-0001
 
 `unhalt` refuses to run inside a Claude Code session. Every halt and unhalt is appended to `$FACTORY_HOME/halt.log`, and the running task records the halt as a `command` event.
 
-The full runbook (pause, drain, App suspension, key rotation, revert) and its drill arrive with P2-07.
+**The kill-switch drill (G2-6)** halts the factory as above, then times how long until no agent activity is left on the host: no live writer, session process, runner container or gate container.
+
+```bash
+factoryctl drill kill-switch
+```
+
+It passes within 5 minutes, writes its record under `$FACTORY_HOME/drills/`, and leaves the factory halted. Run it while `serve` has tasks in flight, so the drill has something to stop.
+
+## Durability
+
+From `v0.7.0` (P2-07, [ADR 0001](adr/0001-replication-without-litestream.md)), `factoryctl` replicates its own state:
+
+- **Object store:** every committed artifact, each task's files and each run's evidence go into a write-once, content-addressed store in `$FACTORY_HOME/objects`.
+- **Candidate commits:** the build also commits a git bundle of its candidate commits, so an unpushed candidate survives a lost disk.
+- **Replica:** the event store and the object store are copied every second, while anything runs, to a replica you choose.
+
+Set the replica once, on another volume (an external disk, or a separate partition):
+
+```bash
+factoryctl replica init /Volumes/Backup/factory-replica
+factoryctl replica status
+```
+
+Every run, worker and `serve` syncs it every second, and every command syncs it before it exits. `doctor` warns when no replica is set, when it is on the same volume as the home, or when it is behind.
+
+**Restore after losing the home.** Restore into an empty `$FACTORY_HOME`, set the replica again, and resume each task:
+
+```bash
+factoryctl restore --source /Volumes/Backup/factory-replica
+factoryctl replica init /Volumes/Backup/factory-replica
+factoryctl resume T-0001
+```
+
+- **What comes back:** the events, every object, and each task's run directory.
+- **On resume:** each task rebuilds its clone from its target and its committed candidate. The outbox then finds on GitHub whatever was already pushed or opened, so nothing is pushed or opened twice.
+- **Back up yourself:** the replica does not hold your private profile store or the API key file.
+
+**The restore drill (G2-6)** restores the replica, as it stands, into a scratch home, without touching yours:
+
+```bash
+factoryctl drill restore
+```
+
+It records the restore time (RTO, limit 1 hour), how far the replica was behind (RPO, limit 1 minute), and any file not restored intact, under `$FACTORY_HOME/drills/`.
 
 ## Runner container
 
@@ -414,5 +457,7 @@ G1 closes Phase 1. `factoryctl gate G1` checks its five automated criteria from 
 | `procs/` | the running sessions' processes, so a run that dies leaves none behind |
 | `secrets/` | the API key file; never readable by a session |
 | `tokens/` | each live session's gateway token while it runs; never readable by a session |
+| `objects/` | the write-once object store: artifacts, task files and run evidence by digest; never readable by a session |
+| `replica.json`, `drills/` | where the replica is, and the drill records |
 | `gates/<gate>/` | gate snapshots and evidence |
 | `HALT`, `halt.log` | the kill switch and its audit trail |

@@ -11,6 +11,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileDigest, finalize, PENDING, sha256, TMP, writeAtomic } from "../fsutil.ts";
+import { putObject } from "../durable/objects.ts";
 import type { EventStore, FactoryEvent } from "../store/events.ts";
 
 export interface Output {
@@ -69,9 +70,14 @@ export interface StepRef {
   round: number;
 }
 
-/** Stage, commit, finalize. Returns the commit event's payload. `probe` marks the instants between (kill-point tests). */
-export function commitArtifacts(store: EventStore, dir: string, step: StepRef, inputs: Record<string, string>, outputs: readonly Output[], probe: (point: string) => void = () => undefined): Commit {
+/**
+ * Stage, commit, finalize. Returns the commit event's payload. `probe` marks the instants between
+ * (kill-point tests). With an object store (P2-07), every output goes into it first, so each
+ * digest a commit event names can always be read back, whatever happens to the run directory.
+ */
+export function commitArtifacts(store: EventStore, dir: string, step: StepRef, inputs: Record<string, string>, outputs: readonly Output[], probe: (point: string) => void = () => undefined, objects?: string): Commit {
   if (outputs.length === 0) throw new Error(`${step.label} committed no artifacts`);
+  if (objects !== undefined) for (const o of outputs) putObject(objects, o.content);
   for (const o of outputs) {
     mkdirSync(dirname(join(dir, o.path)), { recursive: true, mode: 0o700 });
     writeAtomic(join(dir, `${o.path}${PENDING}`), o.content);

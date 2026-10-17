@@ -17,8 +17,9 @@ import type { GatesResult, RunOptions as GateRunOptions } from "../../../gates/s
 import { cacheVolumeFor } from "../../../gates/src/run.ts";
 import { activeMs, budgetTier, calibrate, completedRuns, meteredSpend, monthOf, monthSpend, sessionCap, taskSpend } from "../budget/budget.ts";
 import { writeManifest } from "../bundle/manifest.ts";
+import { storeTree } from "../durable/objects.ts";
 import { writeAtomic } from "../fsutil.ts";
-import { changedFiles, commitAll, createTaskClone, diffPatch, GitError, head, resetClone, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
+import { changedFiles, commitAll, createTaskClone, diffPatch, fetchBundle, GitError, head, headBundle, mirrorPath, resetClone, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
 import type { GitHub } from "../github/client.ts";
 import { writeTokenFile, type Gateway } from "../gateway/gateway.ts";
 import { createOutbox } from "../github/outbox.ts";
@@ -279,6 +280,9 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       emit("command", { command: "run_ended", at: now().toISOString(), reason: endReason });
       const last = latestRound(dir);
       if (has(roundPath("build.json", last))) writeManifest({ dir, taskId, store, validator, release, risk, build: roundPath("build.json", last) });
+      // The run's evidence, versioned in the object store (P2-07): its transcripts, manifest and committed files, as of this run's end.
+      const stored = storeTree(home.objects, dir);
+      emit("command", { command: "evidence_stored", tree: stored.tree, files: stored.files });
     } catch (e) {
       if (!(e instanceof StaleEpochError)) throw e;
     }
@@ -409,6 +413,16 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     return Promise.resolve([out("checkout.json", c, null)]);
   };
 
+  const rehydrate = (): void => {
+    const c = checkoutInfo();
+    const mirror = syncMirror(home.mirrors, task.target.repo, c.remote, deps.auth);
+    rmSync(worktree, { recursive: true, force: true });
+    createTaskClone(mirror, worktree, c.branch, c.base_commit);
+    const bundle = roundPath("candidate.bundle", latestRound(dir));
+    const fetched = committed(bundle) ? fetchBundle(worktree, join(dir, bundle)) : null;
+    deps.log(`${taskId}: rebuilt its clone from ${task.target.repo}${fetched === null ? "" : ` and its candidate ${fetched.slice(0, 12)}`}`);
+  };
+
   // --- stages ----------------------------------------------------------------------------
   const triage = async (): Promise<Output[]> => {
     const outcome = await session({
@@ -516,7 +530,8 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     commitAll(worktree, `factory: ${taskId} changes the builder left uncommitted`);
     const built = head(worktree);
     if (built === start) fail("build", buildCategory(outcome.denied.length), `the builder made no change${denials(outcome)}`, "no_change");
-    return [out(roundPath("build.json", n), { base_commit: c.base_commit, round: n, start_commit: start, candidate_commit: built }, null)];
+    // The candidate's commits go with the build (P2-07): a restore rebuilds the clone from them, pushed or not.
+    return [out(roundPath("build.json", n), { base_commit: c.base_commit, round: n, start_commit: start, candidate_commit: built }, null), { path: roundPath("candidate.bundle", n), content: headBundle(worktree, c.base_commit) }];
   };
 
   const gates = (n: number) => async (): Promise<Output[]> => {
@@ -712,7 +727,8 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     const where = { stage: "publish", round: n };
     let pushed: string;
     try {
-      pushed = await outbox.push(where, { remote: c.remote, mirror: c.mirror, clone: worktree, branch: c.branch, commit: cand });
+      // The mirror is the home's own, not the path recorded at checkout: a restored task may live in another home (P2-07).
+      pushed = await outbox.push(where, { remote: c.remote, mirror: mirrorPath(home.mirrors, task.target.repo), clone: worktree, branch: c.branch, commit: cand });
     } catch (e) {
       // The branch moved on the remote: someone else's commits, never overwritten.
       if (e instanceof GitError && /\[rejected\]|non-fast-forward|fetch first/.test(e.message)) fail("publish", "merge_conflict", `the remote's ${c.branch} has commits the candidate lacks`, "push_rejected");
@@ -783,7 +799,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       if (fresh !== "never") deps.log(`${taskId}: ${step.label} runs again (${fresh === "inputs_changed" ? "its inputs changed" : "a committed file changed on disk"})`);
       probe(`${step.label}:run`);
       const outputs = await step.run();
-      commitArtifacts(store, dir, { taskId, stage: step.stage, label: step.label, round }, stepInputs, outputs, probe);
+      commitArtifacts(store, dir, { taskId, stage: step.stage, label: step.label, round }, stepInputs, outputs, probe, home.objects);
       probe(`${step.label}:exit`);
     }
     step.exit();
@@ -828,6 +844,8 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
 
   try {
     const recovered = recover(dir, store.events(taskId));
+    // A restored task (P2-07) has its committed files but not its clone: rebuild it from the target and the latest candidate bundle.
+    if (committed("checkout.json") && !existsSync(join(worktree, ".git"))) rehydrate();
     for (const p of recovered.rolledForward) deps.log(`${taskId}: recovered ${p}, committed before an interruption`);
     for (const p of recovered.removed) deps.log(`${taskId}: removed ${p}, never committed`);
     for (const r of await outbox.reconcile()) deps.log(`${taskId}: reconciled ${r.key} (attempt ${String(r.attempt)}): ${r.outcome === "found" ? "it happened before the interruption" : "it never happened"}`);

@@ -3,7 +3,8 @@
 // process through GIT_CONFIG_* variables for that one command, never through a file or a
 // session's environment, and hooks never run.
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChangedFile } from "../policy/engine.ts";
 import { FACTORY_IDENTITY } from "../session/env.ts";
@@ -61,6 +62,27 @@ export function resetClone(dir: string, commit: string): void {
 
 export function head(dir: string): string {
   return git(dir, ["rev-parse", "HEAD"]).trim();
+}
+
+/**
+ * The clone's commits since `base`, as a git bundle (P2-07): committed with the build, so a
+ * restore can rebuild the candidate even though it was never pushed. Its one ref is HEAD.
+ */
+export function headBundle(dir: string, base: string): Buffer {
+  const tmp = mkdtempSync(join(tmpdir(), "sf-bundle-"));
+  try {
+    const file = join(tmp, "candidate.bundle");
+    git(dir, ["bundle", "create", "--quiet", file, "HEAD", `^${base}`]);
+    return readFileSync(file);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+/** Fetches a bundle's commits into a clone (P2-07); returns the commit it carries. */
+export function fetchBundle(dir: string, bundle: string): string {
+  git(dir, ["fetch", "--quiet", bundle, "HEAD"]);
+  return git(dir, ["rev-parse", "FETCH_HEAD"]).trim();
 }
 
 /** Commit everything the builder left uncommitted; returns whether a commit was made. */

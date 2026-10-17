@@ -89,20 +89,23 @@ export class EventStore {
   static open(path: string, opts: { validator?: Validator; now?: () => Date } = {}): EventStore {
     const db = new DatabaseSync(path);
     db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-    db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-    const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string } | undefined;
-    const current = row === undefined ? 0 : Number(row.value);
-    if (current > MIGRATIONS.length) throw new EventError(`factory.db is at schema ${String(current)}; this factoryctl knows ${String(MIGRATIONS.length)}`);
-    for (let v = current; v < MIGRATIONS.length; v++) {
-      db.exec("BEGIN IMMEDIATE");
-      try {
+    // The version is read under the write lock, so two processes opening a new store at once
+    // (serve and a worker, or two replica syncs) migrate it once between them.
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+      const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string } | undefined;
+      const current = row === undefined ? 0 : Number(row.value);
+      if (current > MIGRATIONS.length) throw new EventError(`factory.db is at schema ${String(current)}; this factoryctl knows ${String(MIGRATIONS.length)}`);
+      for (let v = current; v < MIGRATIONS.length; v++) {
         db.exec(MIGRATIONS[v] ?? "");
         db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value").run(String(v + 1));
-        db.exec("COMMIT");
-      } catch (e) {
-        db.exec("ROLLBACK");
-        throw e;
       }
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      db.close();
+      throw e;
     }
     return new EventStore(db, opts.validator ?? createValidator(), opts.now ?? (() => new Date()));
   }

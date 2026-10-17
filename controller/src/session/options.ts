@@ -97,7 +97,7 @@ export function agentDefinition(release: Release, agent: string, extraTools: rea
 /** Credential and secret locations no session may read, by absolute path as well as by `~`. */
 export function secretPaths(home: Home): string[] {
   const operator = homedir();
-  return [home.secrets, home.tokens, ...[".ssh", ".aws", ".azure", ".config/gcloud", ".config/gh", ".docker", ".netrc", ".npmrc", ".pypirc", ".git-credentials"].map((p) => join(operator, p))];
+  return [home.secrets, home.tokens, home.objects, ...[".ssh", ".aws", ".azure", ".config/gcloud", ".config/gh", ".docker", ".netrc", ".npmrc", ".pypirc", ".git-credentials"].map((p) => join(operator, p))];
 }
 
 export function sessionSettings(inputs: SessionInputs, release: Release): Settings {

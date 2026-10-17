@@ -31,10 +31,12 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { parse } from "yaml";
-import { engineHost, killGateContainers, PROXY_ENV, removeTaskContainers } from "../../../gates/src/container.ts";
+import { engineHost, PROXY_ENV, removeTaskContainers } from "../../../gates/src/container.ts";
+import { haltNow, killSwitchDrill, restoreDrill, type Activity } from "../durable/drill.ts";
+import { initReplica, keepReplica, replicaStatus, restore, syncReplica } from "../durable/replica.ts";
 import { startRunGateway, type Gateway } from "../gateway/gateway.ts";
-import { killRunnerContainers, reapRunnerContainers } from "../runner/container.ts";
-import { keepLease, leaseState, parseHolder, takeLease } from "../sched/lease.ts";
+import { reapRunnerContainers } from "../runner/container.ts";
+import { keepLease, leaseState, takeLease } from "../sched/lease.ts";
 import { callServe } from "../serve/client.ts";
 import { DEFAULT_PORT, liveServe, startServe } from "../serve/serve.ts";
 import { reapTaskNetworks } from "../runner/network.ts";
@@ -45,9 +47,9 @@ import { doctor } from "../doctor.ts";
 import { beginGate, evaluateG0, writeEvidence } from "../gate/g0.ts";
 import { evaluateG1 } from "../gate/g1.ts";
 import { githubApiUrl, GitHubError, isLoopbackApi, restCommitChecks, restGitHub } from "../github/client.ts";
-import { clearHalt, describeHalt, readHalt, setHalt } from "../halt.ts";
+import { clearHalt, describeHalt, readHalt } from "../halt.ts";
 import { acquireRunLock, ensureHome, factoryHome, liveHolder, runDir, worktreeDir, type Home } from "../home.ts";
-import { isLive, reap } from "../proc.ts";
+import { reap } from "../proc.ts";
 import { loadRelease } from "../release.ts";
 import { checkReleaseFiles, findRelease, installRelease, listReleases, pinnedSha, pinRelease, writeShim } from "../release/install.ts";
 import { createValidator } from "../schemas/validate.ts";
@@ -98,6 +100,8 @@ const operator = (): string => process.env["USER"] ?? "operator";
 function operatorOnly(what: string): void {
   if (process.env["CLAUDECODE"] !== undefined) fail(`${what} refuses to run inside a Claude Code session`);
 }
+
+const describeActivity = (a: Activity): string => `${String(a.writers)} writer(s), ${String(a.sessions)} session(s), ${String(a.runners)} runner and ${String(a.gates)} gate container(s)`;
 
 /** Every halt and unhalt, one JSON line each: the kill switch's own audit trail. */
 function haltLog(home: Home, entry: Record<string, unknown>): void {
@@ -209,7 +213,9 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
   };
   process.once("SIGTERM", onSignal);
   process.once("SIGINT", onSignal);
-  const probe = probes(...[killAt(injection.kill_at), replay === undefined ? undefined : holdAt(injection.hold_at, replay)].filter((p) => p !== undefined));
+  const probe = probes(...[killAt(injection.kill_at), replay === undefined ? undefined : holdAt(injection.hold_at, replay, () => readHalt(home) !== null)].filter((p) => p !== undefined));
+  // The run's writes reach the replica within a second (P2-07).
+  const replica = keepReplica(home, log);
   // Live sessions call the credential gateway (P2-02), never the API with the key.
   let gateway: Gateway | null = null;
   try {
@@ -250,6 +256,7 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
     if (state === "FAILED") process.exitCode = 1;
   } finally {
     await gateway?.close();
+    replica.stop();
     kept.stop();
     lock?.release();
   }
@@ -340,49 +347,82 @@ async function main(): Promise<void> {
     // The switch is a file, written before anything else can fail; the rest is best effort.
     ensureHome(home);
     const reason = values.reason ?? "no reason given";
-    const halt = setHalt(home, operator(), reason);
+    const { lines } = haltNow(home, operator(), reason);
     haltLog(home, { command: "halt", reason });
-    // Only a runner that is still the process it was: a reused pid is someone else's.
-    const lock = liveHolder(home);
-    if (lock !== null) {
-      try {
-        process.kill(lock.pid, "SIGTERM");
-      } catch {
-        // The runner already exited.
-      }
-      try {
-        const store = EventStore.open(home.db);
-        store.append({ task_id: lock.task_id, actor: { kind: "operator", id: operator() }, type: "command", payload: { command: "halt", reason } });
-        store.close();
-      } catch {
-        // The audit event is secondary to the halt itself.
-      }
-    }
-    // serve's workers (P2-03) hold leases, not the run lock: signal every live lease holder too.
-    let workers = 0;
-    try {
-      const store = EventStore.open(home.db);
-      for (const l of store.leases()) {
-        const p = parseHolder(l.holder);
-        if (p === null || !isLive(p) || p.pid === lock?.pid) continue;
-        try {
-          process.kill(p.pid, "SIGTERM");
-          workers++;
-        } catch {
-          // Gone.
-        }
-      }
-      store.close();
-    } catch {
-      // The store may not exist yet; nothing holds a lease then.
-    }
-    const containers = killGateContainers();
-    const runners = killRunnerContainers();
-    out(`factory ${describeHalt(halt)}`);
-    out(lock === null ? "no attended task was running" : `signalled ${lock.task_id} (pid ${String(lock.pid)}); it stops without failing and resumes later`);
-    if (workers > 0) out(`signalled ${String(workers)} serve worker(s); their tasks stop without failing`);
-    out(`${String(containers)} gate container(s) and ${String(runners.length)} runner container(s) stopped`);
+    for (const l of lines) out(l);
     out(`lift with: factoryctl unhalt --reason "…"`);
+    return;
+  }
+
+  if (command === "drill") {
+    ensureHome(home);
+    const kind = positionals[1];
+    if (kind === "kill-switch") {
+      operatorOnly("drill kill-switch");
+      const d = await killSwitchDrill(home, operator());
+      haltLog(home, { command: "halt", reason: "kill-switch drill" });
+      for (const l of d.lines) out(l);
+      out(`${d.passed ? "PASS" : "FAIL"}  all agent activity stopped in ${(d.stopped_ms / 1000).toFixed(1)} s (limit 300 s); before: ${describeActivity(d.before)}; after: ${describeActivity(d.after)}`);
+      out(`record: ${d.record}`);
+      out(`the factory stays halted; lift with: factoryctl unhalt --reason "…"`);
+      process.exitCode = d.passed ? 0 : 1;
+      return;
+    }
+    if (kind === "restore") {
+      const d = await restoreDrill(home);
+      out(`${d.passed ? "PASS" : "FAIL"}  restored ${String(d.tasks)} task(s), ${String(d.events)} events and ${String(d.files)} files in ${(d.rto_ms / 1000).toFixed(1)} s (RTO limit 3600 s)`);
+      out(`replica behind by ${String(d.lag_events)} event(s), ${(d.rpo_ms / 1000).toFixed(1)} s (RPO limit 60 s)`);
+      for (const x of d.damaged) out(`  not restored intact: ${x}`);
+      out(`record: ${d.record}`);
+      process.exitCode = d.passed ? 0 : 1;
+      return;
+    }
+    fail("usage: factoryctl drill kill-switch | restore");
+  }
+
+  if (command === "replica") {
+    ensureHome(home);
+    const sub = positionals[1];
+    if (sub === "init") {
+      operatorOnly("replica init");
+      const dir = positionals[2];
+      if (dir === undefined) fail("usage: factoryctl replica init DIR (an absolute path, ideally on another volume)");
+      let r;
+      try {
+        r = initReplica(home, dir, operator());
+      } catch (e) {
+        fail(e instanceof Error ? e.message : String(e));
+      }
+      const synced = syncReplica(home);
+      out(`replica at ${r.config.path}: ${String(synced?.events ?? 0)} events and ${String(synced?.objects ?? 0)} objects copied`);
+      if (r.sameVolume) out(`warning: ${r.config.path} is on the same volume as ${home.root}; it survives no disk failure`);
+      return;
+    }
+    if (sub === "sync" || sub === "status") {
+      if (sub === "sync") syncReplica(home);
+      const st = replicaStatus(home);
+      if (st === null) fail("no replica is set: factoryctl replica init DIR");
+      out(`replica at ${st.config.path}: ${st.state === null ? "never synced" : `${String(st.state.events)} events and ${String(st.state.objects)} objects, synced ${st.state.synced_at}`}; ${String(st.lag_events)} event(s) behind`);
+      if (st.sameVolume) out(`warning: the replica is on the same volume as ${home.root}`);
+      return;
+    }
+    fail("usage: factoryctl replica init DIR | sync | status");
+  }
+
+  if (command === "restore") {
+    operatorOnly("restore");
+    const from = values.source;
+    if (from === undefined) fail("usage: factoryctl restore --source REPLICA_DIR (into an empty $FACTORY_HOME)");
+    let r;
+    try {
+      r = await restore(resolve(from), home);
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    }
+    out(`restored ${String(r.tasks)} task(s), ${String(r.events)} events, ${String(r.objects)} objects and ${String(r.files)} files from ${from} (synced ${r.synced_at ?? "?"})`);
+    for (const x of r.missing) out(`  missing from the replica: ${x}`);
+    out("each task rebuilds its clone on its next run: factoryctl resume T-…; set the replica again with: factoryctl replica init DIR");
+    if (r.missing.length > 0) process.exitCode = 1;
     return;
   }
 
@@ -482,7 +522,10 @@ async function main(): Promise<void> {
         const stop = s.stop;
         process.once("SIGTERM", stop);
         process.once("SIGINT", stop);
+        // Commands through the API write too: serve keeps the replica up to date as well as its workers (P2-07).
+        const replica = keepReplica(home, log);
         await s.done;
+        replica.stop();
         return;
       }
       case "worker":
@@ -702,10 +745,16 @@ async function main(): Promise<void> {
         return;
       }
       default:
-        fail("usage: factoryctl task create | run | resume | pause | takeover | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor | serve | drain");
+        fail("usage: factoryctl task create | run | resume | pause | takeover | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor | serve | drain | replica | restore | drill");
     }
   } finally {
     store.close();
+    // Every command's writes reach the replica before it exits (P2-07); a failed sync is the replica's problem, never the command's.
+    try {
+      syncReplica(home);
+    } catch (e) {
+      process.stderr.write(`factoryctl: replica not synced: ${e instanceof Error ? e.message : String(e)}\n`);
+    }
   }
 }
 
