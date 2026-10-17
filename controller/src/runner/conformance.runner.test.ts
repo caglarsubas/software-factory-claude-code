@@ -4,11 +4,14 @@
 // managed layer enforces on its own, that the Bash sandbox runs in its normal mode, that the
 // network's only exit is the egress proxy and the proxy refuses the host, that the container
 // holds no credential and its env is exactly the allowlist, that the preflight broker answers
-// the Stop hook, and that a run killed mid-session leaves a container reaping removes.
+// the Stop hook, and that a run killed mid-session leaves a container reaping removes. From
+// P2-02 it also shows the model reached only through the proxy's route to the credential
+// gateway on the host, which holds the key, meters each turn and stops a session at its cap.
 //
 //   pnpm test:runner      (needs Docker; CI's runner job, on x64 and arm64)
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,11 +25,16 @@ import { factoryHome } from "../home.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { allowedEnvKeys } from "../session/env.ts";
 import type { Script } from "../session/stub-model.ts";
-import { listContainers, reapRunnerContainers, runArgs, runnerEnv, runnerUser, SDK_ENV } from "./container.ts";
+import { listContainers, reapRunnerContainers, runArgs, runnerEnv, runnerUser, SDK_ENV, type RunnerSetup } from "./container.ts";
+import { ensureTaskNetwork, gatewayAddress, removeTaskNetwork } from "./network.ts";
 import { buildWorld, destroyWorld, own, runCase, stubLog, type World } from "./suite.ts";
+import { startGateway, writeTokenFile, type UsageEntry } from "../gateway/gateway.ts";
+import { stubHandler } from "../session/stub-model.ts";
 import { self } from "../proc.ts";
 
 const TASK = "T-9001";
+/** The network whose proxy carries the gateway route. */
+const GATEWAY_TASK = "T-9002";
 const online = process.env["CI"] === "true" || process.env["RUNNER_SUITE_ONLINE"] === "1";
 const validator = createValidator();
 const release = loadRelease(validator);
@@ -55,6 +63,8 @@ const script = (): Script => ({
   "broker-fail": [{ text: "first stop" }, { text: "second stop" }],
   "broker-pass": [{ text: "first stop" }, { text: "should not be asked" }],
   "sleep": [sh("sleep 120"), done],
+  // Each turn reports 50k tokens in and 5k out on the builder's Sonnet 5.5: $0.15 a turn, within the CLI's context window.
+  "gateway-cap": [1, 2, 3].map((n) => ({ ...sh(`echo turn-${String(n)}`), usage: { input_tokens: 50_000, output_tokens: 5_000 } })).concat([{ ...sh("echo never"), usage: { input_tokens: 1, output_tokens: 1 } }]),
 });
 
 const results = (name: string): { is_error?: boolean; content?: unknown }[] => {
@@ -208,6 +218,59 @@ describe("runner conformance (P2-01)", () => {
     expect(passed.brokerRuns).toBe(1);
     expect(passed.outcome.ok).toBe(true);
     expect(stubLog(w, "broker-pass").map((e) => e["index"])).not.toContain(1);
+  }, 300_000);
+
+  it("reaches the model only through the gateway: the key never enters the runner, and a session stops at its hard cap", async () => {
+    // The API the gateway calls with the key: a stub on the host, which the runner cannot reach itself.
+    const keys: string[] = [];
+    const calls: Record<string, unknown>[] = [];
+    const stub = stubHandler(script, (e) => calls.push(e));
+    const upstream = createHttpServer((req, res) => {
+      keys.push(String(req.headers["x-api-key"]));
+      stub(req, res);
+    }).listen(0, "127.0.0.1");
+    await new Promise((resolve) => upstream.once("listening", resolve));
+    const keyFile = join(root, "anthropic.key");
+    writeFileSync(keyFile, "sk-ant-conformance-key\n", { mode: 0o600 });
+    const usage: UsageEntry[] = [];
+    const address = gatewayAddress();
+    const gw = await startGateway({ prices: release.config.prices, keyFile, upstream: `http://127.0.0.1:${String((upstream.address() as AddressInfo).port)}`, hosts: [address.bind], halted: () => null, onUsage: (e) => usage.push(e), log: () => undefined });
+    const upstreamProxy = process.env["FACTORY_EGRESS_UPSTREAM"];
+    // The proxy runs as the runner's user and writes its log here.
+    const logDir = join(root, "egress-gateway");
+    mkdirSync(logDir, { recursive: true, mode: 0o700 });
+    own(logDir);
+    const net = ensureTaskNetwork({ taskId: GATEWAY_TASK, image: w.image, owner: self(), logDir, gateway: { host: address.reach, port: Number(new URL(gw.urls[0] ?? "").port) }, ...(upstreamProxy === undefined ? {} : { upstream: upstreamProxy }) });
+    // $0.20 of hard budget: the first $0.15 turn fits, the second starts with $0.05 left and spends past it, the third is refused.
+    const grant = gw.issue({ taskId: TASK, label: "gateway-cap", limitUsd: 0.2 });
+    const token = writeTokenFile(join(root, "tokens"), grant.id, grant.token);
+    try {
+      const setup: RunnerSetup = { ...w.setup, network: net.network, proxyUrl: net.proxyUrl, tokenFile: token.path, baseUrl: net.gatewayUrl ?? "", noProxy: [net.proxy] };
+      // A soft cap well above the hard one: the gateway, not the session's own estimate, stops it.
+      const r = await runCase({ ...w, setup }, "gateway-cap", { budgetUsd: 10 }, validator);
+      const seen = JSON.stringify({ outcome: { subtype: r.outcome.subtype, errors: r.outcome.errors }, calls: calls.map((c) => [c["route"], c["case"], c["index"], c["model"]]), usage: usage.map((u) => [u.label, u.model, u.usd]) });
+      expect(gw.session(grant.id)?.refused, seen).toBe("budget");
+      const turns = calls.filter((c) => c["case"] === "gateway-cap").map((c) => c["index"]);
+      expect(turns).toEqual([0, 1]);
+      expect(r.outcome.ok).toBe(false);
+      const metered = usage.filter((u) => u.session === grant.id);
+      expect(metered.reduce((a, u) => a + u.usd, 0)).toBeGreaterThanOrEqual(0.3);
+      // Upstream saw the key and only the key; the runner held a token, and its env has no credential.
+      expect(new Set(keys)).toEqual(new Set(["sk-ant-conformance-key"]));
+      expect(r.prepared.env.ANTHROPIC_BASE_URL).toBe(net.gatewayUrl);
+      expect(JSON.stringify(r.prepared.env)).not.toContain("sk-ant");
+      expect(JSON.stringify(r.prepared.env)).not.toContain(grant.token);
+      // The proxy logged the route's requests by path and status, never the token.
+      const log = existsSync(net.log) ? readFileSync(net.log, "utf8") : "";
+      expect(log).toMatch(/"route":"gateway".*"path":"\/v1\/messages","status":200/);
+      expect(log).toMatch(/"route":"gateway".*"status":403/);
+      expect(log).not.toContain(grant.token);
+    } finally {
+      token.remove();
+      await gw.close();
+      upstream.close();
+      removeTaskNetwork(GATEWAY_TASK);
+    }
   }, 300_000);
 
   it("leaves no runner container behind a killed run once reaping runs", async () => {

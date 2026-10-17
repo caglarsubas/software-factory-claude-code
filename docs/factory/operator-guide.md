@@ -28,7 +28,7 @@ install -m 600 /dev/stdin "$FACTORY_HOME/secrets/anthropic.key"   # paste the Co
 unset ANTHROPIC_API_KEY                 # it would override the key file
 ```
 
-Sessions authenticate through `apiKeyHelper`, which reads that file. Every session is denied the file, by Read rules and by the sandbox.
+The key never reaches a session. From `v0.6.0` every live session calls the credential gateway in `factoryctl` with a token of its own, and only the gateway sends the key to the API (see [Credential gateway](#credential-gateway)). Sessions are denied the key file and their token files, by Read rules and by the sandbox. `takeover`, your own interactive session, still authenticates with the key file through `apiKeyHelper`.
 
 `FACTORY_GITHUB_TOKEN` stays in the shell that runs `factoryctl`. It reaches only the `git push` from the mirror and the PR calls. Without it, a run pushes nothing and opens no PR. On GitHub Enterprise, set `FACTORY_GITHUB_API_URL` to its API: `factoryctl` sends the token only over https.
 
@@ -142,7 +142,7 @@ Every run takes its task's lease first (P2-03), and everything it writes carries
 
 ### Serve
 
-`factoryctl serve` schedules tasks and is the single writer while it runs. Until the credential gateway (P2-02) exists, it runs replayed sessions only and refuses to start without `--replay`: it would otherwise run live sessions unattended on your key.
+`factoryctl serve` schedules tasks and is the single writer while it runs. Until P2-05's governance wiring turns on live runner sessions, it runs replayed sessions only and refuses to start without `--replay`: unattended live sessions belong in the runner, behind the credential gateway, under GitHub governance.
 
 - **Scheduling:** up to `concurrency.max_tasks` tasks at once (`config/factory.yaml`, or `--max-tasks`). Each runs as a worker process holding the task's lease. Two tasks on one target whose spec scopes overlap never run together; a task without a spec yet overlaps everything on its target.
 - **Kill safety:** killing `serve` leaves its workers running under their leases. The next `serve` leaves them alone, and takes over only the tasks whose holder is dead or hung.
@@ -196,13 +196,24 @@ Every run takes its task's lease first (P2-03), and everything it writes carries
 
 The event store (`$FACTORY_HOME/factory.db`) is append-only. Never edit it. To keep a copy, back up the whole `$FACTORY_HOME` while no task runs.
 
+## Credential gateway
+
+From `v0.6.0` (P2-02) every live session's model traffic goes through the gateway that `factoryctl run` starts on loopback for the run. Replayed runs have none.
+
+- **Tokens, not the key:** each session gets a token, in a file under `$FACTORY_HOME/tokens/`, and calls the gateway as its `ANTHROPIC_BASE_URL`. The gateway swaps the token for the key on the way to the API. A token is good for that one session of that task. It is revoked, and its file deleted, when the session ends, and every token is revoked by `halt`.
+- **The hard cap:** a session's token is good up to what is left of the task's hard budget when the session starts. Once its metered spend reaches that, the gateway refuses its next request, the session ends, and the task fails as `budget_exceeded` mid-stage. A request already running finishes, so a task can pass its cap by at most the requests in flight.
+- **Metered cost:** the gateway meters every response from the usage the API reports, prices it by the table in the release's `config/factory.yaml` (`prices`, ROADMAP §11), and records it as a `usage` event. Budgets, `report`, the manifest and calibration all count metered cost; a session's own estimate stays beside it as `reported_cost_usd`.
+- **What it forwards:** the Messages and token-counting routes only, for a model the price table names, without the session's credential. Anything else is refused there.
+
+When a §11 re-check finds a price change, the price table changes in a release of its own.
+
 ## Budgets and limits
 
 Every task runs inside four limits (P1-01):
 
 | Limit | What happens |
 |---|---|
-| The task's budget, by tier | The task fails as `budget_exceeded`. Before triage the task is budgeted at the highest tier; afterwards at the highest tier any step has found. |
+| The task's budget, by tier | The task fails as `budget_exceeded`, mid-stage when the gateway refuses a session's request. Before triage the task is budgeted at the highest tier; afterwards at the highest tier any step has found. |
 | A session's share of that budget | The session stops at its `maxBudgetUsd`, and the task fails as `budget_exceeded`. |
 | 90 minutes of active time | The task fails as `wall_clock`. Time spent waiting for you at a gate does not count. |
 | The target's monthly cap (`budgets.monthly_usd` in its profile) | The task **pauses**: a run stops before its next step and the task keeps its state. Resume it next month, or after raising the cap. |
@@ -296,7 +307,8 @@ It acts at once:
 - writes `$FACTORY_HOME/HALT`;
 - signals the running task, and every `serve` worker, whose sessions abort;
 - stops every gate container and runner container;
-- makes the in-process guard deny every further tool call.
+- makes the in-process guard deny every further tool call;
+- makes the credential gateway refuse every request and revoke every token.
 
 While `HALT` exists, no run starts. A halted task does not fail: it stays where it stopped. Escalate by severity:
 
@@ -331,7 +343,7 @@ What the container gets:
 - **Network:** an internal network whose only exit is the task's egress proxy. The proxy allows HTTPS to the package registries and refuses your machine, private addresses and everything else. It logs each request to `$FACTORY_HOME/runs/<task>/egress/proxy.ndjson`.
 - **Files:** its worktree, task and session directories at their host paths. Nothing under `$FACTORY_HOME/secrets` and no Docker socket is ever mounted.
 
-Live runner sessions turn on with the credential gateway (P2-02), so the real API key never enters a container; until then `run` keeps sessions on the host.
+A runner session reaches the model through one fixed route on its egress proxy (`http://<proxy>:3129`) to the credential gateway on the host. The real API key never enters a container: the runner holds only its session's token, mounted read-only and denied to every tool and to the sandbox. The runner suite checks this route, and a session stopped at its hard cap, against a stub model. Live runner sessions turn on with P2-05's governance wiring; until then `run` keeps sessions on the host.
 
 Check the image and its controls on your machine at each release (it needs Docker):
 
@@ -401,5 +413,6 @@ G1 closes Phase 1. `factoryctl gate G1` checks its five automated criteria from 
 | `mirrors/`, `worktrees/<task>/`, `sessions/<task>/` | bare mirrors, per-task clones, per-task session homes |
 | `procs/` | the running sessions' processes, so a run that dies leaves none behind |
 | `secrets/` | the API key file; never readable by a session |
+| `tokens/` | each live session's gateway token while it runs; never readable by a session |
 | `gates/<gate>/` | gate snapshots and evidence |
 | `HALT`, `halt.log` | the kill switch and its audit trail |

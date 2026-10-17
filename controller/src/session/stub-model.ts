@@ -13,7 +13,15 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
-export type Turn = { text: string } | { tool: string; input: Record<string, unknown> };
+/** What a turn reports it used (default: 10 in, 5 out); the gateway's tests make a session expensive with it. */
+export interface StubUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
+export type Turn = ({ text: string } | { tool: string; input: Record<string, unknown> }) & { usage?: StubUsage };
 export type Script = Record<string, Turn[]>;
 
 interface Block {
@@ -67,14 +75,15 @@ export function nextTurn(script: Script, req: Request): { turn: Turn; case: stri
 }
 
 function answer(res: ServerResponse, req: Request, turn: Turn, id: string): void {
-  const usage = { input_tokens: 10, output_tokens: 1 };
+  const usage = { input_tokens: turn.usage?.input_tokens ?? 10, output_tokens: 1, cache_read_input_tokens: turn.usage?.cache_read_input_tokens ?? 0, cache_creation_input_tokens: turn.usage?.cache_creation_input_tokens ?? 0 };
+  const output = turn.usage?.output_tokens ?? 5;
   const message = { id, type: "message", role: "assistant", model: req.model ?? "stub", content: [] as unknown[], stop_reason: null, stop_sequence: null, usage };
   const tool = "tool" in turn;
   const block = tool ? { type: "tool_use", id: `toolu_${id}`, name: turn.tool, input: {} } : { type: "text", text: "" };
   const stop = tool ? "tool_use" : "end_turn";
   if (req.stream !== true) {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ...message, content: [tool ? { ...block, input: turn.input } : { type: "text", text: turn.text }], stop_reason: stop }));
+    res.end(JSON.stringify({ ...message, usage: { ...usage, output_tokens: output }, content: [tool ? { ...block, input: turn.input } : { type: "text", text: turn.text }], stop_reason: stop }));
     return;
   }
   const delta = tool ? { type: "input_json_delta", partial_json: JSON.stringify(turn.input) } : { type: "text_delta", text: turn.text };
@@ -83,7 +92,7 @@ function answer(res: ServerResponse, req: Request, turn: Turn, id: string): void
     { type: "content_block_start", index: 0, content_block: block },
     { type: "content_block_delta", index: 0, delta },
     { type: "content_block_stop", index: 0 },
-    { type: "message_delta", delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: 5 } },
+    { type: "message_delta", delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: output } },
     { type: "message_stop" },
   ];
   res.writeHead(200, { "content-type": "text/event-stream" });

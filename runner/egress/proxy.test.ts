@@ -1,9 +1,11 @@
 // The egress proxy's policy (P2-01): only CONNECT, only port 443, only allowlisted names, and
-// never to an address that is not public, whatever the name resolves to.
+// never to an address that is not public, whatever the name resolves to; and its one fixed
+// route to the credential gateway (P2-02).
 import { once } from "node:events";
+import { createServer as createHttpServer } from "node:http";
 import { connect, createServer, type AddressInfo, type Server, type Socket } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { blockedAddress, createEgressProxy, decide } from "./proxy.ts";
+import { blockedAddress, createEgressProxy, createGatewayRoute, decide } from "./proxy.ts";
 
 describe("egress proxy policy", () => {
   it("refuses other ports, IP literals, unlisted and malformed names", () => {
@@ -92,5 +94,56 @@ describe("egress proxy", () => {
     const res = await fetch(`http://127.0.0.1:${String(port)}/`, { headers: { host: "registry.npmjs.org" } });
     expect(res.status).toBe(403);
     expect(logs.at(-1)).toMatchObject({ method: "GET", decision: "refused", reason: "only CONNECT to port 443 is allowed" });
+  });
+});
+
+describe("the gateway route (P2-02)", () => {
+  let gateway: Server;
+  let route: Server;
+  let port = 0;
+  const seen: { method: string; url: string; headers: Record<string, unknown>; body: string }[] = [];
+  const logs: Record<string, unknown>[] = [];
+
+  beforeAll(async () => {
+    // Stands in for factoryctl's gateway: echoes what reached it.
+    gateway = createHttpServer((req, res) => {
+      let body = "";
+      req.on("data", (c: Buffer) => (body += c.toString()));
+      req.on("end", () => {
+        seen.push({ method: req.method ?? "", url: req.url ?? "", headers: req.headers, body });
+        res.writeHead(req.url === "/v1/messages/count_tokens" ? 200 : 201, { "content-type": "text/event-stream" }).end("event: message_stop\ndata: {}\n\n");
+      });
+    }).listen(0, "127.0.0.1");
+    await once(gateway, "listening");
+    route = createGatewayRoute({ gateway: { host: "127.0.0.1", port: (gateway.address() as AddressInfo).port }, log: (e) => logs.push(e) }).listen(0, "127.0.0.1");
+    await once(route, "listening");
+    port = (route.address() as AddressInfo).port;
+  });
+  afterAll(() => {
+    route.close();
+    gateway.close();
+  });
+
+  it("forwards each request to the one gateway, unchanged, and logs no header or body", async () => {
+    const r = await fetch(`http://127.0.0.1:${String(port)}/v1/messages?beta=true`, { method: "POST", headers: { "x-api-key": "sfgw_secret-token", "anthropic-version": "2023-06-01", "content-type": "application/json", host: "attacker.example" }, body: '{"model":"claude-sonnet-5-5"}' });
+    expect(r.status).toBe(201);
+    expect(await r.text()).toContain("message_stop");
+    expect(seen.at(-1)).toMatchObject({ method: "POST", url: "/v1/messages?beta=true", body: '{"model":"claude-sonnet-5-5"}', headers: { "x-api-key": "sfgw_secret-token", "anthropic-version": "2023-06-01" } });
+    expect(seen.at(-1)?.headers["host"]).toBe(`127.0.0.1:${String((gateway.address() as AddressInfo).port)}`);
+    expect(logs.at(-1)).toMatchObject({ route: "gateway", method: "POST", path: "/v1/messages", status: 201 });
+    expect(JSON.stringify(logs)).not.toContain("sfgw_secret-token");
+    expect(JSON.stringify(logs)).not.toContain("claude-sonnet-5-5");
+  });
+
+  it("answers 502 when the gateway is gone", async () => {
+    const dead = createGatewayRoute({ gateway: { host: "127.0.0.1", port: 1 }, log: (e) => logs.push(e) }).listen(0, "127.0.0.1");
+    await once(dead, "listening");
+    try {
+      const r = await fetch(`http://127.0.0.1:${String((dead.address() as AddressInfo).port)}/v1/messages`, { method: "POST", body: "{}" });
+      expect(r.status).toBe(502);
+      expect(logs.at(-1)).toMatchObject({ route: "gateway", status: "failed" });
+    } finally {
+      dead.close();
+    }
   });
 });

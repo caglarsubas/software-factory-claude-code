@@ -14,6 +14,8 @@ export interface Home {
   sessions: string;
   /** Operator-provided credentials (the API key file); denied to every session. */
   secrets: string;
+  /** Gateway session tokens (P2-02), one file per live session while it runs; denied to every session. */
+  tokens: string;
   /** Installed, read-only factory releases (`releases/<sha>`), and the operator's pin to one of them. */
   releases: string;
   current: string;
@@ -35,6 +37,7 @@ export function factoryHome(env: NodeJS.ProcessEnv = process.env): Home {
     mirrors: join(root, "mirrors"),
     sessions: join(root, "sessions"),
     secrets: join(root, "secrets"),
+    tokens: join(root, "tokens"),
     releases: join(root, "releases"),
     current: join(root, "current"),
     bin: join(root, "bin"),
@@ -45,7 +48,7 @@ export function factoryHome(env: NodeJS.ProcessEnv = process.env): Home {
 }
 
 export function ensureHome(home: Home): void {
-  for (const dir of [home.root, home.runs, home.worktrees, home.mirrors, home.sessions, home.secrets, home.releases]) {
+  for (const dir of [home.root, home.runs, home.worktrees, home.mirrors, home.sessions, home.secrets, home.tokens, home.releases]) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 }

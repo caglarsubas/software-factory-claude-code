@@ -36,7 +36,11 @@ describe("telemetry configuration", () => {
     expect(allowedEnvKeys([...ENV_ALLOWLIST, "HTTPS_PROXY", "NO_PROXY"].sort())).toBe(true);
     expect(allowedEnvKeys([...ENV_ALLOWLIST, ...RUNNER_ENV].sort())).toBe(true);
     expect(allowedEnvKeys([...ENV_ALLOWLIST, ...OTEL_ENV, ...RUNNER_ENV].sort())).toBe(true);
-    expect(allowedEnvKeys([...ENV_ALLOWLIST, "ANTHROPIC_BASE_URL"].sort())).toBe(false);
+    // A live host session (P2-02) adds the gateway's endpoint alone; its token is a file, never a variable.
+    expect(allowedEnvKeys([...ENV_ALLOWLIST, "ANTHROPIC_BASE_URL"].sort())).toBe(true);
+    expect(allowedEnvKeys([...ENV_ALLOWLIST, ...OTEL_ENV, "ANTHROPIC_BASE_URL"].sort())).toBe(true);
+    expect(allowedEnvKeys([...ENV_ALLOWLIST, "HTTPS_PROXY", "ANTHROPIC_BASE_URL"].sort())).toBe(false);
+    expect(allowedEnvKeys([...ENV_ALLOWLIST, "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"].sort())).toBe(false);
     expect(allowedEnvKeys([...ENV_ALLOWLIST, ...RUNNER_ENV, "ANTHROPIC_API_KEY"].sort())).toBe(false);
   });
 });

@@ -8,8 +8,8 @@
 // the next serve finds their leases held and leaves them be. `pause` stops issuing work;
 // `drain` also lets running workers finish and then exits.
 //
-// Until the credential gateway (P2-02), serve runs replayed sessions only: live sessions would
-// run unattended with the operator's key on the host.
+// Until the governance wiring (P2-05) turns on live runner sessions, serve runs replayed sessions
+// only: unattended live sessions belong in the runner, each behind its gateway token (P2-02).
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { closeSync, existsSync, linkSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -103,7 +103,7 @@ export interface ServeOptions {
   maxTasks: number;
   host: string;
   port: number;
-  /** Replayed sessions: each task's transcripts in `<replay>/<task>/`. Required until P2-02. */
+  /** Replayed sessions: each task's transcripts in `<replay>/<task>/`. Required until P2-05. */
   replay: string;
   log: (line: string) => void;
 }

@@ -7,13 +7,21 @@
 // reach. It resolves names itself and connects to the address it checked, so a name cannot
 // re-resolve to something else between the check and the connection. Every request is logged.
 //
+// It also carries the one route to the host (P2-02): a second listener that forwards every
+// HTTP request, unchanged, to the credential gateway in factoryctl, where the runner's
+// ANTHROPIC_BASE_URL points. The gateway is a fixed address set at start, never a name a session
+// chooses, and it answers only a valid session token. That route's log has the method, path and
+// status of each request, never a header or a body.
+//
 // Dependency-free: it runs from the runner image as `node proxy.ts`, configured by env:
-//   FACTORY_EGRESS_ALLOW     comma-separated host names
-//   FACTORY_EGRESS_PORT      listen port (default 3128)
-//   FACTORY_EGRESS_LOG       NDJSON log file (default: stdout only)
-//   FACTORY_EGRESS_UPSTREAM  http://host:port of an upstream proxy, when the host needs one
+//   FACTORY_EGRESS_ALLOW         comma-separated host names
+//   FACTORY_EGRESS_PORT          listen port (default 3128)
+//   FACTORY_EGRESS_LOG           NDJSON log file (default: stdout only)
+//   FACTORY_EGRESS_UPSTREAM      http://host:port of an upstream proxy, when the host needs one
+//   FACTORY_EGRESS_GATEWAY       host:port of the credential gateway (none: no gateway route)
+//   FACTORY_EGRESS_GATEWAY_PORT  the gateway route's listen port (default 3129)
 import { appendFileSync } from "node:fs";
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, request as httpRequest, type IncomingMessage, type Server } from "node:http";
 import { isIP, connect as netConnect, type Socket } from "node:net";
 import { lookup as dnsLookup } from "node:dns/promises";
 import type { Duplex } from "node:stream";
@@ -137,6 +145,46 @@ export function createEgressProxy(o: ProxyOptions): Server {
   return server;
 }
 
+/** Hop-by-hop headers, which a forwarding hop drops. */
+const HOP = new Set(["connection", "keep-alive", "proxy-authorization", "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade"]);
+
+/** The gateway route: every request forwarded to the one gateway address, and logged without its headers. */
+export function createGatewayRoute(o: { gateway: { host: string; port: number }; log?: (entry: Record<string, unknown>) => void }): Server {
+  const log = o.log ?? ((e) => { process.stdout.write(`${JSON.stringify(e)}\n`); });
+  return createServer((req, res) => {
+    const path = (req.url ?? "/").split("?")[0] ?? "/";
+    const record = (status: number | string): void => {
+      log({ ts: new Date().toISOString(), route: "gateway", client: req.socket.remoteAddress ?? null, method: req.method ?? null, path, status });
+    };
+    const headers: Record<string, string | string[]> = {};
+    for (const [k, v] of Object.entries(req.headers)) if (v !== undefined && !HOP.has(k)) headers[k] = v;
+    headers["host"] = `${o.gateway.host}:${String(o.gateway.port)}`;
+    const up = httpRequest({ host: o.gateway.host, port: o.gateway.port, method: req.method, path: req.url, headers }, (upRes) => {
+      const out: Record<string, string | string[]> = {};
+      for (const [k, v] of Object.entries(upRes.headers)) if (v !== undefined && !HOP.has(k)) out[k] = v;
+      res.writeHead(upRes.statusCode ?? 502, out);
+      upRes.pipe(res);
+      record(upRes.statusCode ?? 502);
+    });
+    up.on("error", () => {
+      record("failed");
+      if (!res.headersSent) res.writeHead(502, { "content-type": "application/json" }).end('{"type":"error","error":{"type":"api_error","message":"egress: the gateway is unreachable"}}');
+      else res.destroy();
+    });
+    res.on("close", () => {
+      if (!res.writableFinished) up.destroy();
+    });
+    req.pipe(up);
+  });
+}
+
+function gatewayFrom(v: string | undefined): { host: string; port: number } | undefined {
+  if (v === undefined || v === "") return undefined;
+  const m = /^(.+):([0-9]{1,5})$/.exec(v);
+  if (m === null) throw new Error("FACTORY_EGRESS_GATEWAY must be host:port");
+  return { host: (m[1] ?? "").replace(/^\[|\]$/g, ""), port: Number(m[2]) };
+}
+
 function upstreamFrom(url: string | undefined): { host: string; port: number } | undefined {
   if (url === undefined || url === "") return undefined;
   const u = new URL(url);
@@ -160,4 +208,15 @@ if (import.meta.main) {
   server.listen(Number(process.env["FACTORY_EGRESS_PORT"] ?? "3128"), "0.0.0.0", () => {
     process.stdout.write(`${JSON.stringify({ ts: new Date().toISOString(), event: "listening", allow })}\n`);
   });
+  const gateway = gatewayFrom(process.env["FACTORY_EGRESS_GATEWAY"]);
+  if (gateway !== undefined) {
+    createGatewayRoute({
+      gateway,
+      log: (e) => {
+        const line = `${JSON.stringify(e)}\n`;
+        process.stdout.write(line);
+        if (file !== undefined && file !== "") appendFileSync(file, line);
+      },
+    }).listen(Number(process.env["FACTORY_EGRESS_GATEWAY_PORT"] ?? "3129"), "0.0.0.0");
+  }
 }

@@ -4,6 +4,22 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-17
+
+### Added
+
+- **The credential and budget gateway (P2-02).** Live sessions no longer use the API key. `factoryctl run` starts a gateway on loopback that holds the key; each session gets its own token, in a file under `$FACTORY_HOME/tokens/`, and calls the gateway as its `ANTHROPIC_BASE_URL`.
+  - **Hard cap:** a session's token is good up to what is left of the task's hard budget. Once its metered spend reaches that, the gateway refuses its next request, and the task fails as `budget_exceeded` mid-stage.
+  - **Metering:** every response is metered from the usage the API reports, priced by the new `prices` table in `config/factory.yaml` (ROADMAP §11), and recorded as a `usage` event. Budgets, `report` and the manifest count metered cost; a session's own estimate is kept as `reported_cost_usd`, and a killed session is charged what was metered instead of its cap.
+  - **Revocation:** a token is revoked when its session ends, and every token while the factory is halted.
+  - **Scope:** only the Messages and token-counting routes, for a priced model, reach the API; the session's credential never does.
+- **The runner's gateway route.** The egress proxy forwards one fixed route to the gateway on the host (`http://<proxy>:3129`), logging only method, path and status, so a runner session reaches the model without the key ever entering its container. The runner suite checks it with the pinned CLI.
+
+### Changed
+
+- **Config and schema:** `config/factory.yaml` gains the required `prices` table, and the event schema the `usage` type. Events written by earlier releases stay valid.
+- **`factoryctl serve`** still runs replayed sessions only, now until P2-05 turns on live runner sessions under governance.
+
 ## [0.5.0] - 2026-10-17
 
 ### Added
@@ -185,7 +201,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.2...v0.3.3

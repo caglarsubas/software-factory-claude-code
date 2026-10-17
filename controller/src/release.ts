@@ -13,6 +13,23 @@ export interface FactoryConfig {
   model_pins: Record<string, string>;
   routing: Record<string, { model: string; effort: string; escalate_to?: string }>;
   retention_days: { bundles: number; transcripts: number; otel: number };
+  prices: Prices;
+}
+
+/** $ per million tokens for one model (config/factory.yaml `prices`, ROADMAP §11). */
+export interface ModelPrice {
+  input: number;
+  output: number;
+  cache_read: number;
+  /** Prices for a request whose prompt is above `above_prompt_tokens`. */
+  long?: { above_prompt_tokens: number; input: number; output: number; cache_read: number };
+}
+
+export interface Prices {
+  as_of: string;
+  /** Cache writes as multiples of the input price, by TTL. */
+  cache_write: { "5m": number; "1h": number };
+  models: Record<string, ModelPrice>;
 }
 
 export interface ToolsPolicy {

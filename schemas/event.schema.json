@@ -55,7 +55,8 @@
         "side_effect_intent",
         "side_effect_done",
         "artifact_committed",
-        "alarm"
+        "alarm",
+        "usage"
       ]
     },
     "from": {
@@ -359,6 +360,105 @@
               "alias",
               "pinned",
               "resolved"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "usage"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "actor": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "const": "factoryctl"
+              }
+            }
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "One metered Messages API response (P2-02): what the credential gateway saw a session use, priced by the release's price table. The task's spend is the sum of these for its gateway sessions.",
+            "properties": {
+              "session": {
+                "type": "string",
+                "pattern": "^gw_[A-Za-z0-9_-]+$"
+              },
+              "label": {
+                "$ref": "defs.schema.json#/$defs/text"
+              },
+              "model": {
+                "type": "string",
+                "pattern": "^claude-[a-z]+-[0-9]+(-[0-9]+)?$"
+              },
+              "usage": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "input_tokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "output_tokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "cache_read_input_tokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "cache_creation_input_tokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "cache_creation_5m_input_tokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "cache_creation_1h_input_tokens": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "input_tokens",
+                  "output_tokens",
+                  "cache_read_input_tokens",
+                  "cache_creation_input_tokens",
+                  "cache_creation_5m_input_tokens",
+                  "cache_creation_1h_input_tokens"
+                ]
+              },
+              "usd": {
+                "type": "number",
+                "minimum": 0
+              },
+              "reported": {
+                "type": "boolean"
+              },
+              "request_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "session",
+              "label",
+              "model",
+              "usage",
+              "usd",
+              "reported",
+              "request_id"
             ]
           }
         }

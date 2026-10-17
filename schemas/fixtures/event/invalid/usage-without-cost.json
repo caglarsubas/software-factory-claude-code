@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "seq": 30,
+  "task_id": "T-0042",
+  "ts": "2026-10-17T12:00:00Z",
+  "epoch": 1,
+  "actor": {
+    "kind": "factoryctl",
+    "id": "factoryctl"
+  },
+  "type": "usage",
+  "payload": {
+    "session": "gw_Ab3dE_f9",
+    "label": "build",
+    "model": "claude-sonnet-5-5",
+    "usage": {
+      "input_tokens": 1200,
+      "output_tokens": 340,
+      "cache_read_input_tokens": 48000,
+      "cache_creation_input_tokens": 900,
+      "cache_creation_5m_input_tokens": 900,
+      "cache_creation_1h_input_tokens": 0
+    },
+    "reported": true,
+    "request_id": "req_011"
+  }
+}

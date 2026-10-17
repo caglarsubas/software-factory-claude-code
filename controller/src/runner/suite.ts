@@ -130,9 +130,12 @@ export interface CaseOptions {
   preflight?: string[];
   /** Changes the prepared options (e.g. drop the in-process guard to test the managed layer alone). */
   tweak?: (p: PreparedSession) => void;
+  /** The session's soft cap, its maxBudgetUsd (default $1). */
+  budgetUsd?: number;
 }
 
 export interface CaseResult {
+  /** The session's outcome; an error result the SDK threw on is an outcome that is not ok. */
   outcome: StageOutcome;
   prepared: PreparedSession;
   transcript: string;
@@ -148,7 +151,7 @@ export async function runCase(w: World, name: string, o: CaseOptions = {}, valid
     prompt: `[case:${name}] Run the scripted case.`,
     extraDirs: [w.taskDir],
     guard: { worktree: w.worktree, task_dir: w.taskDir, protected_paths: o.protected ?? [], scope: null, writable_task_files: ["build-report.md"], secret_paths: [], readable_roots: [] },
-    budgetUsd: 1,
+    budgetUsd: o.budgetUsd ?? 1,
     preflight: { argv: o.preflight ?? ["true"], timeout_ms: 60_000 },
   };
   const prepared = prepareSession({ home, taskId: w.taskId, release, validator, keyFile: join(w.root, "no-such-key"), runner: w.setup }, spec);
@@ -162,7 +165,9 @@ export async function runCase(w: World, name: string, o: CaseOptions = {}, valid
   });
   const transcript = join(home.runs, w.taskId, "transcripts", `${name}.ndjson`);
   try {
-    const outcome = await sdkRunner.run({ label: name, prompt: spec.prompt, options: prepared.options, transcript, denials: prepared.denials });
+    const outcome = await sdkRunner.run({ label: name, prompt: spec.prompt, options: prepared.options, transcript, denials: prepared.denials }).catch((e: unknown): StageOutcome => ({
+      ok: false, subtype: "thrown", structured: undefined, text: "", costUsd: 0, inputTokens: 0, outputTokens: 0, models: [], numTurns: 0, durationMs: 0, denied: [], errors: [e instanceof Error ? e.message : String(e)], sessionId: null,
+    }));
     return { outcome, prepared, transcript, brokerRuns };
   } finally {
     await broker?.stop();

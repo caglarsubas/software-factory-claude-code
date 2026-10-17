@@ -55,6 +55,11 @@ export interface SessionInputs {
   validator: Validator;
   /** File apiKeyHelper reads; denied to every tool and to the sandbox. */
   keyFile: string;
+  /**
+   * The credential gateway (P2-02) for a host session: the CLI calls baseUrl with the token in
+   * tokenFile instead of the key. A runner session's gateway is in its RunnerSetup instead.
+   */
+  gateway?: { baseUrl: string; tokenFile: string };
   abort?: AbortController;
   /** OTel export for this session (P1-06), with the attributes only the pipeline knows. */
   telemetry?: { config: Telemetry; tier: string; round: number };
@@ -92,12 +97,14 @@ export function agentDefinition(release: Release, agent: string, extraTools: rea
 /** Credential and secret locations no session may read, by absolute path as well as by `~`. */
 export function secretPaths(home: Home): string[] {
   const operator = homedir();
-  return [home.secrets, ...[".ssh", ".aws", ".azure", ".config/gcloud", ".config/gh", ".docker", ".netrc", ".npmrc", ".pypirc", ".git-credentials"].map((p) => join(operator, p))];
+  return [home.secrets, home.tokens, ...[".ssh", ".aws", ".azure", ".config/gcloud", ".config/gh", ".docker", ".netrc", ".npmrc", ".pypirc", ".git-credentials"].map((p) => join(operator, p))];
 }
 
 export function sessionSettings(inputs: SessionInputs, release: Release): Settings {
   // In the runner the managed settings name the session's token file; the host's key file is never mentioned.
-  const key = inputs.runner === undefined ? { apiKeyHelper: `cat '${inputs.keyFile.replaceAll("'", "'\\''")}'` } : {};
+  // A host session with a gateway reads its own token, never the key.
+  const file = inputs.gateway?.tokenFile ?? inputs.keyFile;
+  const key = inputs.runner === undefined ? { apiKeyHelper: `cat '${file.replaceAll("'", "'\\''")}'` } : {};
   const deny = [
     "Read(./.env*)",
     "Read(~/.ssh/**)",
@@ -170,6 +177,7 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
   const t = inputs.telemetry;
   const telemetry = t === undefined ? undefined : telemetryEnv(t.config, { task: inputs.taskId, stage: spec.stage, label: spec.label, round: t.round, tier: t.tier, agent: spec.agent, release: release.info?.tag ?? "dev" });
   const env = sessionEnv({ home, configDir, tmpDir, guardConfig: guardConfigPath, modelPins: release.config.model_pins, ...(telemetry === undefined ? {} : { telemetry }) });
+  if (runner === undefined && inputs.gateway !== undefined) env.ANTHROPIC_BASE_URL = inputs.gateway.baseUrl;
   if (runner !== undefined) {
     env.HTTPS_PROXY = runner.proxyUrl;
     env.NO_PROXY = (runner.noProxy ?? []).join(",");

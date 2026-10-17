@@ -2,6 +2,7 @@
 // Bash inherits it, and WebFetch and MCP bypass the sandbox, so no credential may be in it.
 // Telemetry (P1-06) adds the OTEL_ENV names, and nothing else, when the operator turns it on.
 // A runner session (P2-01) adds RUNNER_ENV: the egress proxy, and the endpoint its CLI calls.
+// A live session (P2-02) adds ANTHROPIC_BASE_URL, the credential gateway; its token is a file.
 import { OTEL_ENV, type OtelEnv } from "../telemetry.ts";
 
 export const ENV_ALLOWLIST = [
@@ -33,12 +34,13 @@ export type SessionEnv = Record<(typeof ENV_ALLOWLIST)[number], string> & OtelEn
 
 /**
  * What G0-3 and G1-3 accept as a session's env names: exactly the allowlist, with or without
- * every telemetry name, and on the runner with or without the endpoint its CLI calls.
+ * every telemetry name, with or without the runner's proxy names, and with or without the
+ * endpoint the CLI calls (the gateway from P2-02, on the host or the runner).
  */
 export function allowedEnvKeys(keys: unknown): boolean {
   const got = JSON.stringify(keys);
-  const runner = RUNNER_ENV.filter((k) => k !== "ANTHROPIC_BASE_URL");
-  const sets = [[], OTEL_ENV].flatMap((otel) => [[], runner, RUNNER_ENV].map((r) => [...ENV_ALLOWLIST, ...otel, ...r].sort()));
+  const proxy = RUNNER_ENV.filter((k) => k !== "ANTHROPIC_BASE_URL");
+  const sets = [[], OTEL_ENV].flatMap((otel) => [[], proxy].flatMap((p) => [[], ["ANTHROPIC_BASE_URL"]].map((b) => [...ENV_ALLOWLIST, ...otel, ...p, ...b].sort())));
   return sets.some((s) => JSON.stringify(s) === got);
 }
 
