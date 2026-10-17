@@ -1,10 +1,10 @@
-// Verify every download the gate image pins (ROADMAP §3.2: each scanner and package has a
-// signature or provenance check). CI runs this before building the image; it reads the pins
-// from the Dockerfile itself, so a pin cannot land without its publisher's signature.
+// Verify every download the gate and runner images pin (ROADMAP §3.2: each scanner and package
+// has a signature or provenance check). CI runs this before building the images; it reads the
+// pins from the Dockerfiles themselves, so a pin cannot land without its publisher's signature.
 //
 //   node gates/src/verify-tools.ts      (needs curl, cosign, slsa-verifier, and gh with GH_TOKEN)
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, createPublicKey, verify } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -21,11 +21,69 @@ export function pins(dockerfile: string): Pin[] {
   return [...dockerfile.matchAll(ADD)].map((m) => ({ sha256: m[1] ?? "", url: m[2] ?? "" }));
 }
 
+/** The Dockerfiles whose downloads are pinned, relative to the gates package. */
+export const DOCKERFILES = ["image/Dockerfile", "../runner/Dockerfile"];
+
+const NPM = /^https:\/\/registry\.npmjs\.org\/((?:@[\w.-]+\/)?[\w.-]+)\/-\/[\w.-]+-(\d+\.\d+\.\d+)\.tgz$/;
+
+/**
+ * npm's registry signing keys (https://registry.npmjs.org/-/npm/v1/keys), pinned by key ID: a
+ * signature by any other key fails, and a rotation is a reviewed change here.
+ */
+export const NPM_REGISTRY_KEYS: Readonly<Record<string, string>> = {
+  "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEY6Ya7W++7aUPzvMTrezH6Ycx3c+HOKYCcNGybJZSCJq/fd7Qa8uuAKtdIkUQtQiEKERhAmE5lMMJhP8OkDOa2g==",
+};
+
+export interface NpmDist {
+  tarball: string;
+  integrity: string;
+  signatures?: { keyid: string; sig: string }[];
+}
+
+/** Whether a pinned key signed `<name>@<version>:<integrity>`, as npm's registry signs every version. */
+export function npmSignatureValid(name: string, version: string, dist: NpmDist): boolean {
+  return (dist.signatures ?? []).some((s) => {
+    const key = NPM_REGISTRY_KEYS[s.keyid];
+    if (key === undefined) return false;
+    const pub = createPublicKey({ key: Buffer.from(key, "base64"), format: "der", type: "spki" });
+    return verify("sha256", Buffer.from(`${name}@${version}:${dist.integrity}`), pub, Buffer.from(s.sig, "base64"));
+  });
+}
+
+/** The registry's record for the pinned tarball must name it, match its bytes, and carry a pinned key's signature. */
+export function checkNpm(pin: Pin, bytes: Buffer, meta: { name: string; version: string; dist: NpmDist }): void {
+  const m = NPM.exec(pin.url);
+  if (m === null) throw new Error(`not an npm registry tarball: ${pin.url}`);
+  if (meta.name !== m[1] || meta.version !== m[2] || meta.dist.tarball !== pin.url) throw new Error(`the registry's ${meta.name}@${meta.version} does not name ${pin.url}`);
+  const integrity = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;
+  if (integrity !== meta.dist.integrity) throw new Error(`integrity ${integrity} does not match the registry's ${meta.dist.integrity}`);
+  if (!npmSignatureValid(meta.name, meta.version, meta.dist)) throw new Error(`no registry signature by a pinned key for ${meta.name}@${meta.version}`);
+}
+
 const RELEASE = /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/releases\/download\/v?([^/]+)\/([^/]+)$/;
 const COSIGN_ISSUER = "https://token.actions.githubusercontent.com";
 
-/** The commands that prove a pinned file came from its publisher's release workflow. */
-export function verification(pin: Pin, file: string): { fetch: string[]; run: string[][] } {
+export interface Verification {
+  fetch: string[];
+  run: string[][];
+  /** An in-process check, given the download directory and the file's name. */
+  check?: (dir: string, file: string) => void;
+}
+
+/** The commands that prove a pinned file came from its publisher's release workflow (or registry). */
+export function verification(pin: Pin, file: string): Verification {
+  const npm = NPM.exec(pin.url);
+  if (npm !== null) {
+    const [, name = "", version = ""] = npm;
+    const meta = `https://registry.npmjs.org/${name.replace("/", "%2f")}/${version}`;
+    return {
+      fetch: [],
+      run: [["curl", "--fail", "--silent", "--show-error", "--location", "--output", "meta.json", meta]],
+      check: (dir, f) => {
+        checkNpm(pin, readFileSync(join(dir, f)), JSON.parse(readFileSync(join(dir, "meta.json"), "utf8")) as { name: string; version: string; dist: NpmDist });
+      },
+    };
+  }
   const m = RELEASE.exec(pin.url);
   if (m === null) throw new Error(`not a GitHub release download: ${pin.url}`);
   const [, repo = "", version = "", asset = ""] = m;
@@ -66,7 +124,7 @@ function sh(cwd: string, argv: string[]): void {
 }
 
 function main(): void {
-  const all = pins(readFileSync(join(GATES_DIR, "image/Dockerfile"), "utf8"));
+  const all = DOCKERFILES.flatMap((f) => pins(readFileSync(join(GATES_DIR, f), "utf8")));
   let failed = 0;
   for (const pin of all) {
     const dir = mkdtempSync(join(tmpdir(), "verify-"));
@@ -77,6 +135,7 @@ function main(): void {
       const actual = createHash("sha256").update(readFileSync(join(dir, file))).digest("hex");
       if (actual !== pin.sha256) throw new Error(`sha256 ${actual} does not match the pin ${pin.sha256}`);
       for (const argv of plan.run) sh(dir, argv);
+      plan.check?.(dir, file);
       process.stdout.write(`verified  ${pin.url}\n`);
     } catch (e) {
       failed++;

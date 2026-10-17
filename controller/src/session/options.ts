@@ -2,7 +2,8 @@
 // default that could widen access: dontAsk with an explicit tool list, no filesystem settings,
 // an allowlisted env, a per-task config dir, the plugin and its agent definition from the
 // release, the in-process guard, a sandbox that must be available, and structured output for
-// every judgment stage.
+// every judgment stage. With a runner setup (P2-01) the CLI runs in a runner container instead
+// of on the host; everything else here stays on the host.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,8 @@ import { sessionDir, type Home } from "../home.ts";
 import { sessionSpawner } from "../proc.ts";
 import { readDefinition, toAgent } from "../plugin/agents.ts";
 import type { Release } from "../release.ts";
+import { makeSpool, type BrokerSpool } from "../runner/broker.ts";
+import { alternates, containerSpawner, type Mount, type RunnerSetup } from "../runner/container.ts";
 import type { Validator } from "../schemas/validate.ts";
 import { telemetryEnv, type Telemetry } from "../telemetry.ts";
 import { sessionEnv, type SessionEnv } from "./env.ts";
@@ -55,6 +58,8 @@ export interface SessionInputs {
   abort?: AbortController;
   /** OTel export for this session (P1-06), with the attributes only the pipeline knows. */
   telemetry?: { config: Telemetry; tier: string; round: number };
+  /** Run the CLI in a runner container (P2-01) instead of on the host. */
+  runner?: RunnerSetup;
 }
 
 export interface PreparedSession {
@@ -63,6 +68,8 @@ export interface PreparedSession {
   guardConfigPath: string;
   /** Filled as the in-process guard denies tool calls. */
   denials: Denial[];
+  /** Runner build sessions: the preflight factoryctl runs on the host when the session's Stop hook asks (runner/broker.ts). */
+  broker?: { spool: BrokerSpool; argv: string[]; cwd: string; timeout_ms: number };
 }
 
 /** The plugin's agent file as an SDK agent definition: one definition, two runtimes. */
@@ -89,6 +96,8 @@ export function secretPaths(home: Home): string[] {
 }
 
 export function sessionSettings(inputs: SessionInputs, release: Release): Settings {
+  // In the runner the managed settings name the session's token file; the host's key file is never mentioned.
+  const key = inputs.runner === undefined ? { apiKeyHelper: `cat '${inputs.keyFile.replaceAll("'", "'\\''")}'` } : {};
   const deny = [
     "Read(./.env*)",
     "Read(~/.ssh/**)",
@@ -100,7 +109,7 @@ export function sessionSettings(inputs: SessionInputs, release: Release): Settin
     ...release.tools.forbidden.map((f) => f.pattern),
   ];
   return {
-    apiKeyHelper: `cat '${inputs.keyFile.replaceAll("'", "'\\''")}'`,
+    ...key,
     permissions: { defaultMode: "dontAsk", disableBypassPermissionsMode: "disable", deny },
     disableWorkflows: true,
     workflowKeywordTriggerEnabled: false,
@@ -138,7 +147,11 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
 
   // The agents' rubrics (`${CLAUDE_PLUGIN_ROOT}/rubrics/*.md`) are part of the release: every session may read them.
   const rubrics = join(release.pluginDir, "rubrics");
-  const guard: GuardConfig & { preflight?: { argv: string[]; timeout_ms: number }; post_edit: never[] } = {
+  // In the runner the Stop hook cannot run the gates (they need the container engine); it asks factoryctl's broker.
+  const runner = inputs.runner;
+  const broker = runner === undefined || spec.preflight === undefined ? undefined : { spool: makeSpool(join(dir, `${spec.label}.preflight`)), argv: spec.preflight.argv, cwd: spec.cwd, timeout_ms: spec.preflight.timeout_ms };
+  const preflight = broker === undefined ? spec.preflight : { broker: broker.spool, timeout_ms: broker.timeout_ms };
+  const guard: GuardConfig & { preflight?: { argv: string[]; timeout_ms: number } | { broker: BrokerSpool; timeout_ms: number }; post_edit: never[] } = {
     schema_version: 1,
     task_id: inputs.taskId,
     stage: spec.stage,
@@ -147,7 +160,7 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
     allowed_tools: allow,
     // No host-side post-edit commands: formatters and linters load config the builder can edit.
     post_edit: [],
-    ...(spec.preflight === undefined ? {} : { preflight: spec.preflight }),
+    ...(preflight === undefined ? {} : { preflight }),
   };
   const check = inputs.validator.validate("guard-config.schema.json", guard);
   if (!check.valid) throw new Error(`guard config for ${spec.label}: ${check.errors.join("; ")}`);
@@ -157,6 +170,11 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
   const t = inputs.telemetry;
   const telemetry = t === undefined ? undefined : telemetryEnv(t.config, { task: inputs.taskId, stage: spec.stage, label: spec.label, round: t.round, tier: t.tier, agent: spec.agent, release: release.info?.tag ?? "dev" });
   const env = sessionEnv({ home, configDir, tmpDir, guardConfig: guardConfigPath, modelPins: release.config.model_pins, ...(telemetry === undefined ? {} : { telemetry }) });
+  if (runner !== undefined) {
+    env.HTTPS_PROXY = runner.proxyUrl;
+    env.NO_PROXY = (runner.noProxy ?? []).join(",");
+    if (runner.baseUrl !== undefined) env.ANTHROPIC_BASE_URL = runner.baseUrl;
+  }
   const denials: Denial[] = [];
   const agent = agentDefinition(release, spec.agent, extraTools);
   if (!(spec.budgetUsd > 0)) throw new Error(`${spec.label}: no budget left for a session`);
@@ -187,12 +205,39 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
     },
     persistSession: true,
     // Its own process group, registered while it lives: a run that dies leaves nothing behind that the next one cannot reap (P1-02).
-    spawnClaudeCodeProcess: sessionSpawner(inputs.home, inputs.taskId, spec.label),
+    // In the runner, a named container the same reaping, halt and abort remove.
+    spawnClaudeCodeProcess: runner === undefined
+      ? sessionSpawner(inputs.home, inputs.taskId, spec.label)
+      : containerSpawner({ taskId: inputs.taskId, label: spec.label, setup: runner, mounts: runnerMounts({ spec, sessionDir: dir, guardConfig: guardConfigPath, pluginDir: release.pluginDir, ...(broker === undefined ? {} : { broker: broker.spool }) }), allowedEnv: Object.keys(env), logFile: join(dir, `${spec.label}.runner.log`) }),
     // Explicit limits, never a default: the agent's own turn limit and the session's share of the task budget.
     maxTurns: agent.maxTurns ?? 10,
     maxBudgetUsd: spec.budgetUsd,
     ...(spec.outputSchema === undefined ? {} : { outputFormat: { type: "json_schema", schema: spec.outputSchema } }),
     ...(inputs.abort === undefined ? {} : { abortController: inputs.abort }),
   };
-  return { options, env, guardConfigPath, denials };
+  return { options, env, guardConfigPath, denials, ...(broker === undefined ? {} : { broker }) };
+}
+
+/**
+ * What a runner session sees of the host, at the same paths: its working directory (writable
+ * for the build only), its task directory, the CLI's home and config directory, the bundle and
+ * readable roots, the release's plugin, and the mirror its worktree borrows objects from. The
+ * guard config and the broker's answers are read-only; only the broker's request spool is
+ * writable besides. The rest of the session directory, where factoryctl writes the next
+ * session's files, is not mounted at all.
+ */
+export function runnerMounts(o: { spec: Omit<StageSpec, "budgetUsd">; sessionDir: string; guardConfig: string; pluginDir: string; broker?: BrokerSpool }): Mount[] {
+  const ro = (path: string): Mount => ({ path, readOnly: true });
+  return [
+    { path: o.spec.cwd, readOnly: o.spec.stage !== "build" },
+    { path: o.spec.guard.task_dir, readOnly: false },
+    { path: join(o.sessionDir, "home"), readOnly: false },
+    { path: join(o.sessionDir, "claude"), readOnly: false },
+    ...o.spec.extraDirs.map(ro),
+    ...o.spec.guard.readable_roots.map(ro),
+    ...alternates(o.spec.cwd).map(ro),
+    ro(o.pluginDir),
+    ro(o.guardConfig),
+    ...(o.broker === undefined ? [] : [{ path: o.broker.requests, readOnly: false }, ro(o.broker.results)]),
+  ];
 }

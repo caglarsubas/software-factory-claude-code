@@ -1,0 +1,9 @@
+# The runner image's build context is the repository root; only these files enter it.
+*
+!runner/managed-settings.json
+!runner/egress/proxy.ts
+!plugin/hooks/guard.ts
+!plugin/hooks/require-gates.ts
+!plugin/hooks/format-typecheck.ts
+!plugin/hooks/ledger.ts
+!plugin/hooks/lib/

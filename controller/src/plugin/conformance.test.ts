@@ -117,9 +117,12 @@ describe("hooks.json", () => {
 
   it("gives require-gates longer than the longest preflight a guard config allows", () => {
     const schema = JSON.parse(readFileSync(join(REPO_ROOT, "schemas/guard-config.schema.json"), "utf8")) as {
-      properties: { preflight: { properties: { timeout_ms: { maximum: number } } } };
+      properties: { preflight: { oneOf: { properties: { timeout_ms: { maximum: number } } }[] } };
     };
-    const longest = schema.properties.preflight.properties.timeout_ms.maximum;
+    // Both forms: the hook runs the preflight itself, or waits for the broker (P2-01).
+    const forms = schema.properties.preflight.oneOf;
+    expect(forms).toHaveLength(2);
+    const longest = Math.max(...forms.map((f) => f.properties.timeout_ms.maximum));
     const timeouts = Object.values(hooks).flatMap((groups) => groups.flatMap((g) => g.hooks.filter((h) => scriptOf(h.command) === "require-gates").map((h) => h.timeout ?? 60)));
     expect(timeouts).toHaveLength(2);
     for (const seconds of timeouts) expect(seconds * 1000).toBeGreaterThan(longest);

@@ -116,26 +116,63 @@
       }
     },
     "preflight": {
-      "description": "Build stage: the command require-gates runs when the builder tries to stop (the gate runner, from P0-07's factoryctl). Exit 0 lets the builder stop.",
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "argv": {
-          "type": "array",
-          "items": {
-            "$ref": "defs.schema.json#/$defs/text"
+      "description": "Build stage: what require-gates checks when the builder tries to stop. On the host, the command it runs (the gate runner, from P0-07's factoryctl); in the runner (P2-01), the broker spools through which factoryctl runs that command on the host. A pass lets the builder stop.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "argv": {
+              "type": "array",
+              "items": {
+                "$ref": "defs.schema.json#/$defs/text"
+              },
+              "minItems": 1
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 1740000
+            }
           },
-          "minItems": 1
+          "required": [
+            "argv",
+            "timeout_ms"
+          ]
         },
-        "timeout_ms": {
-          "type": "integer",
-          "minimum": 1000,
-          "maximum": 1740000
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "broker": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "requests": {
+                  "type": "string",
+                  "pattern": "^/"
+                },
+                "results": {
+                  "type": "string",
+                  "pattern": "^/"
+                }
+              },
+              "required": [
+                "requests",
+                "results"
+              ]
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 1740000
+            }
+          },
+          "required": [
+            "broker",
+            "timeout_ms"
+          ]
         }
-      },
-      "required": [
-        "argv",
-        "timeout_ms"
       ]
     }
   },

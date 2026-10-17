@@ -1,0 +1,143 @@
+{
+  "requiredMinimumVersion": "2.1.271",
+  "apiKeyHelper": "cat /run/factory/api-token",
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "disableBypassPermissionsMode": "disable",
+    "allow": [
+      "Bash",
+      "Edit",
+      "Glob",
+      "Grep",
+      "Read",
+      "StructuredOutput",
+      "Write"
+    ],
+    "deny": [
+      "Read(./.env*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(//proc/*/environ)",
+      "Read(//run/factory/**)",
+      "WebFetch",
+      "WebSearch",
+      "Bash(git push*)",
+      "Bash(graphify * --mode deep*)",
+      "Workflow"
+    ]
+  },
+  "allowManagedPermissionRulesOnly": true,
+  "allowManagedHooksOnly": true,
+  "allowManagedMcpServersOnly": true,
+  "allowedMcpServers": [],
+  "availableModels": [
+    "claude-haiku-5-5",
+    "claude-opus-5-5",
+    "claude-sonnet-5-5"
+  ],
+  "availableModelsMatch": "exact",
+  "disableWorkflows": true,
+  "workflowKeywordTriggerEnabled": false,
+  "cleanupPeriodDays": 30,
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "enableWeakerNestedSandbox": false,
+    "network": {
+      "allowedDomains": [
+        "registry.npmjs.org",
+        "pypi.org",
+        "files.pythonhosted.org"
+      ]
+    },
+    "filesystem": {
+      "denyWrite": [
+        ".claude/**"
+      ],
+      "denyRead": [
+        "/run/factory"
+      ]
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"/opt/software-factory/hooks/guard.ts\" || exit 2",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"/opt/software-factory/hooks/require-gates.ts\" || exit 2",
+            "timeout": 1800
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"/opt/software-factory/hooks/format-typecheck.ts\" || exit 2",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"/opt/software-factory/hooks/require-gates.ts\" || exit 2",
+            "timeout": 1800
+          },
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"/opt/software-factory/hooks/ledger.ts\" || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"/opt/software-factory/hooks/ledger.ts\" || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --disable-warning=ExperimentalWarning \"/opt/software-factory/hooks/ledger.ts\" || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5-5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-5-5"
+  }
+}
