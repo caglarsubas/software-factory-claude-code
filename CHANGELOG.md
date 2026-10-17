@@ -4,6 +4,21 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-17
+
+### Added
+
+- **Durability (P2-07, [ADR 0001](docs/factory/adr/0001-replication-without-litestream.md)).** `factoryctl` replicates its own state instead of using Litestream, whose releases carry no signature or attestation the factory could verify.
+  - **Object store:** a write-once, content-addressed store in `$FACTORY_HOME/objects` holds every committed artifact (by the digest its commit event records), each task's files and each run's evidence. The build also commits a git bundle of its candidate commits.
+  - **Replica:** `factoryctl replica init DIR` sets a replica, meant for another volume. Every run, worker and `serve` syncs new events and missing objects to it every second, and every command syncs before it exits. `replica status` and `doctor` show how far behind it is.
+  - **Restore:** `factoryctl restore --source DIR` rebuilds an empty home from the replica. Each restored task rebuilds its clone from its target and its committed candidate on its next run, and the outbox keeps it from pushing or opening anything twice.
+  - **Drills (G2-6):** `factoryctl drill restore` restores the replica into a scratch home and records RTO, RPO and any file not restored intact. `factoryctl drill kill-switch` halts the factory and records how long until no agent activity is left; it leaves the factory halted.
+- **The kill-switch runbook** in the operator guide: pause, drain, halt, App suspension, key rotation and revert.
+
+### Changed
+
+- **Pushes** go from the home's own mirror, not the path recorded at checkout, so a task restored into another home pushes from its own mirror.
+
 ## [0.6.0] - 2026-10-17
 
 ### Added
@@ -201,7 +216,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.3...v0.4.0

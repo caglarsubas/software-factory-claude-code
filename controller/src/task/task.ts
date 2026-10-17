@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { putObject } from "../durable/objects.ts";
 import { writeAtomic } from "../fsutil.ts";
 import { githubRemote } from "../git/repo.ts";
 import { runDir, type Home } from "../home.ts";
@@ -74,8 +75,11 @@ export function createTask(home: Home, store: EventStore, validator: Validator, 
   };
   const check = validator.validate("task.schema.json", task);
   if (!check.valid) throw new Error(`task.json: ${check.errors.join("; ")}`);
-  writeAtomic(join(dir, "task.json"), `${JSON.stringify(task, null, 2)}\n`);
-  store.append({ task_id: id, actor: { kind: "operator", id: input.admittedBy }, type: "task_created", payload: { remote: input.remote ?? githubRemote(profile.target.repo), commit_protocol: 1 } });
+  const json = `${JSON.stringify(task, null, 2)}\n`;
+  writeAtomic(join(dir, "task.json"), json);
+  // Both files go into the object store (P2-07), so a restore brings back a task that never ran.
+  const files = { "task.md": putObject(home.objects, body), "task.json": putObject(home.objects, json) };
+  store.append({ task_id: id, actor: { kind: "operator", id: input.admittedBy }, type: "task_created", payload: { remote: input.remote ?? githubRemote(profile.target.repo), commit_protocol: 1, files } });
   return task;
 }
 

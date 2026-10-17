@@ -8,7 +8,7 @@
 // policy, approval, summary, publish).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { commitAll, git, head } from "../git/repo.ts";
+import { commitAll, git, head, headBundle } from "../git/repo.ts";
 import { runDir, worktreeDir, type Home } from "../home.ts";
 import type { EventStore, FactoryEvent } from "../store/events.ts";
 import { canMove, currentState, isTerminal, transition } from "../task/lifecycle.ts";
@@ -78,7 +78,10 @@ export function applyTakeover(home: Home, store: EventStore, taskId: string, by:
   const commit = latestCommit(store.events(taskId), label);
   if (commit === null) throw new TakeoverError(`${taskId} has no committed build`);
   const next: Build = { ...build, candidate_commit: to, takeover: { by, from_commit: from } };
-  commitArtifacts(store, runDir(home, taskId), { taskId, stage: "build", label, round }, commit.inputs, [{ path: roundPath("build.json", round), content: `${JSON.stringify(next, null, 2)}\n` }]);
+  commitArtifacts(store, runDir(home, taskId), { taskId, stage: "build", label, round }, commit.inputs, [
+    { path: roundPath("build.json", round), content: `${JSON.stringify(next, null, 2)}\n` },
+    { path: roundPath("candidate.bundle", round), content: headBundle(worktree, build.base_commit) },
+  ], undefined, home.objects);
   // Back to the round's BUILDING, so every later step moves the task forward again.
   const at = currentState(store.events(taskId));
   const payload = { round, takeover: true, by };

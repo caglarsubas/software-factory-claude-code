@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { replicaStatus } from "./durable/replica.ts";
 import { describeHalt, readHalt } from "./halt.ts";
 import type { Home } from "./home.ts";
 import type { Release } from "./release.ts";
@@ -66,6 +67,14 @@ export function doctor(home: Home, release: Release, keyFile: string, env: NodeJ
     add("installed release", v.ok, `${release.info.tag} (${release.info.sha.slice(0, 12)}): ${v.detail}`);
   }
   const halt = readHalt(home);
+  // Durability (P2-07): a replica, ideally on another volume, and caught up.
+  try {
+    const r = replicaStatus(home);
+    if (r === null) add("replica", false, "none set: factoryctl replica init DIR, on another volume (G2-6 drills restore from it)", "warn");
+    else add("replica", !r.sameVolume && r.lag_events === 0, `${r.config.path}${r.sameVolume ? ", on the same volume as the home" : ""}; ${String(r.lag_events)} event(s) behind${r.state === null ? ", never synced" : `, synced ${r.state.synced_at}`}`, "warn");
+  } catch (e) {
+    add("replica", false, `unreadable: ${e instanceof Error ? e.message : String(e)}`, "warn");
+  }
   add("kill switch", halt === null, halt === null ? "not engaged" : `${describeHalt(halt)}; lift with factoryctl unhalt --reason "…"`, "warn");
   try {
     const t = telemetryConfig(env);

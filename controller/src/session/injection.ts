@@ -39,14 +39,15 @@ export function killAt(point: string | undefined): ((p: string) => void) | undef
 /**
  * The probe that parks this process at one named point until the test lets it go: it writes
  * `<dir>/held` (its pid), then waits for `<dir>/go`. The serve suite (P2-03) kills serve and
- * workers while every task is parked.
+ * workers while every task is parked. Like a session in flight, it also stops waiting once the
+ * factory is halted (`halted`), so the kill-switch drill (P2-07) sees the run stop on its own.
  */
-export function holdAt(point: string | undefined, dir: string): ((p: string) => void) | undefined {
+export function holdAt(point: string | undefined, dir: string, halted: () => boolean = () => false): ((p: string) => void) | undefined {
   if (point === undefined) return undefined;
   return (p) => {
     if (p !== point) return;
     writeFileSync(join(dir, "held"), String(process.pid));
-    while (!existsSync(join(dir, "go"))) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    while (!existsSync(join(dir, "go")) && !halted()) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
   };
 }
 

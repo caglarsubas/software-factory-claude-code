@@ -16,6 +16,10 @@ export interface Home {
   secrets: string;
   /** Gateway session tokens (P2-02), one file per live session while it runs; denied to every session. */
   tokens: string;
+  /** The content-addressed object store (P2-07): every committed artifact and every run's evidence, by digest. */
+  objects: string;
+  /** Where the replica lives (P2-07), once the operator sets one: `factoryctl replica init <dir>`. */
+  replicaConfig: string;
   /** Installed, read-only factory releases (`releases/<sha>`), and the operator's pin to one of them. */
   releases: string;
   current: string;
@@ -38,6 +42,8 @@ export function factoryHome(env: NodeJS.ProcessEnv = process.env): Home {
     sessions: join(root, "sessions"),
     secrets: join(root, "secrets"),
     tokens: join(root, "tokens"),
+    objects: join(root, "objects"),
+    replicaConfig: join(root, "replica.json"),
     releases: join(root, "releases"),
     current: join(root, "current"),
     bin: join(root, "bin"),
@@ -48,7 +54,7 @@ export function factoryHome(env: NodeJS.ProcessEnv = process.env): Home {
 }
 
 export function ensureHome(home: Home): void {
-  for (const dir of [home.root, home.runs, home.worktrees, home.mirrors, home.sessions, home.secrets, home.tokens, home.releases]) {
+  for (const dir of [home.root, home.runs, home.worktrees, home.mirrors, home.sessions, home.secrets, home.tokens, home.objects, home.releases]) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 }
