@@ -11,7 +11,7 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 - **The reviewer graph (P2-09).** Two read-only reviewers join a round when the risk policy asks for their review on the candidate's diff, besides the code and security reviewers that see every candidate. Their findings go to the refuter and block like any other.
   - **Dependency reviewer:** runs when the change touches a dependency manifest. It checks whether each new or changed dependency is needed, and its identity (typosquats), pinning, install scripts and source.
   - **Migration reviewer:** runs when the change touches a `migrations/` path. It checks what the migration does to existing rows, destructive steps, reversibility, ordering against the code, and locks.
-  - **Coverage:** each has its rubric, routing (sonnet, medium effort), tool policy, and evals, one held out each.
+  - **Coverage:** each has its rubric, routing (sonnet, medium effort) and tool policy. Their eval cases follow in their own PR, as the eval rule requires.
 - **Seeded fixture tasks:** `ts-mini` adds a pinned runtime dependency, and `py-mini` adds a SQLite store with a migration. Each seeded task now records the reviews the policy engine asks for.
 
 ### Changed

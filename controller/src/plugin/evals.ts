@@ -10,7 +10,7 @@ import { agentFiles, agentName, PLUGIN_DIR } from "./agents.ts";
 
 export const EVAL_DIRS = { push: "evals", holdout: "evals-holdout" } as const;
 /** The agents that judge rather than build: each needs a case that passes and one that blocks. */
-export const JUDGMENT_ROLES = ["triager", "spec-writer", "code-reviewer", "security-reviewer", "dependency-reviewer", "migration-reviewer", "refuter", "approver", "summarizer"] as const;
+export const JUDGMENT_ROLES = ["triager", "spec-writer", "code-reviewer", "security-reviewer", "refuter", "approver", "summarizer"] as const;
 /** prompt.md frontmatter keys the eval runner documents; it rejects any other. */
 const CASE_KEYS = new Set(["schema_version", "name", "description", "tags", "plugins", "runs", "expected_outcome", "model", "max_turns", "timeout_seconds", "allowed_tools", "append_system_prompt", "env"]);
 const GRADER_TYPES = new Set(["regex", "tool_used", "tool_order", "file_exists", "llm", "baseline"]);
