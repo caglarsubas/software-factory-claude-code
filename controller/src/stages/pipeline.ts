@@ -30,7 +30,7 @@ import type { Validator } from "../schemas/validate.ts";
 import { prepareSession, type StageSpec } from "../session/options.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionRunner, StageOutcome } from "../session/runner.ts";
-import type { EventStore, FactoryEvent, State } from "../store/events.ts";
+import { StaleEpochError, type EventStore, type FactoryEvent, type State } from "../store/events.ts";
 import { canMove, currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
 import { loadProfile, readTask, type Profile, type Task } from "../task/task.ts";
 import { buildCategory, sdkCategory, type Category } from "../task/taxonomy.ts";
@@ -223,8 +223,14 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     return { path, content: path.endsWith(".yaml") ? stringify(data) : `${JSON.stringify(data, null, 2)}\n` };
   };
   // A cancelled task ends; a halted factory stops without failing the task, which resumes later.
+  /** The operator cancelled or rejected the task since this run started; that command's writer ends the task under its own lease (P2-03). */
+  const operatorStopped = (): boolean => {
+    const events = store.events(taskId);
+    const start = events.findLast((e) => e.type === "command" && e.payload["command"] === "run_started")?.seq ?? 0;
+    return events.some((e) => e.seq > start && e.type === "command" && (e.payload["command"] === "cancel" || e.payload["command"] === "reject"));
+  };
   const checkStop = (): void => {
-    if (isTerminal(state())) throw new Stop();
+    if (isTerminal(state()) || operatorStopped()) throw new Stop();
     const halt = readHalt(home);
     if (halt === null) return;
     deps.log(`${taskId}: stopped, the factory is ${describeHalt(halt)}`);
@@ -259,6 +265,18 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   const wallMs = release.budgets.wall_clock_minutes * 60_000;
   let runSeq: number | null = null;
   let endReason = "stopped";
+  let leaseLost = false;
+  /** The run's end on the record, and the manifest; taken over meanwhile, the new writer reconstructs the end from the heartbeat. */
+  const endRun = (): void => {
+    if (isTerminal(state())) endReason = state().toLowerCase();
+    try {
+      emit("command", { command: "run_ended", at: now().toISOString(), reason: endReason });
+      const last = latestRound(dir);
+      if (has(roundPath("build.json", last))) writeManifest({ dir, taskId, store, validator, release, risk, build: roundPath("build.json", last) });
+    } catch (e) {
+      if (!(e instanceof StaleEpochError)) throw e;
+    }
+  };
   // Set by the timer: a closure, so an object rather than a local the compiler narrows.
   const clock = { expired: false };
   const abort = inputs.abort ?? new AbortController();
@@ -820,6 +838,12 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     await runStep({ label: "summarize", stage: "summarize", inputs: ["verdict.json"], run: summarize(n), exit: noExit });
     await runStep({ label: "publish", stage: "publish", inputs: ["summary.json", "policy.json", roundPath("build.json", n)], run: publish(n), exit: publishExit });
   } catch (e) {
+    // The lease was taken over (P2-03): another writer owns the task now, and this run may write nothing more.
+    if (e instanceof StaleEpochError) {
+      leaseLost = true;
+      deps.log(`${taskId}: stopped, its lease was taken over: ${e.message}`);
+      return state();
+    }
     if (!(e instanceof Stop)) {
       if (clock.expired && !isTerminal(state())) {
         try {
@@ -831,7 +855,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       }
       // A session aborted by `cancel` or `halt` ends the run; neither is a failure of the task.
       const halt = readHalt(home);
-      if (halt !== null || state() === "CANCELLED") {
+      if (halt !== null || state() === "CANCELLED" || operatorStopped()) {
         deps.log(`${taskId}: stopped (${halt === null ? "cancelled" : `the factory is ${describeHalt(halt)}`}): ${e instanceof Error ? e.message : String(e)}`);
         return state();
       }
@@ -845,10 +869,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   } finally {
     clearInterval(heartbeat);
     clearTimeout(wallTimer);
-    if (isTerminal(state())) endReason = state().toLowerCase();
-    emit("command", { command: "run_ended", at: now().toISOString(), reason: endReason });
-    const last = latestRound(dir);
-    if (has(roundPath("build.json", last))) writeManifest({ dir, taskId, store, validator, release, risk, build: roundPath("build.json", last) });
+    if (!leaseLost) endRun();
   }
   return state();
 }

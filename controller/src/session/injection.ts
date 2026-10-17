@@ -2,19 +2,21 @@
 // suite). A replay directory may hold `replay.json`:
 //
 //   { "kill_at": "build:session",                     SIGKILL this process at that probe point
+//     "hold_at": "build:run",                         wait there (writing `held`) until `go` exists
 //     "gates": { "gates": { "passed": true, ... } } }  gate results by step label, no containers
 //
 // Neither exists without --replay, and replayed gates are refused unless nothing can leave the
 // machine: the task's remote must be a local path, and the GitHub API, if a token is set, a
 // loopback address.
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { GateEntry, GatesResult } from "../../../gates/src/run.ts";
 import type { Deps } from "../stages/pipeline.ts";
 
 export interface Injection {
   kill_at?: string;
+  hold_at?: string;
   gates?: Record<string, { passed: boolean; gates: GateEntry[] }>;
 }
 
@@ -31,6 +33,27 @@ export function killAt(point: string | undefined): ((p: string) => void) | undef
   if (point === undefined) return undefined;
   return (p) => {
     if (p === point) process.kill(process.pid, "SIGKILL");
+  };
+}
+
+/**
+ * The probe that parks this process at one named point until the test lets it go: it writes
+ * `<dir>/held` (its pid), then waits for `<dir>/go`. The serve suite (P2-03) kills serve and
+ * workers while every task is parked.
+ */
+export function holdAt(point: string | undefined, dir: string): ((p: string) => void) | undefined {
+  if (point === undefined) return undefined;
+  return (p) => {
+    if (p !== point) return;
+    writeFileSync(join(dir, "held"), String(process.pid));
+    while (!existsSync(join(dir, "go"))) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  };
+}
+
+/** Both probes, in order. */
+export function probes(...ps: ((p: string) => void)[]): ((p: string) => void) | undefined {
+  return ps.length === 0 ? undefined : (point) => {
+    for (const p of ps) p(point);
   };
 }
 

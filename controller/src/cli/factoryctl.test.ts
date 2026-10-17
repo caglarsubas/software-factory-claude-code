@@ -95,7 +95,7 @@ describe("factoryctl", { timeout: 30_000 }, () => {
     const halted = factoryctl(["halt", "--reason", "drill"]);
     expect(halted.status, halted.stderr).toBe(0);
     expect(halted.stdout).toMatch(/^factory halted since \S+ by \S+: drill$/m);
-    expect(halted.stdout).toContain("no task was running");
+    expect(halted.stdout).toContain("no attended task was running");
     expect(factoryctl(["status"]).stdout).toMatch(/^HALTED {2}halted since .*: drill$/m);
     expect(factoryctl(["doctor"]).stdout).toMatch(/^warn {2}kill switch: halted since .*: drill; lift with/m);
     const run = factoryctl(["run", "T-0001"]);

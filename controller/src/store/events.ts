@@ -1,6 +1,13 @@
 // The event store: SQLite in WAL mode with append-only events (ROADMAP §2.4, principle 8).
-// Task state is a fold over events; nothing here updates or deletes a row, and triggers make
+// Task state is a fold over events; nothing here updates or deletes an event, and triggers make
 // sure nothing else can either.
+//
+// Leases and fencing (P2-03): a task's writer holds a lease, and every lease grant raises the
+// task's epoch. An event factoryctl writes for a task carries the epoch its writer was granted,
+// and the store rejects it, inside the same transaction as the write, unless that epoch is the
+// task's current one. A writer whose lease was taken over can therefore write nothing more,
+// however long it keeps running. Leases are coordination state, not history: their table is
+// updated in place, and each grant is also recorded as an event.
 import { DatabaseSync } from "node:sqlite";
 import { createValidator, type Validator } from "../schemas/validate.ts";
 
@@ -34,6 +41,14 @@ export interface FactoryEvent {
 
 export type NewEvent = Omit<FactoryEvent, "schema_version" | "seq" | "ts" | "epoch"> & { epoch?: number };
 
+/** A task's lease: its holder (a factoryctl process, `pid@start`), its epoch, and when it lapses (ms since the epoch). */
+export interface Lease {
+  task_id: string;
+  holder: string;
+  epoch: number;
+  expires_at: number;
+}
+
 /** Forward-only migrations: each runs once, in order, inside a transaction. */
 const MIGRATIONS: readonly string[] = [
   `CREATE TABLE events (
@@ -46,9 +61,19 @@ const MIGRATIONS: readonly string[] = [
    );
    CREATE TRIGGER events_append_only_update BEFORE UPDATE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
    CREATE TRIGGER events_append_only_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;`,
+  `CREATE TABLE leases (
+     task_id TEXT PRIMARY KEY,
+     holder TEXT NOT NULL,
+     epoch INTEGER NOT NULL CHECK (epoch > 0),
+     expires_at INTEGER NOT NULL
+   );`,
 ];
 
 export class EventError extends Error {}
+/** A write from a lease that is no longer the task's current one. */
+export class StaleEpochError extends EventError {}
+/** A lease another live writer holds. */
+export class LeaseHeldError extends EventError {}
 
 export class EventStore {
   readonly #db: DatabaseSync;
@@ -82,21 +107,98 @@ export class EventStore {
     return new EventStore(db, opts.validator ?? createValidator(), opts.now ?? (() => new Date()));
   }
 
-  /** Validate and append one event; the store assigns seq and ts. */
-  append(event: NewEvent): FactoryEvent {
+  /** The epoch this store's writer holds per task, from its own lease grants. */
+  readonly #epochs = new Map<string, number>();
+
+  #tx<T>(fn: () => T): T {
     this.#db.exec("BEGIN IMMEDIATE");
     try {
-      const last = this.#db.prepare("SELECT MAX(seq) AS seq FROM events WHERE task_id = ?").get(event.task_id) as { seq: number | null };
-      const full: FactoryEvent = { schema_version: 1, seq: (last.seq ?? 0) + 1, ts: this.#now().toISOString(), epoch: 0, ...event };
-      const check = this.#validator.validate("event.schema.json", full);
-      if (!check.valid) throw new EventError(`invalid event: ${check.errors.join("; ")}`);
-      this.#db.prepare("INSERT INTO events (task_id, seq, type, body) VALUES (?, ?, ?, ?)").run(full.task_id, full.seq, full.type, JSON.stringify(full));
+      const r = fn();
       this.#db.exec("COMMIT");
-      return full;
+      return r;
     } catch (e) {
       this.#db.exec("ROLLBACK");
       throw e;
     }
+  }
+
+  /** Inside a transaction: fence, validate and insert one event. */
+  #insert(event: NewEvent): FactoryEvent {
+    const epoch = event.epoch ?? this.#epochs.get(event.task_id) ?? 0;
+    if (event.actor.kind === "factoryctl") {
+      const lease = this.#lease(event.task_id);
+      if (lease !== null && lease.epoch !== epoch) throw new StaleEpochError(`${event.task_id}: a write at epoch ${String(epoch)} is stale; the task's lease is at epoch ${String(lease.epoch)} (${lease.holder})`);
+    }
+    const last = this.#db.prepare("SELECT MAX(seq) AS seq FROM events WHERE task_id = ?").get(event.task_id) as { seq: number | null };
+    const full: FactoryEvent = { schema_version: 1, seq: (last.seq ?? 0) + 1, ts: this.#now().toISOString(), ...event, epoch };
+    const check = this.#validator.validate("event.schema.json", full);
+    if (!check.valid) throw new EventError(`invalid event: ${check.errors.join("; ")}`);
+    this.#db.prepare("INSERT INTO events (task_id, seq, type, body) VALUES (?, ?, ?, ?)").run(full.task_id, full.seq, full.type, JSON.stringify(full));
+    return full;
+  }
+
+  /** Validate and append one event; the store assigns seq and ts, and fences factoryctl's writes. */
+  append(event: NewEvent): FactoryEvent {
+    return this.#tx(() => this.#insert(event));
+  }
+
+  /**
+   * Append an event built from the task's events as they are inside the write's transaction, so
+   * a decision taken on them (a lifecycle transition) cannot race another writer.
+   */
+  appendWith(taskId: string, build: (events: () => FactoryEvent[]) => NewEvent): FactoryEvent {
+    return this.#tx(() => this.#insert(build(() => this.events(taskId))));
+  }
+
+  #lease(taskId: string): Lease | null {
+    const row = this.#db.prepare("SELECT task_id, holder, epoch, expires_at FROM leases WHERE task_id = ?").get(taskId) as Lease | undefined;
+    return row === undefined ? null : { task_id: row.task_id, holder: row.holder, epoch: row.epoch, expires_at: row.expires_at };
+  }
+
+  lease(taskId: string): Lease | null {
+    return this.#lease(taskId);
+  }
+
+  leases(): Lease[] {
+    const rows = this.#db.prepare("SELECT task_id, holder, epoch, expires_at FROM leases ORDER BY task_id").all() as unknown as Lease[];
+    return rows.map((r) => ({ task_id: r.task_id, holder: r.holder, epoch: r.epoch, expires_at: r.expires_at }));
+  }
+
+  /**
+   * Grant `holder` the task's lease at the next epoch, if `mayTake` accepts the lease it finds
+   * (it decides whether a lease held by someone else is free to take: its holder dead, or killed
+   * after it lapsed). The grant is recorded as an event at the new epoch.
+   */
+  acquireLease(taskId: string, holder: string, ttlMs: number, mayTake: (current: Lease) => boolean): Lease {
+    return this.#tx(() => {
+      const current = this.#lease(taskId);
+      if (current !== null && current.holder !== holder && !mayTake(current)) {
+        const lapsed = current.expires_at <= this.#now().getTime();
+        throw new LeaseHeldError(`${taskId} is leased to ${current.holder} at epoch ${String(current.epoch)}${lapsed ? " (lapsed, but its holder was not stopped)" : ""}`);
+      }
+      const lease: Lease = { task_id: taskId, holder, epoch: (current?.epoch ?? 0) + 1, expires_at: this.#now().getTime() + ttlMs };
+      this.#db.prepare("INSERT INTO leases (task_id, holder, epoch, expires_at) VALUES (?, ?, ?, ?) ON CONFLICT (task_id) DO UPDATE SET holder = excluded.holder, epoch = excluded.epoch, expires_at = excluded.expires_at").run(lease.task_id, lease.holder, lease.epoch, lease.expires_at);
+      this.#epochs.set(taskId, lease.epoch);
+      this.#insert({ task_id: taskId, actor: { kind: "factoryctl", id: "factoryctl" }, type: "command", payload: { command: "lease_acquired", holder, epoch: lease.epoch, ...(current === null ? {} : { from: { holder: current.holder, epoch: current.epoch } }) } });
+      return lease;
+    });
+  }
+
+  /** Extends a lease this writer still holds; a lease taken over meanwhile raises StaleEpochError. */
+  renewLease(lease: Lease, ttlMs: number): Lease {
+    return this.#tx(() => {
+      const expires = this.#now().getTime() + ttlMs;
+      const r = this.#db.prepare("UPDATE leases SET expires_at = ? WHERE task_id = ? AND holder = ? AND epoch = ?").run(expires, lease.task_id, lease.holder, lease.epoch);
+      if (Number(r.changes) === 0) throw new StaleEpochError(`${lease.task_id}: the lease at epoch ${String(lease.epoch)} was taken over`);
+      return { ...lease, expires_at: expires };
+    });
+  }
+
+  /** Lets a lease lapse now, if this writer still holds it; its epoch stays, so the next grant raises it. */
+  releaseLease(lease: Lease): void {
+    this.#tx(() => {
+      this.#db.prepare("UPDATE leases SET expires_at = 0 WHERE task_id = ? AND holder = ? AND epoch = ?").run(lease.task_id, lease.holder, lease.epoch);
+    });
   }
 
   events(taskId: string): FactoryEvent[] {

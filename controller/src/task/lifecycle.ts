@@ -52,10 +52,13 @@ export function currentStatePayload(events: readonly FactoryEvent[]): Record<str
 
 export class TransitionError extends Error {}
 
+/** The state is read inside the write's transaction (P2-03): two writers cannot both move it from the same state. */
 export function transition(store: EventStore, taskId: string, to: State, payload: Record<string, unknown> = {}): State {
-  const from = currentState(store.events(taskId));
-  if (!canMove(from, to)) throw new TransitionError(`${taskId}: ${from} → ${to} is not a lifecycle transition`);
-  store.append({ task_id: taskId, actor: { kind: "factoryctl", id: "factoryctl" }, type: "state_changed", from, to, payload });
+  store.appendWith(taskId, (events) => {
+    const from = currentState(events());
+    if (!canMove(from, to)) throw new TransitionError(`${taskId}: ${from} → ${to} is not a lifecycle transition`);
+    return { task_id: taskId, actor: { kind: "factoryctl", id: "factoryctl" }, type: "state_changed", from, to, payload };
+  });
   return to;
 }
 

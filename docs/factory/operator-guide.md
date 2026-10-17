@@ -130,6 +130,32 @@ The evidence lives in `$FACTORY_HOME/runs/T-0001/`:
   - **Not metered:** your session's cost is not charged to the task.
   - **Not inside Claude Code:** `takeover` refuses to run inside a Claude Code session.
 
+### Leases
+
+Every run takes its task's lease first (P2-03), and everything it writes carries the lease's epoch. The store refuses a write from any other epoch, so a run that lost its task can change nothing more.
+
+- **One run per task:** `run` and `resume` refuse a task whose lease a live run holds.
+- **Operator takeover:** `cancel` and `reject` take the lease over. They stop the run that held it first (SIGTERM, then SIGKILL after 10 seconds), with its session processes and containers, then end the task under the new epoch.
+- **Lapsing:** a lease lapses 5 minutes after its last renewal (runs renew every 15 seconds). A lapsed lease whose holder still runs belongs to a hung run, which is stopped before anything takes the task again.
+
+`factoryctl status` shows `(running)` for a task whose lease is held.
+
+### Serve
+
+`factoryctl serve` schedules tasks and is the single writer while it runs. Until the credential gateway (P2-02) exists, it runs replayed sessions only and refuses to start without `--replay`: it would otherwise run live sessions unattended on your key.
+
+- **Scheduling:** up to `concurrency.max_tasks` tasks at once (`config/factory.yaml`, or `--max-tasks`). Each runs as a worker process holding the task's lease. Two tasks on one target whose spec scopes overlap never run together; a task without a spec yet overlaps everything on its target.
+- **Kill safety:** killing `serve` leaves its workers running under their leases. The next `serve` leaves them alone, and takes over only the tasks whose holder is dead or hung.
+- **Commands:** while it runs, the CLI is its client.
+  - `pause` and `resume` without a task stop and restart new work.
+  - `factoryctl drain` lets running tasks finish, then stops `serve`.
+  - `pause`, `resume` and `cancel` with a task go through it.
+  - `run`, `takeover` and `reject` refuse until it stops.
+- **API:** it listens on `127.0.0.1:7317` (`--port`; `--host` takes a tailnet address only).
+  - Every request needs the bearer token in `$FACTORY_HOME/secrets/serve.token`.
+  - Every request also needs a `Host` header naming the bound address, and its own `Origin` if it sends one.
+  - Every write needs a JSON body.
+
 ## Approve
 
 - **Spec gate:** read `spec.md` and `spec.yaml`, then approve and continue:
@@ -268,7 +294,7 @@ factoryctl halt --reason "what you saw"
 It acts at once:
 
 - writes `$FACTORY_HOME/HALT`;
-- signals the running task, whose session aborts;
+- signals the running task, and every `serve` worker, whose sessions abort;
 - stops every gate container and runner container;
 - makes the in-process guard deny every further tool call.
 

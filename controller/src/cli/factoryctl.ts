@@ -28,10 +28,14 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { parse } from "yaml";
 import { engineHost, killGateContainers, PROXY_ENV, removeTaskContainers } from "../../../gates/src/container.ts";
 import { killRunnerContainers, reapRunnerContainers } from "../runner/container.ts";
+import { keepLease, leaseState, parseHolder, takeLease } from "../sched/lease.ts";
+import { callServe } from "../serve/client.ts";
+import { DEFAULT_PORT, liveServe, startServe } from "../serve/serve.ts";
 import { reapTaskNetworks } from "../runner/network.ts";
 import { runGates } from "../../../gates/src/run.ts";
 import { ensureImage } from "../../../gates/src/image.ts";
@@ -42,11 +46,11 @@ import { evaluateG1 } from "../gate/g1.ts";
 import { githubApiUrl, GitHubError, isLoopbackApi, restCommitChecks, restGitHub } from "../github/client.ts";
 import { clearHalt, describeHalt, readHalt, setHalt } from "../halt.ts";
 import { acquireRunLock, ensureHome, factoryHome, liveHolder, runDir, worktreeDir, type Home } from "../home.ts";
-import { reap } from "../proc.ts";
+import { isLive, reap } from "../proc.ts";
 import { loadRelease } from "../release.ts";
 import { checkReleaseFiles, findRelease, installRelease, listReleases, pinnedSha, pinRelease, writeShim } from "../release/install.ts";
 import { createValidator } from "../schemas/validate.ts";
-import { isLocalRemote, killAt, readInjection, replayedGates } from "../session/injection.ts";
+import { holdAt, isLocalRemote, killAt, probes, readInjection, replayedGates } from "../session/injection.ts";
 import { describeAlarm, telemetryConfig, TelemetryError, type ModelAlarm } from "../telemetry.ts";
 import { replayRunner } from "../session/replay.ts";
 import { sdkRunner } from "../session/runner.ts";
@@ -56,7 +60,7 @@ import { writeAtomic } from "../fsutil.ts";
 import { isoWeek, taskReport, WEEK_HEADER, weekRow, weekRowMarkdown, type TaskReport } from "../report/report.ts";
 import { specDigest } from "../stages/commit.ts";
 import { runTask } from "../stages/pipeline.ts";
-import { EventStore } from "../store/events.ts";
+import { EventStore, LeaseHeldError } from "../store/events.ts";
 import { currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
 import { createTask, loadProfile, readTask } from "../task/task.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -140,6 +144,8 @@ function apiUrl(): string {
 
 interface DriveOptions {
   replay: string | undefined;
+  /** A `serve` worker (P2-03): no attended run lock; serve schedules it. */
+  worker?: boolean;
   /** `resume` lifts a pause; `run` refuses a paused task. */
   resume: boolean;
   attach: boolean;
@@ -172,24 +178,37 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
   const log = (line: string): void => {
     process.stderr.write(`factoryctl: ${line}\n`);
   };
-  const lock = acquireRunLock(home, taskId);
+  const lock = o.worker ? null : acquireRunLock(home, taskId);
   // Clean up after a run that died: its session process groups, and its gate containers.
-  if (lock.stale !== null) log(`the run of ${lock.stale.task_id} (pid ${String(lock.stale.pid)}) ended without releasing its lock; cleaning up after it`);
+  if (lock !== null && lock.stale !== null) log(`the run of ${lock.stale.task_id} (pid ${String(lock.stale.pid)}) ended without releasing its lock; cleaning up after it`);
   for (const c of reap(home)) log(`reaped ${c.task_id} ${c.label} (pid ${String(c.pid)}), left running by a run that died`);
   // Runner containers and egress proxies (P2-01) a dead run left: the docker client dying does not stop them.
   for (const name of reapRunnerContainers()) log(`removed runner container ${name}, left running by a run that died`);
   for (const t of reapTaskNetworks()) log(`removed the egress proxy and network of ${t}, left by a run that died`);
-  if (lock.stale !== null && injection.gates === undefined) {
+  if (lock !== null && lock.stale !== null && injection.gates === undefined) {
     const removed = removeTaskContainers(lock.stale.task_id);
     if (removed > 0) log(`removed ${String(removed)} gate container(s) of ${lock.stale.task_id}`);
   }
   const abort = new AbortController();
+  // The task's lease (P2-03): every write this run makes carries its epoch, and a run whose lease is taken over writes nothing more.
+  let lease;
+  try {
+    lease = await takeLease(home, store, taskId, { log });
+  } catch (e) {
+    lock?.release();
+    if (e instanceof LeaseHeldError) fail(e.message);
+    throw e;
+  }
+  const kept = keepLease(store, lease, (e) => {
+    log(`${taskId}: lost its lease (${e.message}); stopping`);
+    abort.abort();
+  });
   const onSignal = (): void => {
     abort.abort();
   };
   process.once("SIGTERM", onSignal);
   process.once("SIGINT", onSignal);
-  const probe = killAt(injection.kill_at);
+  const probe = probes(...[killAt(injection.kill_at), replay === undefined ? undefined : holdAt(injection.hold_at, replay)].filter((p) => p !== undefined));
   try {
     const state = await runTask({
       home, store, validator, release, taskId, abort,
@@ -225,7 +244,8 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
     out(`${taskId} ${state}${typeof payload["gate"] === "string" ? ` (gate: ${payload["gate"]})` : ""}${typeof payload["pr_url"] === "string" ? ` ${payload["pr_url"]}` : ""}${halted}`);
     if (state === "FAILED") process.exitCode = 1;
   } finally {
-    lock.release();
+    kept.stop();
+    lock?.release();
   }
 }
 
@@ -233,7 +253,7 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
  * `takeover` (P1-04): the operator's own Claude Code in the task's worktree, under the build
  * session's walls; whatever it leaves goes back through the gates and every judge on `resume`.
  */
-function takeover(home: Home, store: EventStore, taskId: string): void {
+async function takeover(home: Home, store: EventStore, taskId: string): Promise<void> {
   operatorOnly("takeover");
   const halt = readHalt(home);
   if (halt !== null) fail(`the factory is ${describeHalt(halt)}; lift it with: factoryctl unhalt --reason "…"`);
@@ -255,6 +275,13 @@ function takeover(home: Home, store: EventStore, taskId: string): void {
   const profile = loadProfile(task.target.profile, validator);
   const spec = parse(readFileSync(join(runDir(home, taskId), "spec.yaml"), "utf8")) as { scope: { include: string[]; exclude: string[] } };
   const lock = acquireRunLock(home, taskId);
+  let lease;
+  try {
+    lease = await takeLease(home, store, taskId);
+  } catch (e) {
+    lock.release();
+    fail(e instanceof Error ? e.message : String(e));
+  }
   try {
     const sessionId = resumableSession(store.events(taskId));
     const launch = takeoverLaunch({
@@ -271,6 +298,7 @@ function takeover(home: Home, store: EventStore, taskId: string): void {
   } catch (e) {
     fail(e instanceof TakeoverError ? e.message : e instanceof Error ? e.message : String(e));
   } finally {
+    store.releaseLease(lease);
     lock.release();
   }
 }
@@ -294,6 +322,9 @@ async function main(): Promise<void> {
       checkout: { type: "string", multiple: true },
       repo: { type: "string" },
       attach: { type: "boolean" },
+      host: { type: "string" },
+      port: { type: "string" },
+      "max-tasks": { type: "string" },
     },
   });
   const home = factoryHome();
@@ -321,10 +352,29 @@ async function main(): Promise<void> {
         // The audit event is secondary to the halt itself.
       }
     }
+    // serve's workers (P2-03) hold leases, not the run lock: signal every live lease holder too.
+    let workers = 0;
+    try {
+      const store = EventStore.open(home.db);
+      for (const l of store.leases()) {
+        const p = parseHolder(l.holder);
+        if (p === null || !isLive(p) || p.pid === lock?.pid) continue;
+        try {
+          process.kill(p.pid, "SIGTERM");
+          workers++;
+        } catch {
+          // Gone.
+        }
+      }
+      store.close();
+    } catch {
+      // The store may not exist yet; nothing holds a lease then.
+    }
     const containers = killGateContainers();
     const runners = killRunnerContainers();
     out(`factory ${describeHalt(halt)}`);
-    out(lock === null ? "no task was running" : `signalled ${lock.task_id} (pid ${String(lock.pid)}); it stops without failing and resumes later`);
+    out(lock === null ? "no attended task was running" : `signalled ${lock.task_id} (pid ${String(lock.pid)}); it stops without failing and resumes later`);
+    if (workers > 0) out(`signalled ${String(workers)} serve worker(s); their tasks stop without failing`);
     out(`${String(containers)} gate container(s) and ${String(runners.length)} runner container(s) stopped`);
     out(`lift with: factoryctl unhalt --reason "…"`);
     return;
@@ -389,8 +439,52 @@ async function main(): Promise<void> {
 
   ensureHome(home);
   const store = EventStore.open(home.db);
+  // While serve runs it is the single writer (P2-03): task commands go through its API, and
+  // nothing else drives a task.
+  const served = liveServe(home);
+  const viaServe = async (path: string, body: Record<string, unknown> = {}): Promise<void> => {
+    if (served === null) fail("serve is not running");
+    const r = await callServe(home, served, "POST", path, body);
+    if (r.status !== 200) fail(r.body.message ?? r.body.error ?? `serve answered ${String(r.status)}`);
+    out(r.body.message ?? "done");
+  };
+  const exclusive = ["run", "takeover", "reject"];
+  if (served !== null && command !== undefined && exclusive.includes(command)) {
+    fail(`serve is running (pid ${String(served.pid)}) and schedules every task; pause or cancel the task through it, or stop it with: factoryctl drain`);
+  }
   try {
     switch (command) {
+      case "serve": {
+        const replay = values.replay;
+        if (replay === undefined) fail("serve runs live sessions only with the credential gateway (P2-02); until then, run tasks with: factoryctl run T-…");
+        const validator = createValidator();
+        const release = loadRelease(validator);
+        const max = Number(values["max-tasks"] ?? String(release.config.concurrency.max_tasks));
+        const port = Number(values.port ?? String(DEFAULT_PORT));
+        if (!Number.isInteger(max) || max < 1) fail("--max-tasks takes a positive integer");
+        if (!Number.isInteger(port) || port < 1 || port > 65535) fail("--port takes a port number");
+        const log = (line: string): void => {
+          process.stderr.write(`factoryctl serve: ${line}\n`);
+        };
+        let s;
+        try {
+          s = await startServe({ home, store, cli: fileURLToPath(import.meta.url), maxTasks: max, host: values.host ?? "127.0.0.1", port, replay: resolve(replay), log });
+        } catch (e) {
+          fail(e instanceof Error ? e.message : String(e));
+        }
+        out(`serve listening on ${values.host ?? "127.0.0.1"}:${String(port)} (pid ${String(process.pid)}), up to ${String(max)} task(s) at once`);
+        const stop = s.stop;
+        process.once("SIGTERM", stop);
+        process.once("SIGINT", stop);
+        await s.done;
+        return;
+      }
+      case "worker":
+        await drive(home, store, taskArg(positionals, 1, store), { replay: values.replay, resume: true, attach: false, worker: true });
+        return;
+      case "drain":
+        await viaServe("/v1/drain");
+        return;
       case "task": {
         if (positionals[1] !== "create") fail("usage: factoryctl task create --profile FILE --title TEXT --body-file FILE");
         if (values.profile === undefined || values.title === undefined || values["body-file"] === undefined) fail("task create needs --profile, --title and --body-file");
@@ -410,9 +504,25 @@ async function main(): Promise<void> {
       }
       case "run":
       case "resume":
+        if (command === "resume" && positionals[1] === undefined) {
+          await viaServe("/v1/resume");
+          return;
+        }
+        if (served !== null) {
+          await viaServe(`/v1/tasks/${taskArg(positionals, 1, store)}/resume`);
+          return;
+        }
         await drive(home, store, taskArg(positionals, 1, store), { replay: values.replay, resume: command === "resume", attach: values.attach === true });
         return;
       case "pause": {
+        if (positionals[1] === undefined) {
+          await viaServe("/v1/pause", values.reason === undefined ? {} : { reason: values.reason });
+          return;
+        }
+        if (served !== null) {
+          await viaServe(`/v1/tasks/${taskArg(positionals, 1, store)}/pause`, values.reason === undefined ? {} : { reason: values.reason });
+          return;
+        }
         const id = taskArg(positionals, 1, store);
         const events = store.events(id);
         if (isTerminal(currentState(events))) fail(`${id} has already ended`);
@@ -425,30 +535,39 @@ async function main(): Promise<void> {
         return;
       }
       case "takeover":
-        takeover(home, store, taskArg(positionals, 1, store));
+        await takeover(home, store, taskArg(positionals, 1, store));
         return;
       case "status": {
         const ids = positionals[1] === undefined ? store.taskIds() : [taskArg(positionals, 1, store)];
-        const lock = liveHolder(home);
         const halt = readHalt(home);
         if (halt !== null) out(`HALTED  ${describeHalt(halt)}`);
+        if (served !== null) out(`serve running (pid ${String(served.pid)}, ${served.host}:${String(served.port)})`);
         for (const id of ids) {
           const events = store.events(id);
           const payload = currentStatePayload(events);
           const gate = typeof payload["gate"] === "string" ? ` gate=${payload["gate"]}` : "";
-          const running = lock?.task_id === id ? " (running)" : isPaused(events) ? " (paused)" : "";
+          // A task runs while its lease is held: by an attended run or a serve worker (P2-03).
+          const running = leaseState(store.lease(id), Date.now()) === "held" ? " (running)" : isPaused(events) ? " (paused)" : "";
           out(`${id}  ${currentState(events).padEnd(12)}${gate}${running}  ${readTask(home, id).title}`);
         }
         return;
       }
       case "cancel": {
+        if (served !== null) {
+          await viaServe(`/v1/tasks/${taskArg(positionals, 1, store)}/cancel`);
+          return;
+        }
         const id = taskArg(positionals, 1, store);
         if (isTerminal(currentState(store.events(id)))) fail(`${id} has already ended`);
+        // The command first, so a run still holding the lease stops without failing the task; then
+        // the lease, which stops that run (P2-03), and the transition under it.
         store.append({ task_id: id, actor: { kind: "operator", id: process.env["USER"] ?? "operator" }, type: "command", payload: { command: "cancel" } });
-        transition(store, id, "CANCELLED", { by: "operator" });
-        const lock = liveHolder(home);
-        // The running stage stops at its next boundary; signal the runner to abort its session now.
-        if (lock?.task_id === id) process.kill(lock.pid, "SIGTERM");
+        const lease = await takeLease(home, store, id, { force: true, log: (l) => process.stderr.write(`factoryctl: ${l}\n`) });
+        try {
+          transition(store, id, "CANCELLED", { by: "operator" });
+        } finally {
+          store.releaseLease(lease);
+        }
         out(`${id} CANCELLED`);
         return;
       }
@@ -477,10 +596,13 @@ async function main(): Promise<void> {
         const by = { kind: "operator" as const, id: operator() };
         const stage = typeof currentStatePayload(events)["gate"] === "string" ? `${String(currentStatePayload(events)["gate"])}-gate` : at.toLowerCase();
         store.append({ task_id: id, actor: by, type: "command", payload: { command: "reject", reason: values.reason } });
-        store.append({ task_id: id, actor: { kind: "factoryctl", id: "factoryctl" }, type: "stage_failed", payload: { stage, category: "human_rejected", reason: values.reason } });
-        transition(store, id, "FAILED", { stage, category: "human_rejected", reason: values.reason, by: by.id });
-        const lock = liveHolder(home);
-        if (lock?.task_id === id) process.kill(lock.pid, "SIGTERM");
+        const lease = await takeLease(home, store, id, { force: true, log: (l) => process.stderr.write(`factoryctl: ${l}\n`) });
+        try {
+          store.append({ task_id: id, actor: { kind: "factoryctl", id: "factoryctl" }, type: "stage_failed", payload: { stage, category: "human_rejected", reason: values.reason } });
+          transition(store, id, "FAILED", { stage, category: "human_rejected", reason: values.reason, by: by.id });
+        } finally {
+          store.releaseLease(lease);
+        }
         out(`${id} FAILED (human_rejected)${currentStatePayload(events)["gate"] === "merge" ? "; close its PR on GitHub" : ""}`);
         return;
       }
@@ -574,7 +696,7 @@ async function main(): Promise<void> {
         return;
       }
       default:
-        fail("usage: factoryctl task create | run | resume | pause | takeover | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor");
+        fail("usage: factoryctl task create | run | resume | pause | takeover | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor | serve | drain");
     }
   } finally {
     store.close();
