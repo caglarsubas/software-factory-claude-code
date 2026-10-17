@@ -4,9 +4,9 @@ Claude Code updates this file after every deliverable; the plan is [`ROADMAP.md`
 
 | Field | Value |
 |---|---|
-| Current phase | P1 Local MVP: P1-07 (#18), P1-02 (#19, #25), P1-01 (#20), P1-05 (#21, #27), P1-09 (#23), P1-03 (#24), P1-06 (#26), P1-04 (#29) and P1-08 (#30) merged, with the eval judge fix (#28); counted tasks on `v0.3.x`: 4 merged, across both fixture targets |
+| Current phase | P1 Local MVP: P1-07 (#18), P1-02 (#19, #25), P1-01 (#20), P1-05 (#21, #27), P1-09 (#23), P1-03 (#24), P1-06 (#26), P1-04 (#29) and P1-08 (#30) merged, with the eval judge fix (#28); counted tasks on `v0.3.x`: 5 merged across 3 targets (both fixtures and this repository); `factoryctl gate G1` next |
 | Next gate | G1 |
-| Factory release | `v0.2.0` (`ad5a7d4`, tagged and published 2026-10-16), installed and pinned by the operator, `doctor` clean. `v0.3.1` (`6d8cbff`, tagged 2026-10-16) installed and pinned by the operator; `v0.3.2` cut so this repository's own tests can pass in the gate image, to be tagged once its PR merges |
+| Factory release | `v0.2.0` (`ad5a7d4`, tagged and published 2026-10-16), installed and pinned by the operator, `doctor` clean. `v0.3.2` (`cae3cec`, tagged 2026-10-16) installed and pinned by the operator; `v0.3.3` cut with `factoryctl gate G1`, to be tagged once its PR merges |
 | Claude Code / Agent SDK pin | 2.1.286 / 0.3.286 (stable on Oct 9, 2026; re-checked on Oct 13, see the platform log) |
 | P0 entry criteria | GitHub App ☐ (a token scoped to the fixture repositories stood in for G0-1; see deviations) · Console workspace with spend limit ☑ · `main` created ☑ · toolchain pinned ☑ (Node 24.21.0, pnpm 12.6.0, TypeScript 6.0.3) |
 
@@ -55,7 +55,7 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | ID | Criterion | Status | Evidence | Date | Signed by |
 |---|---|---|---|---|---|
 | G1-1 | At least 10 kill points: 0 re-runs, 0 duplicate side effects | done | 26 kill points in `cli/killpoints.test.ts`, each with 0 re-runs and 0 duplicate pushes or PRs, green in CI since #25; `factoryctl gate G1` confirms it | 2026-10-13 | |
-| G1-2 | At least 5 R0–R1 merges across 2 or more targets, with metrics | todo | | | |
+| G1-2 | At least 5 R0–R1 merges across 2 or more targets, with metrics | doing | 5 merged across 3 targets on 2026-10-16 (ts-mini 2, py-mini 2, this repository 1); `factoryctl gate G1` records the metrics | | |
 | G1-3 | Zero checkout writes; `env` allowlist holds | todo | | | |
 | G1-4 | Component eval suite passes at its threshold | todo | | | |
 | G1-5 | Tier budgets set and recorded | todo | | | |

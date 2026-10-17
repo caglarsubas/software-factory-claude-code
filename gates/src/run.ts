@@ -84,11 +84,13 @@ function tail(r: ExecResult): string {
 
 const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
 
-function commandEntry(name: string, r: ExecResult, limitMs: number): GateEntry {
-  if (r.timedOut) return { name, status: "error", duration_ms: r.durationMs, summary: `timed out after ${seconds(limitMs)}` };
-  if (r.status === 0) return { name, status: "pass", duration_ms: r.durationMs, summary: `exit 0 in ${seconds(r.durationMs)}` };
+/** A command gate's entry. The summary names the command, so a judge can tell what a passing gate ran. */
+function commandEntry(name: string, command: string, r: ExecResult, limitMs: number): GateEntry {
+  const ran = `\`${command}\``;
+  if (r.timedOut) return { name, status: "error", duration_ms: r.durationMs, summary: `${ran} timed out after ${seconds(limitMs)}` };
+  if (r.status === 0) return { name, status: "pass", duration_ms: r.durationMs, summary: `${ran}: exit 0 in ${seconds(r.durationMs)}` };
   const output = tail(r);
-  return { name, status: "fail", duration_ms: r.durationMs, summary: `exit ${String(r.status)}${output === "" ? "" : `:\n${output}`}` };
+  return { name, status: "fail", duration_ms: r.durationMs, summary: `${ran}: exit ${String(r.status)}${output === "" ? "" : `:\n${output}`}` };
 }
 
 function scanEntry(name: string, r: ExecResult, limitMs: number, outcome: Outcome): GateEntry {
@@ -227,7 +229,7 @@ export async function runGates(o: RunOptions): Promise<GatesResult> {
         { network: fetchNetwork, volumes: [dataMount(false), cacheMount(false)], env: phaseEnv(plan, "setupEnv"), ...fetchExtras, workdir: CANDIDATE, argv: ["sh", "-c", plan.setup] },
         t.setup,
       );
-      const entry = commandEntry("setup", r, t.setup);
+      const entry = commandEntry("setup", plan.setup, r, t.setup);
       gates.push(entry);
       setupFailed = entry.status !== "pass";
     }
@@ -242,7 +244,7 @@ export async function runGates(o: RunOptions): Promise<GatesResult> {
         { network: "none", volumes: [dataMount(false), cacheMount(true)], env: { ...phaseEnv(plan, "offlineEnv"), CI: "true" }, workdir: CANDIDATE, argv: ["sh", "-c", c.command] },
         t.command,
       );
-      gates.push(commandEntry(c.name, r, t.command));
+      gates.push(commandEntry(c.name, c.command, r, t.command));
     }
 
     return {

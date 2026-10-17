@@ -19,10 +19,11 @@ pnpm factoryctl eval capture T-0001 # a run's judgment stages as candidate eval 
 pnpm factoryctl halt [--reason "…"] # kill switch v0; lift with: unhalt --reason "…"
 pnpm factoryctl release install v0.1.0 | use TAG | status
 pnpm factoryctl gate G0 --begin     # then the fixture dry runs, then: gate G0
+pnpm factoryctl gate G1 --begin     # then a counted task to its merge, then: budgets, gate G1
 pnpm factoryctl doctor
 ```
 
-In operation, factoryctl runs from an installed release through `$FACTORY_HOME/bin/factoryctl`; the [operator guide](../docs/factory/operator-guide.md) covers installation, approvals, recovery, the kill switch and gate G0.
+In operation, factoryctl runs from an installed release through `$FACTORY_HOME/bin/factoryctl`; the [operator guide](../docs/factory/operator-guide.md) covers installation, approvals, recovery, the kill switch and gates G0 and G1.
 
 A run goes checkout → triage → spec → rounds of build → gates → review (code and security) → policy → approve → summarize → publish, and stops at `NEEDS_HUMAN`. It stops at the spec gate when the spec or the provisional tier calls for a human. It always stops at the merge gate: in Phase 0 and Phase 1 a human merges every tier.
 
@@ -100,7 +101,7 @@ Each target has a bare mirror (`mirrors/`), and each task its own `git clone --s
 
 - **Releases (`release/install.ts`):** `release install TAG` exports the tagged commit's tree from the object database into `releases/<sha>/`, installs its locked runtime dependencies with scripts off, records digests in `RELEASE.json` (`schemas/release.schema.json`) and makes the directory read-only. `current` pins one release; `bin/factoryctl` runs it. A run's manifest records the release commit (`versions.factory_commit`).
 - **Kill switch (`halt.ts`):** `halt` writes `$FACTORY_HOME/HALT`, signals the running task and stops gate containers. While the file exists, no run starts, the pipeline stops at its next boundary without failing the task, and the in-process guard denies every tool call.
-- **Gate evidence (`gate/g0.ts`):** `gate G0 --begin` snapshots the operator checkouts; `gate G0` checks G0-1 to G0-4 against the events, run directories and release recorded since, and writes `gates/G0/evidence.json` (`schemas/gate-evidence.schema.json`) and the PR body `evidence.md`. Each session's `stage_started` event records its runner (`sdk` or `replay`) and its env's names, never values.
+- **Gate evidence (`gate/g0.ts`):** `gate G0 --begin` snapshots the operator checkouts; `gate G0` checks G0-1 to G0-4 against the events, run directories and release recorded since, and writes `gates/G0/evidence.json` (`schemas/gate-evidence.schema.json`) and the PR body `evidence.md`. Each session's `stage_started` event records its runner (`sdk` or `replay`) and its env's names, never values. `gate G1` (`gate/g1.ts`) does the same for G1-1 to G1-5: the release's kill points and `ci`, the merged R0–R1 tasks and their metrics, the checkouts and env, the `evals` check run, and the recorded tier budgets.
 
 ## Replay
 

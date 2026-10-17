@@ -318,6 +318,23 @@ The operator signs each gate by approving its evidence PR. For G0, take these st
 
 `evidence.md` holds IDs, links and aggregates only, because it goes into this public repository. `evidence.json` stays in `$FACTORY_HOME`.
 
+## Gate G1
+
+G1 closes Phase 1. `factoryctl gate G1` checks its five automated criteria from the event store, the run directories, the release and GitHub's check runs; G1-6 is your signature.
+
+1. **Open the evidence window.** From your factory checkout, run `factoryctl gate G1 --begin` (add `--checkout DIR` for each other checkout of yours). Leave those checkouts alone until the gate runs; `.git/index` is outside the comparison.
+2. **Run at least one counted task inside the window.** Any R0–R1 task, to its merge: `run`, review, merge, then `resume` so the task ends `DONE`.
+3. **Record the tier budgets.** `factoryctl budgets` writes `$FACTORY_HOME/budgets/calibration.json` from the P1-01 rule. Run it after the last task: G1-5 fails on a record older than the event store.
+4. **Run the gate.** `factoryctl gate G1` writes `$FACTORY_HOME/gates/G1/evidence.json` and `evidence.md`:
+   - G1-1: the release's kill-point suite has at least 10 points, and `ci` passed on the release commit.
+   - G1-2: at least 5 R0–R1 tasks merged across 2 or more targets, live, on an installed release, each with per-stage tokens, minutes, cost, rounds and review findings.
+   - G1-3: your checkouts and the release are byte-identical since `--begin`, at least one counted task ran inside the window, and every session's env was exactly the allowlist.
+   - G1-4: the `factory-evals` suite (`evals`) passed on the release commit.
+   - G1-5: the recorded tier budgets equal the P1-01 rule applied to the event store now.
+5. **Open and sign the evidence PR.** Open the `gates/G1` PR with `evidence.md` as its body; it fills STATUS's Gate G1 table. Approving it signs G1-6, after which R0–R1 auto-merge may be enabled for Phase 2.
+
+`evidence.md` holds IDs, links and aggregates only. `evidence.json` stays in `$FACTORY_HOME`.
+
 ## Where things live
 
 | Path in `$FACTORY_HOME` | Contents |

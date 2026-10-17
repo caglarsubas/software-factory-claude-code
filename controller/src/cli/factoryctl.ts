@@ -17,7 +17,7 @@
 //   factoryctl halt [--reason TEXT]          kill switch v0: stop every session and run now
 //   factoryctl unhalt --reason TEXT
 //   factoryctl release install TAG [--source DIR] | use TAG|SHA | status
-//   factoryctl gate G0 --begin [--checkout DIR]... | gate G0 [--repo OWNER/NAME]
+//   factoryctl gate G0|G1 --begin [--checkout DIR]... | gate G0|G1 [--repo OWNER/NAME]
 //   factoryctl doctor
 //
 // FACTORY_HOME holds run state (default ~/.factory); FACTORY_RELEASE overrides the release the
@@ -35,7 +35,8 @@ import { runGates } from "../../../gates/src/run.ts";
 import { ensureImage } from "../../../gates/src/image.ts";
 import { runBypassVariants } from "../../../plugin/hooks/bypass-cases.ts";
 import { doctor } from "../doctor.ts";
-import { beginG0, evaluateG0, writeEvidence } from "../gate/g0.ts";
+import { beginGate, evaluateG0, writeEvidence } from "../gate/g0.ts";
+import { evaluateG1 } from "../gate/g1.ts";
 import { githubApiUrl, GitHubError, isLoopbackApi, restCommitChecks, restGitHub } from "../github/client.ts";
 import { clearHalt, describeHalt, readHalt, setHalt } from "../halt.ts";
 import { acquireRunLock, ensureHome, factoryHome, liveHolder, runDir, worktreeDir, type Home } from "../home.ts";
@@ -540,23 +541,25 @@ async function main(): Promise<void> {
         return;
       }
       case "gate": {
-        if (positionals[1] !== "G0") fail("usage: factoryctl gate G0 --begin [--checkout DIR]... | gate G0 [--repo OWNER/NAME]");
+        const gate = positionals[1];
+        if (gate !== "G0" && gate !== "G1") fail("usage: factoryctl gate G0|G1 --begin [--checkout DIR]... | gate G0|G1 [--repo OWNER/NAME]");
         const validator = createValidator();
         const release = loadRelease(validator);
         if (values.begin === true) {
           const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" });
           const checkouts = values.checkout ?? (top.status === 0 ? [top.stdout.trim()] : []);
           if (checkouts.length === 0) fail("not inside a git checkout: name the operator checkout(s) with --checkout DIR");
-          const begin = beginG0(home, release, checkouts.map((c) => resolve(c)));
+          const begin = beginGate(home, gate, release, checkouts.map((c) => resolve(c)));
           for (const c of begin.checkouts) out(`snapshot ${c.path}: ${String(c.files)} files, ${c.digest}`);
-          out(`G0 evidence window open since ${begin.started_at}${begin.release === null ? " (development checkout, not an installed release)" : ` on ${begin.release.tag}`}`);
-          out("now run one task per fixture to its PR, then: factoryctl gate G0");
+          out(`${gate} evidence window open since ${begin.started_at}${begin.release === null ? " (development checkout, not an installed release)" : ` on ${begin.release.tag}`}`);
+          out(gate === "G0" ? "now run one task per fixture to its PR, then: factoryctl gate G0" : "now run at least one counted task to its merge, then: factoryctl budgets && factoryctl gate G1");
           return;
         }
-        const evidence = await evaluateG0({
-          home, store, validator, release,
-          deps: { bypass: runBypassVariants, checks: restCommitChecks(process.env["FACTORY_GITHUB_TOKEN"] ?? null, apiUrl()), doctor: doctor(home, release, keyFile(home)), repository: values.repo ?? null },
-        });
+        const checks = restCommitChecks(process.env["FACTORY_GITHUB_TOKEN"] ?? null, apiUrl());
+        const evidence =
+          gate === "G0"
+            ? await evaluateG0({ home, store, validator, release, deps: { bypass: runBypassVariants, checks, doctor: doctor(home, release, keyFile(home)), repository: values.repo ?? null } })
+            : await evaluateG1({ home, store, validator, release, deps: { checks, repository: values.repo ?? null } });
         const files = writeEvidence(home, evidence);
         for (const c of evidence.criteria) out(`${c.status.padEnd(5)}  ${c.id}  ${c.detail}`);
         out(`evidence: ${files.json}`);

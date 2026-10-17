@@ -99,6 +99,8 @@ function check(result: GatesResult, c: Case): void {
   expect(validation.errors).toEqual([]);
   const notPassing = result.gates.filter((g) => g.status !== "pass").map((g) => g.name).sort();
   expect(notPassing, JSON.stringify(result.gates, null, 2)).toEqual([...c.failing].sort());
+  // A command gate names what it ran, so a judge can tell which checks a passing gate covers.
+  for (const g of result.gates.filter((x) => x.status === "pass" && ["setup", "typecheck", "lint", "test"].includes(x.name))) expect(g.summary, g.name).toMatch(/^`[^`]+`: exit 0 in /);
   expect(result.passed).toBe(c.failing.length === 0);
   expect(result.signals.sink_added).toEqual(c.sinks ?? []);
   expect(result.signals.secret_material).toBe(c.secret ?? false);

@@ -4,6 +4,23 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-16
+
+### Added
+
+- **`factoryctl gate G1`.** Checks G1-1 to G1-5 and drafts the evidence PR, as `gate G0` does:
+  - G1-1: the release's kill-point suite and `ci` on the release commit;
+  - G1-2: the merged R0–R1 tasks, their targets and their per-stage metrics;
+  - G1-3: the checkouts snapshotted by `gate G1 --begin`, a counted task inside that window, the release, and every session's env;
+  - G1-4: the `evals` check run on the release commit;
+  - G1-5: the tier budgets `factoryctl budgets` recorded, against the P1-01 rule applied now.
+
+  The operator guide's new "Gate G1" section lists the steps.
+
+### Changed
+
+- **A command gate's summary names its command** (`` `pnpm lint && pnpm lint:md`: exit 0 in 3.9s ``). The judges could not tell which checks a passing gate ran, and called acceptance criteria open that a gate had in fact checked.
+
 ## [0.3.2] - 2026-10-16
 
 ### Fixed
@@ -131,7 +148,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.2.0...v0.3.0
