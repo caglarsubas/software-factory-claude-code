@@ -269,7 +269,7 @@ It acts at once:
 
 - writes `$FACTORY_HOME/HALT`;
 - signals the running task, whose session aborts;
-- stops every gate container;
+- stops every gate container and runner container;
 - makes the in-process guard deny every further tool call.
 
 While `HALT` exists, no run starts. A halted task does not fail: it stays where it stopped. Escalate by severity:
@@ -294,6 +294,26 @@ factoryctl resume T-0001
 `unhalt` refuses to run inside a Claude Code session. Every halt and unhalt is appended to `$FACTORY_HOME/halt.log`, and the running task records the halt as a `command` event.
 
 The full runbook (pause, drain, App suspension, key rotation, revert) and its drill arrive with P2-07.
+
+## Runner container
+
+From `v0.4.0` (P2-01) a session's Claude Code can run in a runner container instead of on your machine. `factoryctl` and the Agent SDK stay on the host, with the in-process guard and every credential.
+
+What the container gets:
+
+- **Identity:** your uid (never root), no capabilities and a read-only root.
+- **Network:** an internal network whose only exit is the task's egress proxy. The proxy allows HTTPS to the package registries and refuses your machine, private addresses and everything else. It logs each request to `$FACTORY_HOME/runs/<task>/egress/proxy.ndjson`.
+- **Files:** its worktree, task and session directories at their host paths. Nothing under `$FACTORY_HOME/secrets` and no Docker socket is ever mounted.
+
+Live runner sessions turn on with the credential gateway (P2-02), so the real API key never enters a container; until then `run` keeps sessions on the host.
+
+Check the image and its controls on your machine at each release (it needs Docker):
+
+```bash
+pnpm test:runner
+```
+
+On Linux hosts with AppArmor, the runner is AppArmor-unconfined so that its Bash sandbox can create namespaces. On Ubuntu 24.04, also allow unprivileged user namespaces: `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`. Docker Desktop on a Mac needs neither.
 
 ## Gate G0
 
