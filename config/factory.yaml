@@ -18,3 +18,15 @@ routing:
   approver: {model: opus, effort: xhigh}
   summarizer: {model: haiku, effort: low}
 retention_days: {bundles: 180, transcripts: 30, otel: 30}
+# Anthropic list prices in $ per million tokens (ROADMAP §11), re-verified with §11 at every gate.
+# The credential gateway (P2-02) meters each request by them and refuses a model with none.
+# Sonnet 5.5's cache reads are priced at 10% of input although §11 says 5%: the meter takes the
+# higher figure, so metered cost never undercounts.
+prices:
+  as_of: 2026-10-09
+  cache_write: {5m: 1.25, 1h: 2}
+  models:
+    claude-opus-5-5: {input: 4, output: 20, cache_read: 0.2}
+    claude-sonnet-5-5: {input: 2, output: 10, cache_read: 0.2}
+    claude-haiku-5-5: {input: 0.1, output: 0.5, cache_read: 0.01, long: {above_prompt_tokens: 100000, input: 0.5, output: 2.5, cache_read: 0.05}}
+    claude-fable-5-1: {input: 10, output: 50, cache_read: 0.25}

@@ -15,11 +15,12 @@ import { join } from "node:path";
 import { parse, stringify } from "yaml";
 import type { GatesResult, RunOptions as GateRunOptions } from "../../../gates/src/run.ts";
 import { cacheVolumeFor } from "../../../gates/src/run.ts";
-import { activeMs, budgetTier, calibrate, completedRuns, monthOf, monthSpend, sessionCap, taskSpend } from "../budget/budget.ts";
+import { activeMs, budgetTier, calibrate, completedRuns, meteredSpend, monthOf, monthSpend, sessionCap, taskSpend } from "../budget/budget.ts";
 import { writeManifest } from "../bundle/manifest.ts";
 import { writeAtomic } from "../fsutil.ts";
 import { changedFiles, commitAll, createTaskClone, diffPatch, GitError, head, resetClone, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
 import type { GitHub } from "../github/client.ts";
+import { writeTokenFile, type Gateway } from "../gateway/gateway.ts";
 import { createOutbox } from "../github/outbox.ts";
 import { describeHalt, readHalt } from "../halt.ts";
 import { runDir, worktreeDir, type Home } from "../home.ts";
@@ -53,6 +54,11 @@ export interface Deps {
   github: GitHub | null;
   auth: GitAuth | null;
   keyFile: string;
+  /**
+   * The credential gateway (P2-02) live sessions call instead of the API: each gets a token good
+   * for the task's remaining hard budget, and the gateway meters what it uses. Absent for replay.
+   */
+  gateway?: Gateway | null;
   gatesFetchNetwork?: string;
   gatesCaFile?: string;
   log: (line: string) => void;
@@ -312,17 +318,32 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     const cap = Math.round(sessionCap(tierBudgets[tier].budget, taskSpend(store.events(taskId)), release.budgets.stage_fraction[spec.stage]) * 1e4) / 1e4;
     if (cap <= 0) fail(spec.stage, "budget_exceeded", `no budget left for ${spec.label}`);
     const telemetry = deps.telemetry === undefined || deps.telemetry === null ? {} : { telemetry: { config: deps.telemetry, tier, round } };
-    const prepared = prepareSession({ home, taskId, release, validator, keyFile: deps.keyFile, abort, ...telemetry }, { ...spec, budgetUsd: cap });
-    // The runner kind and the env's names (never values) are the evidence for G0-1 and G0-3; the cap is charged if the session never reports (D4).
-    emit("stage_started", { stage: spec.stage, label: spec.label, agent: spec.agent, runner: deps.runner.kind, env_keys: Object.keys(prepared.env).sort(), cap_usd: cap, tier, round });
-    deps.log(`${taskId}: ${spec.label} (cap ${usd(cap)})`);
-    const transcript = join(dir, "transcripts", `${spec.label}.ndjson`);
-    rmSync(transcript, { force: true });
-    const observe = deps.observe;
-    const outcome = await deps.runner.run({
-      label: spec.label, prompt: spec.prompt, options: prepared.options, transcript, denials: prepared.denials,
-      ...(observe === undefined ? {} : { observe: (m: SDKMessage) => { observe(spec.label, m); } }),
-    });
+    // The hard cap (P2-02): the session's gateway token is good for what is left of the task's budget, not just its share.
+    const gw = deps.gateway ?? null;
+    const limit = tierBudgets[tier].budget - taskSpend(store.events(taskId));
+    const grant = gw === null ? null : gw.issue({ taskId, label: spec.label, limitUsd: limit });
+    const token = grant === null ? null : writeTokenFile(home.tokens, grant.id, grant.token);
+    const outcome = await (async () => {
+      try {
+        const gateway = gw === null || token === null ? {} : { gateway: { baseUrl: gw.urls[0] ?? "", tokenFile: token.path } };
+        const prepared = prepareSession({ home, taskId, release, validator, keyFile: deps.keyFile, abort, ...telemetry, ...gateway }, { ...spec, budgetUsd: cap });
+        // The runner kind and the env's names (never values) are the evidence for G0-1 and G0-3; a session that never reports is charged what the gateway metered, or without one its cap (D4).
+        emit("stage_started", { stage: spec.stage, label: spec.label, agent: spec.agent, runner: deps.runner.kind, env_keys: Object.keys(prepared.env).sort(), cap_usd: cap, tier, round, ...(grant === null ? {} : { gateway_session: grant.id, limit_usd: Math.round(limit * 1e4) / 1e4 }) });
+        deps.log(`${taskId}: ${spec.label} (cap ${usd(cap)}${grant === null ? "" : `, hard limit ${usd(limit)}`})`);
+        const transcript = join(dir, "transcripts", `${spec.label}.ndjson`);
+        rmSync(transcript, { force: true });
+        const observe = deps.observe;
+        return await deps.runner.run({
+          label: spec.label, prompt: spec.prompt, options: prepared.options, transcript, denials: prepared.denials,
+          ...(observe === undefined ? {} : { observe: (m: SDKMessage) => { observe(spec.label, m); } }),
+        });
+      } finally {
+        if (grant !== null) gw?.revoke(grant.id);
+        token?.remove();
+      }
+    })();
+    // A metered session costs what the gateway saw it use; the session's own figure is an estimate (§11).
+    const metered = grant === null ? null : (meteredSpend(store.events(taskId)).get(grant.id) ?? 0);
     const routing = release.config.routing[spec.agent];
     // The alias alarm (P1-06): against the pins, and against what earlier live sessions of the alias ran on.
     const alarms = modelAlarms(routing?.model ?? "", outcome.models, release.config.model_pins, store.allEvents());
@@ -333,7 +354,8 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       subtype: outcome.subtype,
       alias: routing?.model ?? "",
       models: outcome.models,
-      cost_usd: outcome.costUsd,
+      cost_usd: metered ?? outcome.costUsd,
+      ...(metered === null ? {} : { reported_cost_usd: outcome.costUsd }),
       input_tokens: outcome.inputTokens,
       output_tokens: outcome.outputTokens,
       num_turns: outcome.numTurns,
@@ -350,6 +372,9 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     }
     checkStop();
     if (clock.expired) fail(spec.stage, "wall_clock", `the ${String(release.budgets.wall_clock_minutes)}-minute wall clock ran out during ${spec.label}`);
+    if (grant !== null && gw?.session(grant.id)?.refused === "budget") {
+      fail(spec.stage, "budget_exceeded", `${spec.label} reached the task's hard cap mid-stage: the gateway metered ${usd(metered ?? 0)} against the ${usd(limit)} the task had left of its ${tier} budget ${usd(tierBudgets[tier].budget)}`);
+    }
     if (!outcome.ok) fail(spec.stage, sdkCategory(outcome.subtype), `${spec.label} ended with ${outcome.subtype}${outcome.errors.length > 0 ? `: ${outcome.errors.join("; ")}` : ""}`, outcome.subtype);
     checkLimits(spec.stage, false);
     if (spec.outputSchema !== undefined && (typeof outcome.structured !== "object" || outcome.structured === null)) {

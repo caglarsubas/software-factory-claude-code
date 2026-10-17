@@ -32,6 +32,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { parse } from "yaml";
 import { engineHost, killGateContainers, PROXY_ENV, removeTaskContainers } from "../../../gates/src/container.ts";
+import { startRunGateway, type Gateway } from "../gateway/gateway.ts";
 import { killRunnerContainers, reapRunnerContainers } from "../runner/container.ts";
 import { keepLease, leaseState, parseHolder, takeLease } from "../sched/lease.ts";
 import { callServe } from "../serve/client.ts";
@@ -209,7 +210,10 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
   process.once("SIGTERM", onSignal);
   process.once("SIGINT", onSignal);
   const probe = probes(...[killAt(injection.kill_at), replay === undefined ? undefined : holdAt(injection.hold_at, replay)].filter((p) => p !== undefined));
+  // Live sessions call the credential gateway (P2-02), never the API with the key.
+  let gateway: Gateway | null = null;
   try {
+    if (replay === undefined) gateway = await startRunGateway({ home, store, prices: release.config.prices, keyFile: keyFile(home), log });
     const state = await runTask({
       home, store, validator, release, taskId, abort,
       deps: {
@@ -229,6 +233,7 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
         github: token === undefined ? null : restGitHub(token, api),
         auth: token === undefined ? null : { token },
         keyFile: keyFile(home),
+        gateway,
         ...(process.env["FACTORY_GATES_FETCH_NETWORK"] === undefined ? {} : { gatesFetchNetwork: process.env["FACTORY_GATES_FETCH_NETWORK"] }),
         ...(process.env["FACTORY_GATES_CA_FILE"] === undefined ? {} : { gatesCaFile: process.env["FACTORY_GATES_CA_FILE"] }),
         log,
@@ -244,6 +249,7 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
     out(`${taskId} ${state}${typeof payload["gate"] === "string" ? ` (gate: ${payload["gate"]})` : ""}${typeof payload["pr_url"] === "string" ? ` ${payload["pr_url"]}` : ""}${halted}`);
     if (state === "FAILED") process.exitCode = 1;
   } finally {
+    await gateway?.close();
     kept.stop();
     lock?.release();
   }
@@ -456,7 +462,7 @@ async function main(): Promise<void> {
     switch (command) {
       case "serve": {
         const replay = values.replay;
-        if (replay === undefined) fail("serve runs live sessions only with the credential gateway (P2-02); until then, run tasks with: factoryctl run T-…");
+        if (replay === undefined) fail("serve runs live sessions only in the runner, under the governance wiring (P2-05); until then, run tasks with: factoryctl run T-…");
         const validator = createValidator();
         const release = loadRelease(validator);
         const max = Number(values["max-tasks"] ?? String(release.config.concurrency.max_tasks));

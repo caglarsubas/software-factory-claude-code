@@ -4,7 +4,7 @@
 // worker's task over at a new epoch and finishes it. Every task then has one branch update and
 // one PR, no step committed twice, and no write from a stale epoch on the record. While serve
 // runs, the CLI is its client and nothing else drives a task; without replayed sessions serve
-// refuses to start (live sessions wait for the gateway, P2-02).
+// refuses to start (unattended live sessions wait for the runner under governance, P2-05).
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
@@ -109,10 +109,10 @@ const held = (task: string): number | null => (existsSync(join(replay, task, "he
 const events = (task: string): FactoryEvent[] => read((s) => s.events(task));
 
 describe("factoryctl serve (P2-03)", () => {
-  it("refuses live sessions until the gateway exists", async () => {
+  it("refuses live sessions until they run in the runner under governance", async () => {
     const r = await cli(["serve"]);
     expect(r.code).not.toBe(0);
-    expect(r.stderr).toContain("credential gateway (P2-02)");
+    expect(r.stderr).toContain("governance wiring (P2-05)");
   });
 
   it("runs three tasks at once, survives a SIGKILL of serve and of a worker, and duplicates nothing", async () => {

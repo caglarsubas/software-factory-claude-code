@@ -36,24 +36,47 @@ export interface Charge {
   usd: number;
   /** When the session started. */
   at: string;
-  /** Started but never completed: charged its recorded cap (D4). */
+  /** Started but never completed: charged its recorded cap (D4), or what the gateway metered. */
   killed: boolean;
 }
 
+/** What the credential gateway metered for each of its sessions (P2-02): the sum of their usage events. */
+export function meteredSpend(events: readonly FactoryEvent[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const e of events) {
+    const session = e.payload["session"];
+    const usd = e.payload["usd"];
+    if (e.type === "usage" && typeof session === "string" && typeof usd === "number") out.set(session, (out.get(session) ?? 0) + usd);
+  }
+  return out;
+}
+
 /**
- * What each session cost: its reported cost, or its cap when it started and never completed
- * (a killed process reports nothing, so the cap keeps the hard limit an upper bound).
+ * What a session that started and never completed is charged: what the gateway metered for it,
+ * or, for a session the gateway did not meter, its cap (a killed process reports nothing, so the
+ * cap keeps the hard limit an upper bound).
+ */
+export function unreportedCharge(started: FactoryEvent, metered: ReadonlyMap<string, number>): number {
+  const session = started.payload["gateway_session"];
+  if (typeof session === "string") return metered.get(session) ?? 0;
+  return typeof started.payload["cap_usd"] === "number" ? started.payload["cap_usd"] : 0;
+}
+
+/**
+ * What each session cost: its recorded cost (metered by the gateway from P2-02, else the
+ * session's own report), or, for one that started and never completed, its unreported charge.
  */
 export function charges(events: readonly FactoryEvent[]): Charge[] {
   const out: Charge[] = [];
   const open = new Map<string, Charge>();
+  const metered = meteredSpend(events);
   for (const e of events) {
     const label = typeof e.payload["label"] === "string" ? e.payload["label"] : "";
     const runner = e.payload["runner"];
     if (e.type === "stage_started" && typeof runner === "string") {
       const previous = open.get(label);
       if (previous !== undefined) out.push(previous);
-      open.set(label, { label, runner, usd: typeof e.payload["cap_usd"] === "number" ? e.payload["cap_usd"] : 0, at: e.ts, killed: true });
+      open.set(label, { label, runner, usd: unreportedCharge(e, metered), at: e.ts, killed: true });
     } else if (e.type === "stage_completed" && typeof e.payload["cost_usd"] === "number") {
       const started = open.get(label);
       open.delete(label);

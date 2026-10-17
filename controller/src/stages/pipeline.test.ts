@@ -6,12 +6,15 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse, stringify } from "yaml";
 import type { GatesResult } from "../../../gates/src/run.ts";
+import { ledger, startGateway } from "../gateway/gateway.ts";
 import { memoryGitHub, type MemoryGitHub } from "../github/testing.ts";
 import { clearHalt, setHalt } from "../halt.ts";
 import { ensureHome, factoryHome, runDir, worktreeDir, type Home } from "../home.ts";
@@ -23,6 +26,7 @@ import { OTEL_ENV } from "../telemetry.ts";
 import { taskReport } from "../report/report.ts";
 import { replayRunner, type Transcripts } from "../session/replay.ts";
 import type { SessionRunner } from "../session/runner.ts";
+import { stubHandler, type Script } from "../session/stub-model.ts";
 import { answer, assistant, result, text, toolUse } from "../session/transcript.ts";
 import { EventStore } from "../store/events.ts";
 import { currentState, currentStatePayload } from "../task/lifecycle.ts";
@@ -1142,5 +1146,100 @@ describe("resume, gates and cancellation", () => {
     const fromDisk = replayRunner(recorded);
     await expect(run(again, deps(fromDisk))).rejects.toThrow(/no transcript for build/);
     expect(fromDisk.requests.map((r) => r.label)).toEqual(["triage", "spec", "build"]);
+  });
+});
+
+describe("the credential gateway (P2-02)", () => {
+  // A stand-in for a live session: the model loop the CLI would run, as requests to the gateway
+  // with the session's own base URL and token, then the recorded transcript for its output.
+  const upstreamKeys: string[] = [];
+  let upstream: Server;
+  let upstreamUrl = "";
+  // Each build turn reports 1M tokens in and 100k out on Sonnet 5.5: $3 a turn against R1's $12.
+  const dear = { input_tokens: 1_000_000, output_tokens: 100_000 };
+  const script: Script = {
+    triage: [{ text: "ok" }],
+    spec: [{ text: "ok" }],
+    build: Array.from({ length: 10 }, () => ({ tool: "Bash", input: { command: "true" }, usage: dear })),
+  };
+  beforeAll(async () => {
+    const stub = stubHandler(() => script, () => undefined);
+    upstream = createServer((req, res) => {
+      upstreamKeys.push(String(req.headers["x-api-key"]));
+      stub(req, res);
+    }).listen(0, "127.0.0.1");
+    await new Promise((r) => upstream.once("listening", r));
+    upstreamUrl = `http://127.0.0.1:${String((upstream.address() as AddressInfo).port)}`;
+  });
+  afterAll(() => {
+    upstream.close();
+  });
+
+  function liveLike(turns: Record<string, number>, inner: SessionRunner): SessionRunner & { tokens: string[] } {
+    const tokens: string[] = [];
+    return {
+      kind: "sdk",
+      tokens,
+      async run(req) {
+        const base = req.options.env?.["ANTHROPIC_BASE_URL"] ?? "";
+        const helper = String((req.options.settings as { apiKeyHelper?: string }).apiKeyHelper);
+        const token = readFileSync(/^cat '(.*)'$/.exec(helper)?.[1] ?? "", "utf8").trim();
+        tokens.push(token);
+        for (let i = 0; i < (turns[req.label] ?? 0); i++) {
+          const messages: unknown[] = [{ role: "user", content: `[case:${req.label}] go` }];
+          for (let j = 0; j < i; j++) messages.push({ role: "assistant", content: "x" }, { role: "user", content: "ok" });
+          const r = await fetch(`${base}/v1/messages?beta=true`, { method: "POST", headers: { "x-api-key": token, "content-type": "application/json" }, body: JSON.stringify({ model: req.options.model, stream: true, max_tokens: 64000, tools: [{ name: "Bash" }], messages }) });
+          const body = await r.text();
+          if (r.status !== 200) {
+            const outcome = await inner.run(req);
+            return { ...outcome, ok: false, subtype: "error_during_execution", errors: [`API Error: ${String(r.status)} ${body}`] };
+          }
+        }
+        return inner.run(req);
+      },
+    };
+  }
+
+  it("stops a task at its hard cap mid-stage, charges what the gateway metered, and never shows a session the key", async () => {
+    const id = newTask();
+    writeFileSync(join(world.home.secrets, "anthropic.key"), "sk-ant-real\n", { mode: 0o600 });
+    const gateway = await startGateway({ prices: release.config.prices, keyFile: join(world.home.secrets, "anthropic.key"), upstream: upstreamUrl, hosts: ["127.0.0.1"], halted: () => null, onUsage: ledger(world.store), log: () => undefined });
+    try {
+      const runner = liveLike({ triage: 1, spec: 1, build: 10 }, replayRunner(transcripts(id)));
+      expect(await run(id, deps(runner, { gateway }))).toBe("FAILED");
+      expect(failure(id)).toMatchObject({ stage: "build", category: "budget_exceeded" });
+      expect(String(failure(id)?.["reason"])).toContain("hard cap mid-stage");
+      const events = world.store.events(id);
+      // Four $3 turns spend R1's $12; the fifth is refused before it reaches the model.
+      const build = events.filter((e) => e.type === "usage" && e.payload["label"] === "build");
+      expect(build).toHaveLength(4);
+      for (const e of build) expect(e.payload["usd"]).toBeCloseTo(3, 6);
+      const started = events.find((e) => e.type === "stage_started" && e.payload["label"] === "build");
+      expect(started?.payload["gateway_session"]).toBe(build[0]?.payload["session"]);
+      expect(started?.payload["limit_usd"]).toBeCloseTo(12, 2);
+      expect(allowedEnvKeys(started?.payload["env_keys"])).toBe(true);
+      expect(started?.payload["env_keys"]).toContain("ANTHROPIC_BASE_URL");
+      // The session's own cost estimate is kept beside the metered figure, which is what counts.
+      const completed = events.find((e) => e.type === "stage_completed" && e.payload["label"] === "build");
+      expect(completed?.payload["cost_usd"]).toBeCloseTo(12, 6);
+      expect(completed?.payload["reported_cost_usd"]).toBe(1.2);
+      expect(taskReport(events).totals.costUsd).toBeCloseTo(12, 2);
+      // The key went upstream only; sessions held per-session tokens, revoked and deleted when they ended.
+      expect(new Set(upstreamKeys)).toEqual(new Set(["sk-ant-real"]));
+      expect(new Set(runner.tokens).size).toBe(3);
+      expect(runner.tokens.some((t) => t.includes("sk-ant"))).toBe(false);
+      expect(readdirSync(world.home.tokens)).toEqual([]);
+    } finally {
+      await gateway.close();
+    }
+  });
+
+  it("charges a session killed mid-stage what the gateway metered, not its cap", () => {
+    const id = newTask();
+    const factoryctl = { kind: "factoryctl" as const, id: "factoryctl" };
+    world.store.append({ task_id: id, actor: factoryctl, type: "stage_started", payload: { stage: "build", label: "build", runner: "sdk", env_keys: [], cap_usd: 6, gateway_session: "gw_k" } });
+    for (const usd of [0.25, 0.5]) world.store.append({ task_id: id, actor: factoryctl, type: "usage", payload: { session: "gw_k", label: "build", model: "claude-sonnet-5-5", usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cache_creation_5m_input_tokens: 0, cache_creation_1h_input_tokens: 0 }, usd, reported: true, request_id: null } });
+    const report = taskReport(world.store.events(id));
+    expect(report.stages.find((s) => s.label === "build")).toMatchObject({ unreported: true, costUsd: 0.75 });
   });
 });

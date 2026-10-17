@@ -122,6 +122,100 @@
         "transcripts",
         "otel"
       ]
+    },
+    "prices": {
+      "description": "Anthropic list prices in $ per million tokens (ROADMAP §11), by exact model ID. The credential gateway meters every request by them and refuses a model with no price.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string",
+          "format": "date"
+        },
+        "cache_write": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "5m": {
+              "type": "number",
+              "minimum": 1
+            },
+            "1h": {
+              "type": "number",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "5m",
+            "1h"
+          ],
+          "description": "Cache writes as multiples of the input price, by TTL."
+        },
+        "models": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "pattern": "^claude-[a-z]+-[0-9]+(-[0-9]+)?$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "input": {
+                "type": "number",
+                "minimum": 0
+              },
+              "output": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cache_read": {
+                "type": "number",
+                "minimum": 0
+              },
+              "long": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "above_prompt_tokens": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "input": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "output": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "cache_read": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "above_prompt_tokens",
+                  "input",
+                  "output",
+                  "cache_read"
+                ],
+                "description": "Prices for a request whose prompt (input, cache reads and cache writes) is above above_prompt_tokens."
+              }
+            },
+            "required": [
+              "input",
+              "output",
+              "cache_read"
+            ]
+          }
+        }
+      },
+      "required": [
+        "as_of",
+        "cache_write",
+        "models"
+      ]
     }
   },
   "required": [
@@ -130,6 +224,7 @@
     "concurrency",
     "model_pins",
     "routing",
-    "retention_days"
+    "retention_days",
+    "prices"
   ]
 }

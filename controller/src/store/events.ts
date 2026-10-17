@@ -18,7 +18,7 @@ export type State =
 
 export type EventType =
   | "task_created" | "state_changed" | "stage_started" | "stage_completed" | "stage_failed" | "command" | "side_effect_intent" | "side_effect_done"
-  | "artifact_committed" | "alarm";
+  | "artifact_committed" | "alarm" | "usage";
 
 export interface Actor {
   kind: "factoryctl" | "operator" | "agent" | "github";

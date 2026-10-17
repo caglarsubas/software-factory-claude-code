@@ -2,6 +2,7 @@
 // A task report lists each stage's runner, round, turns, tokens, minutes and cost; a week row
 // counts the tasks created that week by outcome, in the columns of STATUS's weekly table, so it
 // holds aggregates only and can go into the public repository as it is.
+import { meteredSpend, unreportedCharge } from "../budget/budget.ts";
 import type { FactoryEvent, State } from "../store/events.ts";
 import { currentState, currentStatePayload } from "../task/lifecycle.ts";
 import { buildCategory, CATEGORIES, isCategory, type Category } from "../task/taxonomy.ts";
@@ -81,6 +82,7 @@ export function taskReport(events: readonly FactoryEvent[], reviews: readonly { 
   const stages: StageMetrics[] = [];
   // A session that started and never completed: listed when it is superseded or the events end.
   const open = new Map<string, StageMetrics>();
+  const metered = meteredSpend(events);
   for (const e of events) {
     const label = str(e.payload["label"]) ?? "";
     const runner = str(e.payload["runner"]);
@@ -90,7 +92,7 @@ export function taskReport(events: readonly FactoryEvent[], reviews: readonly { 
       if (previous !== undefined) stages.push(previous);
       open.set(label, {
         stage: str(e.payload["stage"]) ?? "", label, round: num(e.payload["round"]) ?? 1, runner, ok: false,
-        numTurns: null, inputTokens: null, outputTokens: null, durationMs: null, costUsd: num(e.payload["cap_usd"]) ?? 0, denied: 0, unreported: true,
+        numTurns: null, inputTokens: null, outputTokens: null, durationMs: null, costUsd: unreportedCharge(e, metered), denied: 0, unreported: true,
       });
     }
     if (e.type !== "stage_completed") continue;
