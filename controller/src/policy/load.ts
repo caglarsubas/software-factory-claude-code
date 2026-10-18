@@ -22,6 +22,8 @@ export const POLICY_FILES = {
 export interface Profile {
   protected_paths: { glob: string; minimum_risk: Tier; note?: string }[];
   restricted: { glob: string; note?: string }[];
+  /** The target's own migration paths bring in the migration reviewer (P2-09), as the default migrations rule does. */
+  reviewers?: { migration_paths?: string[] };
 }
 
 export class PolicyError extends Error {}
@@ -47,6 +49,7 @@ export function withProfile(policy: RiskPolicy, profile: Profile): RiskPolicy {
       minimum_risk: "Restricted" as const,
       note: `profile restricted: ${r.note ?? r.glob}`,
     })),
+    ...((profile.reviewers?.migration_paths ?? []).length > 0 ? [{ when: { any_path: profile.reviewers?.migration_paths ?? [] }, minimum_risk: "R3" as const, reviews: ["migration" as const], note: "profile: schema migrations" }] : []),
   ];
   // Profile rules run before the default rules so uncertainty (raise_by) still applies last.
   const firstRaise = policy.rules.findIndex((r) => r.raise_by !== undefined);

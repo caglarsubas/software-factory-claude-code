@@ -17,8 +17,9 @@ const NEXT: Readonly<Partial<Record<State, readonly State[]>>> = {
   POLICY: ["AUTO_APPROVED", "NEEDS_HUMAN"],
   // A spec gate continues to BUILDING; a merge gate waits for a human merge.
   NEEDS_HUMAN: ["BUILDING", "MERGE_QUEUED", "MERGED"],
-  AUTO_APPROVED: ["MERGE_QUEUED"],
-  MERGE_QUEUED: ["MERGED"],
+  // An auto-merge a required check, a moved head or GitHub refuses falls back to the human merge gate (P2-05b).
+  AUTO_APPROVED: ["MERGE_QUEUED", "NEEDS_HUMAN"],
+  MERGE_QUEUED: ["MERGED", "NEEDS_HUMAN"],
   MERGED: ["DEPLOYING", "DONE"],
   DEPLOYING: ["OBSERVING", "ROLLED_BACK"],
   OBSERVING: ["DONE", "ROLLED_BACK"],

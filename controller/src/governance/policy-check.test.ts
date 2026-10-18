@@ -57,7 +57,9 @@ function reads(w: World): PolicyReads {
 const scanSinks = (files: readonly { content: string; added: number[] }[]): Promise<Sink[]> =>
   Promise.resolve(files.some((f) => f.added.some((n) => /\beval\(/.test(f.content.split("\n")[n - 1] ?? ""))) ? ["code_exec"] : []);
 
-const check = (w: World) => policyCheck({ repo: REPO, pr: 7, reads: reads(w), risk, validator, scanSinks });
+// P2's ladder: R0–R1 merge on the verdict, R2–R3 need a human, Restricted is prepared only.
+const ladder = { R0: "auto_merge", R1: "auto_merge", R2: "human_merge", R3: "human_merge", Restricted: "prepare_only" } as const;
+const check = (w: World) => policyCheck({ repo: REPO, pr: 7, reads: reads(w), risk, ladder, validator, scanSinks });
 
 describe("policy-check", () => {
   it("passes a factory PR whose verdict holds, and leaves a human's PR to human review", async () => {
@@ -127,6 +129,10 @@ describe("policy-check", () => {
 
   it("never passes Restricted, a pending or failed verdict, two verdicts, or a target without a policy", async () => {
     expect(await check({ files: [file("infra/prod/main.tf")], runs: [run(verdict({ tier: "Restricted" }))] })).toMatchObject({ conclusion: "failure", title: "Restricted: prepare only" });
+    // R2 is human_merge in P2: an approved verdict alone does not pass it.
+    const r2 = { files: [file("package.json")], runs: [run(verdict({ tier: "R2" }))] };
+    expect(await check(r2)).toMatchObject({ conclusion: "failure", title: "R2: waiting for an approver" });
+    expect(await check({ ...r2, reviews: [{ login: "operator", state: "APPROVED", commitId: HEAD }] })).toMatchObject({ conclusion: "success", title: "R2: approved by operator" });
     expect(await check({ runs: [run(verdict(), { conclusion: "failure" })] })).toMatchObject({ conclusion: "failure", title: "verdict rejected" });
     expect(await check({ runs: [run(verdict()), run(verdict({ tier: "R2" }))] })).toMatchObject({ conclusion: "failure", title: "conflicting verdicts" });
     expect(await check({ policy: null })).toMatchObject({ conclusion: "failure", title: "no target policy" });

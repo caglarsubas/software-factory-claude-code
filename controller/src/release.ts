@@ -4,6 +4,7 @@
 // during development. FACTORY_RELEASE overrides it.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Tier } from "./policy/engine.ts";
 import { loadYaml, REPO_ROOT } from "./policy/load.ts";
 import type { Validator } from "./schemas/validate.ts";
 
@@ -75,6 +76,16 @@ export interface Release {
   config: FactoryConfig;
   tools: ToolsPolicy;
   budgets: BudgetsPolicy;
+  approvals: ApprovalsPolicy;
+}
+
+export type MergeAction = "human_merge" | "auto_merge" | "prepare_only";
+
+/** policies/approvals.yaml: the autonomy ladder, and the phase whose rung applies now. */
+export interface ApprovalsPolicy {
+  current_phase: "P0" | "P1" | "P2" | "P3";
+  spec_gate_tiers: Tier[];
+  phases: Record<"P0" | "P1" | "P2" | "P3", Record<Tier, MergeAction>>;
 }
 
 export function readReleaseInfo(root: string, validator: Validator): ReleaseInfo | null {
@@ -97,5 +108,6 @@ export function loadRelease(validator: Validator, root: string = process.env["FA
     config: loadYaml(join(root, "config/factory.yaml"), "factory-config.schema.json", validator) as FactoryConfig,
     tools: loadYaml(join(root, "policies/tools.yaml"), "tools-policy.schema.json", validator) as ToolsPolicy,
     budgets: loadYaml(join(root, "policies/budgets.yaml"), "budgets-policy.schema.json", validator) as BudgetsPolicy,
+    approvals: loadYaml(join(root, "policies/approvals.yaml"), "approvals-policy.schema.json", validator) as ApprovalsPolicy,
   };
 }

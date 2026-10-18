@@ -148,22 +148,22 @@ export function rulesetDiff(expected: Ruleset, actual: Ruleset): string[] {
  * against `.github/rulesets/main.json` in the release. Needs a token that may read rulesets; the
  * target repositories' rulesets and the App's permissions join it with P2-05's governance wiring.
  */
-export async function rulesetCheck(o: { repo: string; expected: Ruleset; token: string; api: string; fetchFn?: typeof fetch }): Promise<Check> {
+export async function rulesetCheck(o: { repo: string; expected: Ruleset; token: string; api: string; fetchFn?: typeof fetch; hint?: string }): Promise<Check> {
   const call = async (path: string): Promise<{ status: number; body: unknown }> => {
     const r = await (o.fetchFn ?? fetch)(`${o.api}${path}`, { headers: { authorization: `Bearer ${o.token}`, accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" }, redirect: "error" });
     return { status: r.status, body: r.ok ? ((await r.json())) : null };
   };
-  const name = `ruleset ${o.repo}`;
+  const name = `ruleset ${o.repo}${o.expected.name === "main" ? "" : ` ${o.expected.name}`}`;
   try {
     const list = await call(`/repos/${o.repo}/rulesets`);
     if (list.status === 403 || list.status === 404) return { name, status: "warn", detail: `the token cannot read ${o.repo}'s rulesets (it needs Administration: read)` };
     if (list.status !== 200) return { name, status: "warn", detail: `GitHub answered ${String(list.status)}` };
     const found = (list.body as { id: number; name: string }[]).find((r) => r.name === o.expected.name);
-    if (found === undefined) return { name, status: "fail", detail: `no ruleset named ${o.expected.name}: import .github/rulesets/main.json` };
+    if (found === undefined) return { name, status: "fail", detail: `no ruleset named ${o.expected.name}: ${o.hint ?? "import .github/rulesets/main.json"}` };
     const full = await call(`/repos/${o.repo}/rulesets/${String(found.id)}`);
     if (full.status !== 200) return { name, status: "warn", detail: `GitHub answered ${String(full.status)} for ruleset ${String(found.id)}` };
     const diffs = rulesetDiff(o.expected, full.body as Ruleset);
-    return diffs.length === 0 ? { name, status: "ok", detail: `${o.expected.name} matches .github/rulesets/main.json` } : { name, status: "fail", detail: diffs.join("; ") };
+    return diffs.length === 0 ? { name, status: "ok", detail: `${o.expected.name} matches ${o.hint === undefined ? ".github/rulesets/main.json" : "the release's footprint"}` } : { name, status: "fail", detail: diffs.join("; ") };
   } catch (e) {
     return { name, status: "warn", detail: `could not reach GitHub: ${e instanceof Error ? e.message : String(e)}` };
   }

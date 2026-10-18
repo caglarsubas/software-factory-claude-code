@@ -41,6 +41,7 @@ import { commitArtifacts, freshness, inputsOf, isCommitted, recover, specDigest,
 import { findingFingerprint, gateFingerprint } from "./fingerprint.ts";
 import { OUTPUTS } from "./outputs.ts";
 import { renderVerdict, VERDICT_CHECK, verdictDigest, type Verdict } from "../governance/verdict.ts";
+import { GITHUB_ACTIONS_APP_ID, REQUIRED_CHECKS } from "../governance/footprint.ts";
 import { selectReviewers, type Reviewer } from "./reviewers.ts";
 import { approvePrompt, buildPrompt, refutePrompt, reviewPrompt, specPrompt, summarizePrompt, triagePrompt, type TaskText } from "./prompts.ts";
 import { latestRound, roundLabel, roundPath } from "./rounds.ts";
@@ -202,6 +203,8 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   // Exit transitions only move forward: re-applying an earlier step's exit on resume is a no-op.
   const rank = (s: State, payload: Record<string, unknown>): number => {
     if (s === "NEEDS_HUMAN") return payload["gate"] === "merge" ? 1_000_001 : 3;
+    if (s === "AUTO_APPROVED") return 1_000_001;
+    if (s === "MERGE_QUEUED") return 1_000_002;
     if (s === "POLICY") return 1_000_000;
     const pre = PRE[s];
     if (pre !== undefined) return pre;
@@ -791,9 +794,17 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   };
 
   const publishExit = (): void => {
-    const p = readJson("publish.json") as { pr_url: string | null };
+    const p = readJson("publish.json") as { pr_url: string | null; pr_number: number | null; verdict_check_url?: string | null };
     const decision = readJson("policy.json") as Decision;
-    // P0–P1: a human merges every tier (ROADMAP §4).
+    const approver = readJson("verdict.json") as { decision: string };
+    // The approvals ladder of the current phase (ROADMAP §4): from P2, an approved R0–R1 candidate whose
+    // verdict the App posted merges itself once the target's required checks pass (P2-05b).
+    const ladder = release.approvals.phases[release.approvals.current_phase];
+    if (ladder[decision.tier] === "auto_merge" && approver.decision === "approve" && p.pr_number !== null && typeof p.verdict_check_url === "string") {
+      moveTo("AUTO_APPROVED", { gate: "checks", tier: decision.tier, pr_url: p.pr_url });
+      endReason = "waiting: required checks";
+      throw new Stop();
+    }
     moveTo("NEEDS_HUMAN", { gate: "merge", tier: decision.tier, pr_url: p.pr_url });
     endReason = "waiting: merge gate";
     throw new Stop();
@@ -821,6 +832,62 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
       deps.log(`${taskId}: ${pr.url} was closed without a merge (human_rejected)`);
     }
     return state();
+  }
+
+  /**
+   * An auto-approved task (P2-05b) merges itself: once the target's required checks (the gates and
+   * policy-check, from GitHub Actions) pass on the candidate, factoryctl squash-merges the PR at that
+   * exact commit through the outbox. A failed check, a head that moved, or a PR GitHub will not
+   * merge goes to the human merge gate; checks still running leave it waiting.
+   */
+  async function autoMerge(): Promise<State> {
+    if (deps.github === null) return state();
+    const gh = deps.github;
+    const p = readJson("publish.json") as { pr_number: number; pr_url: string };
+    const decision = readJson("policy.json") as Decision;
+    const repo = task.target.repo;
+    const cand = candidate(latestRound(dir));
+    const toHuman = (reason: string): State => {
+      transition(store, taskId, "NEEDS_HUMAN", { gate: "merge", tier: decision.tier, pr_url: p.pr_url, reason });
+      deps.log(`${taskId}: ${reason}; it waits at the merge gate`);
+      return state();
+    };
+    const merged = (headCommit: string, mergeCommit: string | null): State => {
+      if (state() === "AUTO_APPROVED") transition(store, taskId, "MERGE_QUEUED", { pr_number: p.pr_number, sha: cand });
+      transition(store, taskId, "MERGED", { pr_number: p.pr_number, pr_url: p.pr_url, head_commit: headCommit, ...(mergeCommit === null ? {} : { merge_commit: mergeCommit }) });
+      transition(store, taskId, "DONE", {});
+      deps.log(`${taskId}: ${p.pr_url} was merged`);
+      return state();
+    };
+    const pr = await gh.pullRequest(repo, p.pr_number);
+    if (pr.merged) return merged(pr.headSha, null);
+    if (pr.state === "closed") {
+      const detail = { stage: "merge-gate", category: "human_rejected", reason: `${pr.url} was closed without a merge`, cause: "pr_closed" };
+      emit("stage_failed", detail);
+      transition(store, taskId, "FAILED", detail);
+      return state();
+    }
+    if (pr.headSha !== cand) return toHuman(`the PR's head ${pr.headSha.slice(0, 12)} is not the judged candidate ${cand.slice(0, 12)}`);
+    if (state() === "AUTO_APPROVED") {
+      const runs = await gh.checkRunsOn(repo, cand);
+      const latest = (name: string) => runs.find((r) => r.name === name && r.appId === GITHUB_ACTIONS_APP_ID);
+      const failed = REQUIRED_CHECKS.filter((n) => latest(n)?.status === "completed" && latest(n)?.conclusion !== "success");
+      if (failed.length > 0) return toHuman(`required check(s) ${failed.join(", ")} did not pass on ${cand.slice(0, 12)}`);
+      const waiting = REQUIRED_CHECKS.filter((n) => latest(n)?.status !== "completed");
+      if (waiting.length > 0) {
+        deps.log(`${taskId}: waiting for ${waiting.join(", ")} on ${cand.slice(0, 12)}`);
+        return state();
+      }
+      transition(store, taskId, "MERGE_QUEUED", { pr_number: p.pr_number, sha: cand });
+    }
+    try {
+      const m = await outbox.merge({ stage: "merge", round: 1 }, { repo, number: p.pr_number, sha: cand });
+      return merged(cand, m.sha);
+    } catch (e) {
+      // 405: GitHub will not merge it (a rule or check says no); 409: the head moved.
+      if (/HTTP (405|409)/.test(e instanceof Error ? e.message : String(e))) return toHuman(`GitHub refused the merge: ${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    }
   }
 
   // --- the run loop ----------------------------------------------------------------------
@@ -852,6 +919,11 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   const initial = state();
   if (isTerminal(initial)) return initial;
   if (initial === "NEEDS_HUMAN" && currentStatePayload(store.events(taskId))["gate"] === "merge") return mergeGate();
+  if (initial === "AUTO_APPROVED" || initial === "MERGE_QUEUED") {
+    // A merge a killed run attempted is looked up first, as every run does with its dangling intents.
+    for (const r of await outbox.reconcile()) deps.log(`${taskId}: reconciled ${r.key} (attempt ${String(r.attempt)}): ${r.outcome === "found" ? "it happened before the interruption" : "it never happened"}`);
+    return autoMerge();
+  }
 
   // A run the process did not live to end gets its end from the heartbeat, so the wall clock counts only active time.
   const heartbeatPath = join(dir, "heartbeat.json");

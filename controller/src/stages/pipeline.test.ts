@@ -28,7 +28,7 @@ import { replayRunner, type Transcripts } from "../session/replay.ts";
 import type { SessionRunner } from "../session/runner.ts";
 import { stubHandler, type Script } from "../session/stub-model.ts";
 import { answer, assistant, result, text, toolUse } from "../session/transcript.ts";
-import { EventStore } from "../store/events.ts";
+import { EventStore, type State } from "../store/events.ts";
 import { currentState, currentStatePayload } from "../task/lifecycle.ts";
 import { createTask } from "../task/task.ts";
 import { CATEGORIES } from "../task/taxonomy.ts";
@@ -707,7 +707,7 @@ describe("the factory/verdict (P2-05)", () => {
 
   it("posts the verdict on the candidate as the App, binds it to the bundle, and policy-check accepts it", async () => {
     const id = newTask();
-    expect(await run(id, deps(replayRunner(transcripts(id)), { appId: APP }))).toBe("NEEDS_HUMAN");
+    expect(await run(id, deps(replayRunner(transcripts(id)), { appId: APP }))).toBe("AUTO_APPROVED");
     const dir = runDir(world.home, id);
     const head = remoteBranch(id);
     expect(world.github.checks).toHaveLength(1);
@@ -726,9 +726,9 @@ describe("the factory/verdict (P2-05)", () => {
 
     const risk = loadRiskPolicy();
     const noSinks = () => Promise.resolve([]);
-    expect(await policyCheck({ repo: "example/ts-mini", pr: 1, reads: readsFor(id, base), risk, validator, scanSinks: noSinks })).toMatchObject({ conclusion: "success", computedTier: "R1", verdictTier: "R1" });
+    expect(await policyCheck({ repo: "example/ts-mini", pr: 1, reads: readsFor(id, base), risk, ladder: release.approvals.phases.P2, validator, scanSinks: noSinks })).toMatchObject({ conclusion: "success", computedTier: "R1", verdictTier: "R1" });
     // The same run, posted by any other app: rejected.
-    expect(await policyCheck({ repo: "example/ts-mini", pr: 1, reads: readsFor(id, base, 99), risk, validator, scanSinks: noSinks })).toMatchObject({ conclusion: "failure", title: "no factory verdict" });
+    expect(await policyCheck({ repo: "example/ts-mini", pr: 1, reads: readsFor(id, base, 99), risk, ladder: release.approvals.phases.P2, validator, scanSinks: noSinks })).toMatchObject({ conclusion: "failure", title: "no factory verdict" });
   });
 
   it("posts none with a personal token, and none twice when publish runs again", async () => {
@@ -756,10 +756,92 @@ describe("the factory/verdict (P2-05)", () => {
     });
     await expect(runTask({ home: world.home, store: dying, validator, release, deps: deps(replayRunner(transcripts(again)), { appId: APP }), taskId: again })).rejects.toThrow("killed");
     expect(world.github.checks.filter((c) => c.name === VERDICT_CHECK)).toHaveLength(1);
-    expect(await run(again, deps(replayRunner(transcripts(again)), { appId: APP }))).toBe("NEEDS_HUMAN");
+    expect(await run(again, deps(replayRunner(transcripts(again)), { appId: APP }))).toBe("AUTO_APPROVED");
     expect(world.github.checks.filter((c) => c.name === VERDICT_CHECK)).toHaveLength(1);
     const outcomes = world.store.events(again).filter((e) => e.type === "side_effect_done" && e.payload["kind"] === "check_run").map((e) => e.payload["outcome"]);
     expect(outcomes).toEqual(["found", "found"]);
+  });
+});
+
+describe("merging R0–R1 itself (P2-05b)", () => {
+  const APP = 4242;
+  const green = (id: string, over: Partial<Record<"gates" | "policy-check", string>> = {}): void => {
+    for (const name of ["gates", "policy-check"] as const) world.github.actionsRuns.push({ repo: "example/ts-mini", sha: remoteBranch(id), name, status: "completed", conclusion: over[name] ?? "success" });
+  };
+  const live = (id: string): Promise<State> => run(id, deps(replayRunner(transcripts(id)), { appId: APP }));
+
+  it("waits for the required checks, then squash-merges the PR at the judged commit, once", async () => {
+    const id = newTask();
+    expect(await live(id)).toBe("AUTO_APPROVED");
+    expect(currentStatePayload(world.store.events(id))).toMatchObject({ gate: "checks", tier: "R1" });
+    // Nothing yet from GitHub Actions: it keeps waiting, and merges nothing.
+    expect(await live(id)).toBe("AUTO_APPROVED");
+    world.github.actionsRuns.push({ repo: "example/ts-mini", sha: remoteBranch(id), name: "gates", status: "in_progress", conclusion: null });
+    expect(await live(id)).toBe("AUTO_APPROVED");
+    expect(world.github.writes.filter((w) => w.startsWith("merge"))).toEqual([]);
+    world.github.actionsRuns.length = 0;
+    green(id);
+    expect(await live(id)).toBe("DONE");
+    expect(states(id).slice(-4)).toEqual(["AUTO_APPROVED", "MERGE_QUEUED", "MERGED", "DONE"]);
+    expect(world.github.writes.filter((w) => w.startsWith("merge"))).toEqual(["merge example/ts-mini 1"]);
+    const done = world.store.events(id).filter((e) => e.type === "side_effect_done" && e.payload["kind"] === "merge");
+    expect(done.map((e) => e.payload["outcome"])).toEqual(["done"]);
+    expect(await live(id)).toBe("DONE");
+  });
+
+  it("hands a failed required check, a moved head or a refused merge to a human", async () => {
+    const failed = newTask();
+    await live(failed);
+    green(failed, { "policy-check": "failure" });
+    expect(await live(failed)).toBe("NEEDS_HUMAN");
+    expect(currentStatePayload(world.store.events(failed))).toMatchObject({ gate: "merge", reason: expect.stringContaining("policy-check did not pass") as unknown });
+
+    // Someone pushed to the factory's branch after the verdict: the head is no longer what was judged.
+    const moved = newTask();
+    await live(moved);
+    const other = join(world.operatorCheckout, "..", `moved-${moved}`);
+    sh(world.operatorCheckout, ["clone", "-q", "--branch", `factory/${moved}`, world.remote, other]);
+    writeFileSync(join(other, "EXTRA.md"), "not judged\n");
+    sh(other, ["add", "-A"]);
+    sh(other, ["commit", "-qm", "extra"]);
+    sh(other, ["push", "-q", "origin", `factory/${moved}`]);
+    expect(await live(moved)).toBe("NEEDS_HUMAN");
+    expect(String(currentStatePayload(world.store.events(moved))["reason"])).toContain("is not the judged candidate");
+    expect(world.github.writes.filter((w) => w.startsWith("merge"))).toEqual([]);
+  });
+
+  it("never merges what the approver passed to a human, or without the App's verdict", async () => {
+    const passed = newTask();
+    const t = transcripts(passed, { approve: answer(pins["opus"] ?? "", { decision: "needs_human", confidence: 60, criteria: [{ ac_id: "AC-1", met: true, evidence: "test/empty.test.ts passes" }], blocking_findings: [], rationale: "A person should look." }) });
+    expect(await run(passed, deps(replayRunner(t), { appId: APP }))).toBe("NEEDS_HUMAN");
+    const token = newTask();
+    expect(await run(token, deps(replayRunner(transcripts(token))))).toBe("NEEDS_HUMAN");
+  });
+
+  it("finds a merge GitHub made before a crash recorded it, and merges nothing twice", async () => {
+    const id = newTask();
+    await live(id);
+    green(id);
+    let dead = false;
+    const dying = new Proxy(world.store, {
+      get(target, key) {
+        if (key === "append") {
+          return (e: Parameters<EventStore["append"]>[0]) => {
+            if (dead || (e.type === "side_effect_done" && e.payload["kind"] === "merge")) {
+              dead = true;
+              throw new Error("killed");
+            }
+            return target.append(e);
+          };
+        }
+        const v: unknown = Reflect.get(target, key);
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    await expect(runTask({ home: world.home, store: dying, validator, release, deps: deps(replayRunner(transcripts(id)), { appId: APP }), taskId: id })).rejects.toThrow("killed");
+    expect(currentState(world.store.events(id))).toBe("MERGE_QUEUED");
+    expect(await live(id)).toBe("DONE");
+    expect(world.github.writes.filter((w) => w.startsWith("merge"))).toHaveLength(1);
   });
 });
 

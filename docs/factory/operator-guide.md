@@ -174,7 +174,11 @@ Every run takes its task's lease first (P2-03), and everything it writes carries
 
 - **Merge gate:** review the PR on GitHub (the diff, the factory's summary, the gate results) and merge it yourself, or close it. Then run `factoryctl resume T-0001`: it reads the PR and ends the task `DONE` when it was merged, or `FAILED` as `human_rejected` when it was closed without a merge.
   - `factoryctl approve --gate merge` deliberately does nothing.
-  - From Phase 2 the `policy-check` workflow requires your GitHub review on R3 changes.
+  - From `v0.11.0`, on a target with the footprint, `policy-check` requires an approving review of the head commit from a listed approver for every tier the ladder leaves to a human: R2 and R3 in Phase 2.
+  - After you approve on GitHub, add or remove any label on the PR: that re-runs `policy-check`. A review alone does not, because a review event would run the PR's own workflow.
+- **R0–R1 in Phase 2:** with the App, an approved R0–R1 task does not stop at the merge gate. It waits as `AUTO_APPROVED (gate: checks)` until `gates` and `policy-check` pass on the judged commit, then `factoryctl` squash-merges the PR at exactly that commit, and the task ends `DONE`.
+  - `serve` polls it every 5 minutes; without `serve`, `factoryctl resume` checks once.
+  - It goes to the human merge gate instead if a required check fails, the PR's head moves, or GitHub refuses the merge. The reason is in `factoryctl status`.
 
 - **Reject:** when you will not take a task's result, at either gate, end it:
 
@@ -259,7 +263,28 @@ From `v0.10.0` (P2-05) `factoryctl` acts as the factory's own GitHub App when on
 - holds R3, and anything the approver passed to a human, until a listed approver approves the head commit;
 - never passes Restricted.
 
-The workflows, the target policy files and the rulesets that make these checks required are rolled out to the fixtures with P2-05b.
+### Footprint
+
+From `v0.11.0` (P2-05b) a target's footprint makes these checks binding. It is rendered from the target's profile (`governance.approvers`), the App's ID and a tagged release:
+
+- **`.factory/policy.yaml`:** the App, the approvers, and the protected and restricted paths. policy-check reads it from the base branch.
+- **`.factory/gates.yaml`:** the profile's commands and gate adapters, for the gates job.
+- **`.github/workflows/factory-gates.yml`:** the gates on every PR, from the release.
+- **`.github/workflows/policy-check.yml`:** policy-check on `pull_request_target`. It never checks out the PR, and its token can only read.
+- **Rulesets:**
+  - `factory-main` requires a PR, squash merges, and the `gates` and `policy-check` checks from GitHub Actions on the default branch.
+  - `factory-branches` lets only the repository's admins create, update or delete branches outside `factory/**`, so the App can push only its own branches.
+
+Both workflows run the release by its commit, never by a tag that could move. Changing `.factory/` or `.github/` is R3, and the guard keeps every session out of both.
+
+For the fixtures, `mirror-fixture` adds the footprint as a second deterministic commit on the base and applies the rulesets. `FACTORY_GITHUB_TOKEN` needs Contents and Workflows: write and Administration: write on both fixtures:
+
+```bash
+node scripts/mirror-fixture.ts ts-mini --footprint --factory-ref v0.11.0 --push --rulesets
+node scripts/mirror-fixture.ts py-mini --footprint --factory-ref v0.11.0 --push --rulesets
+```
+
+`doctor` then checks each governed fixture's rulesets against the release's. Pushing a later release's footprint moves `main` again, so the mirror bases change with it.
 
 ## Budgets and limits
 

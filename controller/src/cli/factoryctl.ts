@@ -44,6 +44,8 @@ import { runGates } from "../../../gates/src/run.ts";
 import { ensureImage } from "../../../gates/src/image.ts";
 import { runBypassVariants } from "../../../plugin/hooks/bypass-cases.ts";
 import { appCheck, doctor, rulesetCheck } from "../doctor.ts";
+import { fixtureNames, loadFixture } from "../fixtures/targets.ts";
+import { footprintRulesets } from "../governance/footprint.ts";
 import { beginGate, evaluateG0, writeEvidence } from "../gate/g0.ts";
 import { evaluateG1 } from "../gate/g1.ts";
 import { appConfig, AppConfigError, appConfigPath, appTokens, type AppTokens } from "../github/app.ts";
@@ -522,7 +524,8 @@ async function main(): Promise<void> {
   }
 
   if (command === "doctor") {
-    const release = loadRelease(createValidator());
+    const validator = createValidator();
+    const release = loadRelease(validator);
     const checks = doctor(home, release, keyFile(home));
     // This repository's ruleset on GitHub against the release's copy (P2-08), when a token may read it.
     const token = process.env["FACTORY_GITHUB_TOKEN"];
@@ -530,6 +533,12 @@ async function main(): Promise<void> {
       const self = parse(readFileSync(join(release.root, "profiles/self/profile.yaml"), "utf8")) as { target: { repo: string } };
       const expected = JSON.parse(readFileSync(join(release.root, ".github/rulesets/main.json"), "utf8")) as Parameters<typeof rulesetCheck>[0]["expected"];
       checks.push(await rulesetCheck({ repo: self.target.repo, expected, token, api: apiUrl() }));
+      // Each governed fixture's footprint rulesets (P2-05b), against the release's.
+      for (const name of fixtureNames()) {
+        const fixture = parse(readFileSync(loadFixture(name, validator).profilePath, "utf8")) as { target: { repo: string }; governance?: unknown };
+        if (fixture.governance === undefined) continue;
+        for (const r of footprintRulesets()) checks.push(await rulesetCheck({ repo: fixture.target.repo, expected: r, token, api: apiUrl(), hint: `node scripts/mirror-fixture.ts ${name} --rulesets` }));
+      }
     }
     checks.push(...(await appCheck({ home, api: apiUrl() })));
     for (const c of checks) out(`${c.status.padEnd(4)}  ${c.name}: ${c.detail}`);

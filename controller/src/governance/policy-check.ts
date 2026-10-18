@@ -7,14 +7,16 @@
 //   - the tier is computed again from GitHub's own diff and a sink scan of the head's added lines;
 //   - the factory/verdict check run must come from that App, on the PR's head, with a digest that
 //     matches its verdict and a tier at least the computed one;
-//   - R3, and anything the approver passed to a human, needs an approving review on the head
-//     commit from a listed approver; Restricted never passes.
+//   - a tier the approvals ladder leaves to a human (R2 and above in P2), and anything the
+//     approver passed to a human, needs an approving review on the head commit from a listed
+//     approver; a prepare_only tier (Restricted) never passes.
 //
 // Only factory/** heads are held to a verdict: a human's PR is left to human review.
 import { parse } from "yaml";
 import type { Sink } from "../../../gates/src/findings.ts";
 import { evaluate, TIERS, type ChangedFile, type RiskPolicy, type Tier } from "../policy/engine.ts";
 import { withProfile } from "../policy/load.ts";
+import type { MergeAction } from "../release.ts";
 import type { Validator } from "../schemas/validate.ts";
 import { parseVerdict, VERDICT_CHECK, verdictDigest, VerdictParseError, type Verdict } from "./verdict.ts";
 
@@ -25,7 +27,7 @@ export interface TargetPolicy {
   schema_version: 1;
   /** The factory App whose verdicts count. */
   app_id: number;
-  /** GitHub logins whose approving review clears R3 and needs_human. */
+  /** GitHub logins whose approving review clears a human_merge tier and needs_human. */
   approvers: string[];
   protected_paths: { glob: string; minimum_risk: Tier; note?: string }[];
   restricted: { glob: string; note?: string }[];
@@ -85,6 +87,8 @@ export interface PolicyCheckInput {
   reads: PolicyReads;
   /** The release's risk policy, before the target's own paths are added. */
   risk: RiskPolicy;
+  /** The release's approvals ladder for its current phase: which tiers merge on the verdict alone. */
+  ladder: Readonly<Record<Tier, MergeAction>>;
   validator: Validator;
   scanSinks: SinkScanner;
 }
@@ -180,8 +184,9 @@ export async function policyCheck(i: PolicyCheckInput): Promise<PolicyCheckResul
   if (problems.length > 0) return fail("verdict rejected", [...problems, computedLine, ...forged], { computed, verdict: verdict.tier });
 
   const tier = maxTier(verdict.tier, computed);
-  if (tier === "Restricted") return fail("Restricted: prepare only", ["Restricted changes are never merged through the factory", computedLine], { computed, verdict: verdict.tier });
-  const needsHuman = rank(tier) >= rank("R3") || verdict.decision !== "approve";
+  const action = i.ladder[tier];
+  if (action === "prepare_only") return fail(`${tier}: prepare only`, [`${tier} changes are prepared for a human and never merged through the factory`, computedLine], { computed, verdict: verdict.tier });
+  const needsHuman = action !== "auto_merge" || verdict.decision !== "approve";
   if (needsHuman) {
     // Each approver's latest review counts, and only if it approved this very head.
     const latest = new Map<string, Review>();

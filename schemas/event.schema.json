@@ -225,14 +225,15 @@
               "key": {
                 "type": "string",
                 "description": "task/stage/round/kind[/name] (D6).",
-                "pattern": "^T-[0-9]{4,}/[a-z][a-z0-9-]*/[1-9][0-9]*/(push|pull_request|comment|check_run)(/[A-Za-z0-9._-]+)?$"
+                "pattern": "^T-[0-9]{4,}/[a-z][a-z0-9-]*/[1-9][0-9]*/(push|pull_request|comment|check_run|merge)(/[A-Za-z0-9._-]+)?$"
               },
               "kind": {
                 "enum": [
                   "push",
                   "pull_request",
                   "comment",
-                  "check_run"
+                  "check_run",
+                  "merge"
                 ]
               },
               "attempt": {
@@ -274,14 +275,15 @@
               "key": {
                 "type": "string",
                 "description": "task/stage/round/kind[/name] (D6).",
-                "pattern": "^T-[0-9]{4,}/[a-z][a-z0-9-]*/[1-9][0-9]*/(push|pull_request|comment|check_run)(/[A-Za-z0-9._-]+)?$"
+                "pattern": "^T-[0-9]{4,}/[a-z][a-z0-9-]*/[1-9][0-9]*/(push|pull_request|comment|check_run|merge)(/[A-Za-z0-9._-]+)?$"
               },
               "kind": {
                 "enum": [
                   "push",
                   "pull_request",
                   "comment",
-                  "check_run"
+                  "check_run",
+                  "merge"
                 ]
               },
               "attempt": {

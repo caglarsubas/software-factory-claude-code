@@ -1,0 +1,49 @@
+# The factory's gates on every pull request (P2-05): the pinned factory release's gate runner
+# checks the PR's head in containers with no network. This job holds no secret and its result is
+# about correctness only; policy-check, not this job, decides whether a factory PR may merge.
+name: factory-gates
+
+on:
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: factory-gates-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: target
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out the factory release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: "@FACTORY_REPO@"
+          ref: "@FACTORY_REF@" # @FACTORY_TAG@
+          path: factory
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: factory/package.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: factory/.node-version
+      - name: Install the factory
+        working-directory: factory
+        run: pnpm install --frozen-lockfile
+      - name: Run the gates
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node factory/gates/src/cli.ts run --worktree target --base "$BASE_SHA" --task "$(printf 'T-%04d' "$PR_NUMBER")" --profile target/.factory/gates.yaml --out gates.json

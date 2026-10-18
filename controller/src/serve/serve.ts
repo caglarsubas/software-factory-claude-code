@@ -21,7 +21,7 @@ import { readHalt } from "../halt.ts";
 import { runDir, type Home } from "../home.ts";
 import { isLive, self, type ProcRef } from "../proc.ts";
 import { leaseState, stopHolder, takeLease } from "../sched/lease.ts";
-import { nextTasks, type Ledger, type TaskView } from "../sched/schedule.ts";
+import { nextTasks, waitsOnGitHub, type Ledger, type TaskView } from "../sched/schedule.ts";
 import type { EventStore } from "../store/events.ts";
 import { currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
 import { readTask } from "../task/task.ts";
@@ -169,7 +169,7 @@ export async function startServe(o: ServeOptions): Promise<Serve> {
       return;
     }
     workers.set(t.id, { pid, view: t });
-    if (t.state === "NEEDS_HUMAN" && t.gate === "merge") polled.set(t.id, Date.now());
+    if (waitsOnGitHub(t)) polled.set(t.id, Date.now());
     o.log(`${t.id}: worker ${String(pid)} started (${t.state})`);
     child.once("exit", (code, signal) => {
       workers.delete(t.id);

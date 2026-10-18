@@ -187,12 +187,13 @@ describe.concurrent("the kill-point suite (P1-02, G1-1)", { timeout: 120_000 }, 
     writeFileSync(join(w.replay, "replay.json"), JSON.stringify({ gates: {} }));
     const resumed = await factoryctl(w, ["resume", TASK, "--replay", w.replay]);
     expect(resumed.code, resumed.stderr).toBe(0);
-    expect(resumed.stdout.trim()).toBe(`${TASK} NEEDS_HUMAN (gate: merge) https://github.com/${w.repo}/pull/1`);
+    // As the App, an approved R1 waits for its required checks to merge itself (P2-05b).
+    expect(resumed.stdout.trim()).toBe(`${TASK} AUTO_APPROVED (gate: checks) https://github.com/${w.repo}/pull/1`);
 
     const all = events(w);
     const after = all.slice(before.length);
-    expect(currentState(all)).toBe("NEEDS_HUMAN");
-    expect(currentStatePayload(all)).toMatchObject({ gate: "merge" });
+    expect(currentState(all)).toBe("AUTO_APPROVED");
+    expect(currentStatePayload(all)).toMatchObject({ gate: "checks" });
     // Every step committed exactly once, and nothing finished before the kill ran again.
     expect(all.filter((e) => e.type === "artifact_committed").map((e) => String(e.payload["label"]))).toEqual(LABELS[scenario]);
     const rerun = after.filter((e) => e.type === "stage_started" && finishedBefore.has(String(e.payload["label"])));
@@ -212,6 +213,23 @@ describe.concurrent("the kill-point suite (P1-02, G1-1)", { timeout: 120_000 }, 
     expect(children(home)).toEqual([]);
     for (const o of orphans) expect(startTime(o.pid) === o.start_time, `pid ${String(o.pid)} outlived the reap`).toBe(false);
     if (orphans.length > 0) expect(resumed.stderr).toContain(`reaped ${TASK} ${orphans[0]?.label ?? ""}`);
+  });
+
+  it.each(["merge:merge:intent", "merge:merge:acted"])("SIGKILL at %s, then resume: one merge, at the judged commit (P2-05b)", async (point) => {
+    const w = world(point, "clean");
+    writeFileSync(join(w.replay, "replay.json"), JSON.stringify({ gates: {} }));
+    expect((await factoryctl(w, ["run", TASK, "--replay", w.replay])).stdout.trim()).toContain("AUTO_APPROVED");
+    const head = spawnSync("git", ["-C", w.remote, "rev-parse", BRANCH], { encoding: "utf8" }).stdout.trim();
+    for (const name of ["gates", "policy-check"]) gh.actionsRuns.push({ repo: w.repo, sha: head, name, status: "completed", conclusion: "success" });
+    writeFileSync(join(w.replay, "replay.json"), JSON.stringify({ gates: {}, kill_at: point }));
+    const killed = await factoryctl(w, ["resume", TASK, "--replay", w.replay]);
+    expect(killed.signal, `${point} was never reached: ${killed.stdout}${killed.stderr}`).toBe("SIGKILL");
+    writeFileSync(join(w.replay, "replay.json"), JSON.stringify({ gates: {} }));
+    const resumed = await factoryctl(w, ["resume", TASK, "--replay", w.replay]);
+    expect(resumed.code, resumed.stderr).toBe(0);
+    expect(resumed.stdout.trim()).toBe(`${TASK} DONE`);
+    expect(gh.writes.filter((x) => x === `merge ${w.repo} 1`)).toHaveLength(1);
+    expect(danglingIntents(events(w))).toEqual([]);
   });
 
   it("treats a lock whose pid now names another process as stale: never signalled, replaced on the next run", async () => {

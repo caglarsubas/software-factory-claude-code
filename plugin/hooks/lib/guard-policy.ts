@@ -36,7 +36,7 @@ const ALLOW: Decision = { allow: true };
 const deny = (reason: string): Decision => ({ allow: false, reason });
 
 /** Always protected in factory sessions, whatever the profile says. */
-export const BUILTIN_PROTECTED = [".git/**", ".claude/**", ".claude-plugin/**", ".github/**", "**/CODEOWNERS", ".mcp.json", ".gitmodules"];
+export const BUILTIN_PROTECTED = [".git/**", ".claude/**", ".claude-plugin/**", ".github/**", ".factory/**", "**/CODEOWNERS", ".mcp.json", ".gitmodules"];
 
 /** Always secret, in every session. Matched against both repo-relative and absolute paths. */
 export const BUILTIN_SECRETS = [

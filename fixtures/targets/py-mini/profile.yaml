@@ -1,7 +1,7 @@
 # Profile for the py-mini fixture target. Its throwaway GitHub mirror is created by the
 # operator (fixtures/targets/README.md); private targets keep their profiles in the private store.
 schema_version: 1
-target: {repo: caglarsubas/factory-fixture-py-mini, default_branch: main, visibility: private}
+target: {repo: caglarsubas/factory-fixture-py-mini, default_branch: main, visibility: public}
 factory_release: v0.1.0
 commands:
   setup: uv sync --frozen
@@ -18,3 +18,4 @@ egress_class: anthropic_only
 budgets: {monthly_usd: 25}
 spec_dir: docs/specs
 retention_days: {bundles: 30, transcripts: 30, otel: 30}
+governance: {approvers: [caglarsubas]}

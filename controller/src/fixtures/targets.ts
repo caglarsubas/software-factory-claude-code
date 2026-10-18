@@ -2,8 +2,8 @@
 // hidden tests. The target itself is fixtures/targets/<name>/repo; tasks, golden patches and
 // hidden tests sit beside it, so a factory run on the target never sees them.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { parse } from "yaml";
 import { REPO_ROOT } from "../policy/load.ts";
 import type { ReviewKind, Tier } from "../policy/engine.ts";
@@ -69,6 +69,17 @@ export function buildTargetRepo(f: Fixture, dest: string): string {
   git(dest, ["add", "--all"]);
   git(dest, ["commit", "--quiet", "--message", `${f.name}: fixture base`]);
   return git(dest, ["rev-parse", "HEAD"]);
+}
+
+/** Commit a target's governance footprint (P2-05b) on top of its base; returns the new commit, as deterministic as the base. */
+export function commitFootprint(repo: string, files: Readonly<Record<string, string>>): string {
+  for (const [path, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(repo, path)), { recursive: true });
+    writeFileSync(join(repo, path), content);
+  }
+  git(repo, ["add", "--all"]);
+  git(repo, ["commit", "--quiet", "--message", "factory footprint"]);
+  return git(repo, ["rev-parse", "HEAD"]);
 }
 
 /** Commit the task's golden patch on the current branch; returns the new commit. */
