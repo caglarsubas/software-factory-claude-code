@@ -4,8 +4,24 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-18
+
 ### Added
 
+- **The factory GitHub App (P2-05).** With an App set, `factoryctl` acts as it: each run signs a JWT with the App's key, kept in `$FACTORY_HOME/secrets/github-app.pem`, and trades it for an installation token narrowed to the task's own repository, renewed within the hour.
+  - **Setup:** `factoryctl app init --app-id N --installation-id N` records the App's IDs and checks them at once.
+  - **`doctor`:** checks the key, that GitHub knows the App by it, its permissions (exactly checks, contents and pull requests write, metadata read) and its installation.
+  - **Fallback:** without an App, `FACTORY_GITHUB_TOKEN` still pushes and opens PRs.
+- **The `factory/verdict` check run.** After publishing, the App posts it on the candidate commit through the outbox.
+  - **Content:** the commit judged, the reviewed base, the tier, the approver's decision, the spec's digest and the digest of every committed artifact, as canonical JSON with its sha256.
+  - **Record:** a copy is committed as `verdict-check.json`, and `publish.json` records its URL.
+- **`policy-check`**, the check a target's `pull_request_target` workflow runs from the pinned release (`controller/src/governance/policy-check-cli.ts`). For a `factory/**` PR it:
+  - reads the base branch's `.factory/policy.yaml`;
+  - computes the tier again from GitHub's diff and a sink scan of the head's added lines, in the gate image with no network;
+  - accepts only a verdict from the App, on the PR's head, with a matching digest and a tier at least the computed one;
+  - holds R3, and anything passed to a human, until a listed approver approves the head commit.
+
+  The workflows and rulesets that make it required come with P2-05b.
 - **Eval cases for the reviewer graph (P2-09).** Each new reviewer has a case that should block and one that should pass: a typosquatted, unpinned dependency against a pinned devDependency, and a NOT NULL column with no backfill against an additive migration. Each also has a held-out block case: a dependency from a git branch with an install script, and a rename that drops a column. Both reviewers are judgment roles now, so the suite must keep a pass and a block case for each.
 
 ## [0.9.0] - 2026-10-17
@@ -246,7 +262,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.6.0...v0.7.0

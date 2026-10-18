@@ -15,6 +15,9 @@ const EXCLUDED = new Set(["manifest.json", "bundle", "transcripts", "heartbeat.j
 
 const digest = (data: Buffer | string): string => `sha256:${createHash("sha256").update(data).digest("hex")}`;
 
+/** The risk policy a run judged by, as the manifest and the factory/verdict record it. */
+export const policyDigest = (risk: RiskPolicy): string => digest(JSON.stringify(risk));
+
 function files(root: string, dir: string = root): string[] {
   return readdirSync(dir).sort().flatMap((name) => {
     const full = join(dir, name);
@@ -65,7 +68,7 @@ export function writeManifest(i: ManifestInputs): Record<string, unknown> {
       factory: i.release.info?.tag ?? `v${i.release.version}-dev`,
       ...(i.release.info === null ? {} : { factory_commit: i.release.info.sha }),
       plugin: i.release.version,
-      policy: digest(JSON.stringify(i.risk)),
+      policy: policyDigest(i.risk),
       claude_code: i.release.config.claude_code.version,
       agent_sdk: i.release.config.claude_code.agent_sdk,
     },

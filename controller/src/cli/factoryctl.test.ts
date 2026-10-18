@@ -2,7 +2,7 @@
 // in place of a model. The run to a merge gate with real container gates is in
 // factoryctl.int.test.ts.
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -65,6 +65,17 @@ describe("factoryctl", { timeout: 30_000 }, () => {
     expect(created.stderr).toBe("");
     expect(created.stdout.trim()).toBe("T-0001");
     expect(factoryctl(["status"]).stdout).toMatch(/^T-0001 {2}RECEIVED .* Billing rounding$/m);
+  });
+
+  it("records the App's two IDs with app init, privately, and checks them at once (P2-05)", () => {
+    expect(factoryctl(["app", "init", "--app-id", "x", "--installation-id", "6"]).stderr).toContain("usage: factoryctl app init");
+    // No GitHub on this port: the IDs are kept, and the check says why it failed.
+    const r = factoryctl(["app", "init", "--app-id", "5364464", "--installation-id", "172578832"], { FACTORY_GITHUB_API_URL: "http://127.0.0.1:9" });
+    expect(r.stdout).toContain(`wrote ${join(home, "github-app.json")}`);
+    expect(JSON.parse(readFileSync(join(home, "github-app.json"), "utf8"))).toEqual({ app_id: 5364464, installation_id: 172578832 });
+    expect(statSync(join(home, "github-app.json")).mode & 0o777).toBe(0o600);
+    expect(r.stdout).toMatch(/fail {2}github app: the App's private key is missing/);
+    rmSync(join(home, "github-app.json"));
   });
 
   it("runs a replayed task to the spec gate and stops for a human", () => {

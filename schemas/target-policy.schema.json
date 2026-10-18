@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/target-policy.schema.json",
+  "title": "Target policy",
+  "description": "A target's .factory/policy.yaml (P2-05), read by policy-check from the base branch only: the factory App whose verdicts count, the people whose approval clears R3, and the target's protected and restricted paths, which can only raise a tier.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "app_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The factory GitHub App's ID: a factory/verdict check run from any other app is ignored."
+    },
+    "approvers": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "GitHub logins whose approving review on the head commit clears R3 and needs_human.",
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$"
+      }
+    },
+    "protected_paths": {
+      "$ref": "profile.schema.json#/properties/protected_paths"
+    },
+    "restricted": {
+      "$ref": "profile.schema.json#/properties/restricted"
+    }
+  },
+  "required": [
+    "schema_version",
+    "app_id",
+    "approvers",
+    "protected_paths",
+    "restricted"
+  ]
+}

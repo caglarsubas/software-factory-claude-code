@@ -43,10 +43,12 @@ import { reapTaskNetworks } from "../runner/network.ts";
 import { runGates } from "../../../gates/src/run.ts";
 import { ensureImage } from "../../../gates/src/image.ts";
 import { runBypassVariants } from "../../../plugin/hooks/bypass-cases.ts";
-import { doctor, rulesetCheck } from "../doctor.ts";
+import { appCheck, doctor, rulesetCheck } from "../doctor.ts";
 import { beginGate, evaluateG0, writeEvidence } from "../gate/g0.ts";
 import { evaluateG1 } from "../gate/g1.ts";
-import { githubApiUrl, GitHubError, isLoopbackApi, restCommitChecks, restGitHub } from "../github/client.ts";
+import { appConfig, AppConfigError, appConfigPath, appTokens, type AppTokens } from "../github/app.ts";
+import { githubApiUrl, GitHubError, isLoopbackApi, restCommitChecks, restGitHub, type GitHub } from "../github/client.ts";
+import type { GitAuth } from "../git/repo.ts";
 import { clearHalt, describeHalt, readHalt } from "../halt.ts";
 import { acquireRunLock, ensureHome, factoryHome, liveHolder, runDir, worktreeDir, type Home } from "../home.ts";
 import { reap } from "../proc.ts";
@@ -177,12 +179,39 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
   } catch (e) {
     fail(e instanceof TelemetryError ? e.message : String(e));
   }
+  // The factory App (P2-05), when set, acts for the run with a token narrowed to its target; the personal token is the fallback.
+  let app;
+  try {
+    app = appConfig(home);
+  } catch (e) {
+    fail(e instanceof AppConfigError ? e.message : String(e));
+  }
   const injection = replay === undefined ? {} : readInjection(replay);
   if (injection.gates !== undefined) {
     const created = store.events(taskId).find((e) => e.type === "task_created");
     const remote = created?.payload["remote"];
-    if (typeof remote !== "string" || !isLocalRemote(remote) || (token !== undefined && !isLoopbackApi(api))) fail("replayed gates need a task with a local remote and, with a GitHub token, a loopback FACTORY_GITHUB_API_URL");
+    if (typeof remote !== "string" || !isLocalRemote(remote) || ((token !== undefined || app !== null) && !isLoopbackApi(api))) fail("replayed gates need a task with a local remote and, with a GitHub token or App, a loopback FACTORY_GITHUB_API_URL");
   }
+  let appToken: AppTokens | null = null;
+  if (app !== null) {
+    const repo = readTask(home, taskId).target.repo;
+    appToken = appTokens({ app, api, repositories: [repo.split("/")[1] ?? repo] });
+    try {
+      await appToken.refresh();
+    } catch (e) {
+      fail(`the factory App (${String(app.appId)}) could not get a token for ${repo}: ${e instanceof Error ? e.message : String(e)}; is the App installed on it?`);
+    }
+  }
+  const tokens = appToken;
+  const github: GitHub | null = tokens !== null ? restGitHub(() => tokens.token(), api) : token === undefined ? null : restGitHub(token, api);
+  // git reads the token synchronously: the timer below keeps the held one well inside its hour.
+  const auth: GitAuth | null = tokens !== null ? { get token() { return tokens.current(); } } : token === undefined ? null : { token };
+  const keepToken = tokens === null ? null : setInterval(() => {
+    tokens.token().catch((e: unknown) => {
+      process.stderr.write(`factoryctl: could not renew the App's token: ${e instanceof Error ? e.message : String(e)}\n`);
+    });
+  }, 10 * 60_000);
+  keepToken?.unref();
   const log = (line: string): void => {
     process.stderr.write(`factoryctl: ${line}\n`);
   };
@@ -247,8 +276,9 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
           });
           return Object.fromEntries([...(host === null ? [] : [["DOCKER_HOST", host] as const]), ...passed]);
         },
-        github: token === undefined ? null : restGitHub(token, api),
-        auth: token === undefined ? null : { token },
+        github,
+        auth,
+        appId: app?.appId ?? null,
         keyFile: keyFile(home),
         gateway,
         ...(process.env["FACTORY_GATES_FETCH_NETWORK"] === undefined ? {} : { gatesFetchNetwork: process.env["FACTORY_GATES_FETCH_NETWORK"] }),
@@ -266,6 +296,7 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
     out(`${taskId} ${state}${typeof payload["gate"] === "string" ? ` (gate: ${payload["gate"]})` : ""}${typeof payload["pr_url"] === "string" ? ` ${payload["pr_url"]}` : ""}${halted}`);
     if (state === "FAILED") process.exitCode = 1;
   } finally {
+    if (keepToken !== null) clearInterval(keepToken);
     await gateway?.close();
     await collector?.close();
     replica.stop();
@@ -351,6 +382,8 @@ async function main(): Promise<void> {
       port: { type: "string" },
       "max-tasks": { type: "string" },
       weeks: { type: "string" },
+      "app-id": { type: "string" },
+      "installation-id": { type: "string" },
     },
   });
   const home = factoryHome();
@@ -498,8 +531,23 @@ async function main(): Promise<void> {
       const expected = JSON.parse(readFileSync(join(release.root, ".github/rulesets/main.json"), "utf8")) as Parameters<typeof rulesetCheck>[0]["expected"];
       checks.push(await rulesetCheck({ repo: self.target.repo, expected, token, api: apiUrl() }));
     }
+    checks.push(...(await appCheck({ home, api: apiUrl() })));
     for (const c of checks) out(`${c.status.padEnd(4)}  ${c.name}: ${c.detail}`);
     process.exitCode = checks.some((c) => c.status === "fail") ? 1 : 0;
+    return;
+  }
+
+  // `app init` (P2-05): the App's two IDs, which are not secrets, next to its key in the home.
+  if (command === "app") {
+    const sub = positionals[1];
+    if (sub !== "init") fail("usage: factoryctl app init --app-id N --installation-id N");
+    const appId = Number(values["app-id"]);
+    const installationId = Number(values["installation-id"]);
+    if (!Number.isSafeInteger(appId) || appId <= 0 || !Number.isSafeInteger(installationId) || installationId <= 0) fail("usage: factoryctl app init --app-id N --installation-id N");
+    ensureHome(home);
+    writeAtomic(appConfigPath(home), `${JSON.stringify({ app_id: appId, installation_id: installationId }, null, 2)}\n`, 0o600);
+    out(`wrote ${appConfigPath(home)}; the key stays in ${join(home.secrets, "github-app.pem")}`);
+    for (const c of await appCheck({ home, api: apiUrl() })) out(`${c.status.padEnd(4)}  ${c.name}: ${c.detail}`);
     return;
   }
 

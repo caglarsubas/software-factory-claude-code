@@ -11,13 +11,15 @@
 // every branch update and a stub GitHub API on a loopback port, with replayed sessions (each
 // with a placeholder process standing in for Claude Code) and replayed gates.
 import { spawn, spawnSync } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 import { danglingIntents } from "../github/outbox.ts";
-import { memoryGitHub, serveGitHub, type MemoryGitHub } from "../github/testing.ts";
+import { memoryGitHub, serveGitHub, type MemoryGitHub, type StubApp } from "../github/testing.ts";
+import { VERDICT_CHECK } from "../governance/verdict.ts";
 import { REPO_ROOT } from "../policy/load.ts";
 import { children, isLive, startTime, type ChildEntry } from "../proc.ts";
 import { EventStore, type FactoryEvent } from "../store/events.ts";
@@ -31,9 +33,14 @@ const BRANCH = `factory/${TASK}`;
 const scratch = mkdtempSync(join(tmpdir(), "killpoints-"));
 const remotes = new Map<string, string>();
 const gh: MemoryGitHub = memoryGitHub((repo, branch) => spawnSync("git", ["-C", remotes.get(repo) ?? "", "rev-parse", "--verify", "-q", `refs/heads/${branch}`], { encoding: "utf8" }).stdout.trim());
+// Every run acts as the factory App (P2-05): installation tokens, and the factory/verdict check run.
+const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const appKey = join(scratch, "github-app.pem");
+writeFileSync(appKey, keys.privateKey.export({ type: "pkcs1", format: "pem" }), { mode: 0o600 });
+const app: StubApp = { id: 4242, installationId: 77, publicKey: keys.publicKey, permissions: { checks: "write", contents: "write", metadata: "read", pull_requests: "write" }, minted: [], calls: [] };
 let api = { url: "", close: () => Promise.resolve() };
 beforeAll(async () => {
-  api = await serveGitHub(gh);
+  api = await serveGitHub(gh, app);
 });
 afterAll(async () => {
   await api.close();
@@ -72,7 +79,7 @@ function world(name: string, scenario: Scenario): World {
 }
 
 function env(w: { root: string; home: string }): NodeJS.ProcessEnv {
-  return { PATH: process.env["PATH"] ?? "", HOME: w.root, FACTORY_HOME: w.home, FACTORY_GITHUB_TOKEN: "test-token", FACTORY_GITHUB_API_URL: api.url };
+  return { PATH: process.env["PATH"] ?? "", HOME: w.root, FACTORY_HOME: w.home, FACTORY_GITHUB_APP_ID: String(app.id), FACTORY_GITHUB_APP_INSTALLATION_ID: String(app.installationId), FACTORY_GITHUB_APP_KEY_FILE: appKey, FACTORY_GITHUB_API_URL: api.url };
 }
 
 
@@ -142,6 +149,8 @@ const KILL_POINTS: [string, Scenario][] = [
   ["publish:push:acted", "clean"],
   ["publish:pull_request:intent", "clean"],
   ["publish:pull_request:acted", "clean"],
+  ["publish:check_run/verdict:intent", "clean"],
+  ["publish:check_run/verdict:acted", "clean"],
   ["publish:committed", "clean"],
   ["publish:exit", "clean"],
   ["refute-code-F-1:session", "remediation"],
@@ -193,6 +202,10 @@ describe.concurrent("the kill-point suite (P1-02, G1-1)", { timeout: 120_000 }, 
     expect(pushes).toHaveLength(1);
     expect(gh.prs.filter((p) => p.repo === w.repo)).toHaveLength(1);
     expect(gh.writes.filter((x) => x === `pull_request ${w.repo} ${BRANCH}`)).toHaveLength(1);
+    // One verdict, as the App, with installation tokens narrowed to the task's own repository.
+    expect(gh.checks.filter((c) => c.repo === w.repo && c.name === VERDICT_CHECK)).toHaveLength(1);
+    expect(app.calls.filter((c) => c.path.startsWith(`/repos/${w.repo}/`)).every((c) => /^Bearer ghs_test[0-9]+$/.test(c.authorization))).toBe(true);
+    expect(app.minted.filter((m) => m.repositories?.[0] === w.repo.split("/")[1]).length).toBeGreaterThan(0);
     // Nothing left half done: no dangling intent, no staged file, no session process.
     expect(danglingIntents(all)).toEqual([]);
     expect(walk(join(w.home, "runs", TASK)).map((f) => relative(w.home, f)).filter((f) => f.endsWith(".pending") || /\.tmp-[0-9]+$/.test(f))).toEqual([]);

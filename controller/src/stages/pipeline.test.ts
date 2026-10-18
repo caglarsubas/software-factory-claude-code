@@ -37,6 +37,9 @@ import { specDigest } from "./commit.ts";
 import { ProtocolError, runTask, type Deps } from "./pipeline.ts";
 import { applyTakeover, checkTakeover, resumableSession } from "./takeover.ts";
 import { describeMessage } from "../session/attach.ts";
+import { addedLinesOf, policyCheck, POLICY_FILE, type PolicyReads, type PrFile } from "../governance/policy-check.ts";
+import { parseVerdict, VERDICT_CHECK, verdictDigest } from "../governance/verdict.ts";
+import { loadRiskPolicy } from "../policy/load.ts";
 
 // Each test drives git, the event store and every stage, several rounds in some: on a loaded CI
 // runner (the kill-point suite spawns factoryctl processes alongside) one takes several seconds.
@@ -680,6 +683,83 @@ describe("the reviewer graph (P2-09)", () => {
     expect(runner.requests.map((r) => r.label).filter((l) => l.startsWith("review-"))).toEqual(["review-code", "review-security"]);
     expect(existsSync(join(runDir(world.home, id), "review-dependency.json"))).toBe(false);
     expect(existsSync(join(runDir(world.home, id), "review-migration.json"))).toBe(false);
+  });
+});
+
+describe("the factory/verdict (P2-05)", () => {
+  const APP = 4242;
+  const targetPolicy = stringify({ schema_version: 1, app_id: APP, approvers: ["operator"], protected_paths: [], restricted: [] });
+
+  /** policy-check's reads, answered from the bare remote and the in-memory GitHub, as the target's workflow would see them. */
+  const readsFor = (taskId: string, base: string, appId = APP): PolicyReads => ({
+    pull: () => Promise.resolve({ headRef: `factory/${taskId}`, headSha: remoteBranch(taskId), headRepo: "example/ts-mini", baseSha: base, state: "open" }),
+    files: () => {
+      const head = remoteBranch(taskId);
+      return Promise.resolve(sh(world.remote, ["diff", "--name-only", base, head]).split("\n").filter((f) => f !== "").map((path): PrFile => {
+        const patch = sh(world.remote, ["diff", "--unified=0", base, head, "--", path]).split("\n").filter((l) => !/^(diff|index|---|\+\+\+|new file)/.test(l)).join("\n");
+        return { path, additions: addedLinesOf(patch).length, deletions: 0, status: "modified", patch };
+      }));
+    },
+    verdictRuns: (_repo, sha) => Promise.resolve(world.github.checks.filter((c) => c.headSha === sha && c.name === VERDICT_CHECK).map((c) => ({ appId, headSha: c.headSha, conclusion: c.conclusion, text: c.text ?? null }))),
+    reviews: () => Promise.resolve([]),
+    file: (_repo, sha, path) => Promise.resolve(path === POLICY_FILE ? targetPolicy : spawnSync("git", ["-C", world.remote, "show", `${sha}:${path}`], { encoding: "utf8" }).stdout),
+  });
+
+  it("posts the verdict on the candidate as the App, binds it to the bundle, and policy-check accepts it", async () => {
+    const id = newTask();
+    expect(await run(id, deps(replayRunner(transcripts(id)), { appId: APP }))).toBe("NEEDS_HUMAN");
+    const dir = runDir(world.home, id);
+    const head = remoteBranch(id);
+    expect(world.github.checks).toHaveLength(1);
+    const [posted] = world.github.checks;
+    expect(posted).toMatchObject({ name: VERDICT_CHECK, headSha: head, conclusion: "success", externalId: `${id}/publish/1/check_run/verdict`, title: `R1 · approved · ${head.slice(0, 12)}` });
+    const { verdict, stated } = parseVerdict(posted?.text ?? null);
+    expect(stated).toBe(verdictDigest(verdict));
+    const base = (JSON.parse(readFileSync(join(dir, "checkout.json"), "utf8")) as { base_commit: string }).base_commit;
+    expect(verdict).toMatchObject({ task_id: id, repo: "example/ts-mini", head_sha: head, base_commit: base, tier: "R1", decision: "approve", spec_digest: specDigest(dir) });
+    // Every artifact the decision rests on, at the digest on disk.
+    for (const f of ["spec.yaml", "gates.json", "review-code.json", "review-security.json", "policy.json", "verdict.json", "summary.json"]) {
+      expect(verdict.artifacts.find((a) => a.path === f)?.digest, f).toBe(`sha256:${createHash("sha256").update(readFileSync(join(dir, f))).digest("hex")}`);
+    }
+    expect(JSON.parse(readFileSync(join(dir, "verdict-check.json"), "utf8"))).toMatchObject({ app_id: APP, digest: stated, url: posted?.url, verdict });
+    expect(JSON.parse(readFileSync(join(dir, "publish.json"), "utf8"))).toMatchObject({ verdict_check_url: posted?.url });
+
+    const risk = loadRiskPolicy();
+    const noSinks = () => Promise.resolve([]);
+    expect(await policyCheck({ repo: "example/ts-mini", pr: 1, reads: readsFor(id, base), risk, validator, scanSinks: noSinks })).toMatchObject({ conclusion: "success", computedTier: "R1", verdictTier: "R1" });
+    // The same run, posted by any other app: rejected.
+    expect(await policyCheck({ repo: "example/ts-mini", pr: 1, reads: readsFor(id, base, 99), risk, validator, scanSinks: noSinks })).toMatchObject({ conclusion: "failure", title: "no factory verdict" });
+  });
+
+  it("posts none with a personal token, and none twice when publish runs again", async () => {
+    const id = newTask();
+    await run(id, deps(replayRunner(transcripts(id))));
+    expect(world.github.checks).toHaveLength(0);
+    expect(JSON.parse(readFileSync(join(runDir(world.home, id), "publish.json"), "utf8"))).toMatchObject({ verdict_check_url: null });
+    // Killed after GitHub took the check run, before its done was recorded: the next run finds it by its external_id.
+    const again = newTask();
+    let dead = false;
+    const dying = new Proxy(world.store, {
+      get(target, key) {
+        if (key === "append") {
+          return (e: Parameters<EventStore["append"]>[0]) => {
+            if (dead || (e.type === "side_effect_done" && e.payload["kind"] === "check_run")) {
+              dead = true;
+              throw new Error("killed");
+            }
+            return target.append(e);
+          };
+        }
+        const v: unknown = Reflect.get(target, key);
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    await expect(runTask({ home: world.home, store: dying, validator, release, deps: deps(replayRunner(transcripts(again)), { appId: APP }), taskId: again })).rejects.toThrow("killed");
+    expect(world.github.checks.filter((c) => c.name === VERDICT_CHECK)).toHaveLength(1);
+    expect(await run(again, deps(replayRunner(transcripts(again)), { appId: APP }))).toBe("NEEDS_HUMAN");
+    expect(world.github.checks.filter((c) => c.name === VERDICT_CHECK)).toHaveLength(1);
+    const outcomes = world.store.events(again).filter((e) => e.type === "side_effect_done" && e.payload["kind"] === "check_run").map((e) => e.payload["outcome"]);
+    expect(outcomes).toEqual(["found", "found"]);
   });
 });
 

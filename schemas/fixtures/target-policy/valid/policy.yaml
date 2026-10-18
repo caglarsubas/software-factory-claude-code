@@ -1,0 +1,6 @@
+schema_version: 1
+app_id: 1234567
+approvers: [octocat]
+protected_paths:
+  - {glob: "src/auth/**", minimum_risk: R3, note: authentication}
+restricted: []

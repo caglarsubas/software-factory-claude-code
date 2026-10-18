@@ -13,9 +13,9 @@ How to install, run, approve, recover and stop the factory in Phase 0 and Phase 
   - macOS: `sandbox-exec`, built in.
   - Native Windows is unsupported because it runs unsandboxed.
 - **Anthropic Console:** a workspace with a spend limit, and an API key for it.
-- **GitHub access, until the factory GitHub App replaces it:** a fine-grained token, `FACTORY_GITHUB_TOKEN`.
-  - Scope it to the target repositories only, with contents and pull requests write.
-  - It never needs workflows or administration permission.
+- **GitHub access:** the factory GitHub App, from `v0.10.0` ([GitHub App and verdicts](#github-app-and-verdicts)).
+  - Without an App, a fine-grained token, `FACTORY_GITHUB_TOKEN`, pushes and opens PRs, but cannot post verdicts.
+  - Scope the token to the target repositories only, with contents and pull requests write. It never needs workflows or administration permission.
 
 ### Credentials
 
@@ -211,6 +211,55 @@ From `v0.6.0` (P2-02) every live session's model traffic goes through the gatewa
 - **What it forwards:** the Messages and token-counting routes only, for a model the price table names, without the session's credential. Anything else is refused there.
 
 When a §11 re-check finds a price change, the price table changes in a release of its own.
+
+## GitHub App and verdicts
+
+From `v0.10.0` (P2-05) `factoryctl` acts as the factory's own GitHub App when one is set.
+
+**Set it up once:**
+
+1. **Register the App** under your account:
+   - repository permissions: checks, contents and pull requests read and write, metadata read; nothing else;
+   - no webhook;
+   - installable only on your account.
+2. **Install it** on the target repositories only.
+3. **Store its private key** as `$FACTORY_HOME/secrets/github-app.pem` (mode 600).
+4. **Record its IDs.** Neither is a secret:
+
+   ```bash
+   factoryctl app init --app-id 1234567 --installation-id 12345678
+   ```
+
+   It writes `$FACTORY_HOME/github-app.json` and checks the App at once. `FACTORY_GITHUB_APP_ID`, `FACTORY_GITHUB_APP_INSTALLATION_ID` and `FACTORY_GITHUB_APP_KEY_FILE` override it.
+
+**What `doctor` checks:**
+
+- the key's permissions;
+- that GitHub knows the App by that key;
+- the App's permissions, which must be exactly the four above (more fails as surely as less);
+- that an installation token can be minted.
+
+**In a run:**
+
+- **Tokens:** each run signs a JWT with the key and trades it for an installation token narrowed to the task's own repository. The token is renewed well inside its hour. The key never leaves `factoryctl`, and sessions see neither.
+- **The verdict:** after publishing, `factoryctl` posts a `factory/verdict` check run on the candidate commit, through the outbox, so a crash never posts two. It carries:
+  - the commit judged and the base it was reviewed against;
+  - the tier and the approver's decision;
+  - the spec's digest and the digest of every committed artifact;
+  - the factory release and policy;
+  - all as canonical JSON with its sha256.
+
+  `verdict-check.json` in the run directory keeps a copy, and `publish.json` its URL.
+
+**`policy-check`:** a target's pull_request_target workflow runs it ([policy-check.ts](../../controller/src/governance/policy-check.ts)), from the pinned factory release and never from the PR. For a `factory/**` PR it:
+
+- reads the base branch's `.factory/policy.yaml`: the App's ID, the approvers, and the target's protected and restricted paths;
+- computes the tier again, from GitHub's diff and a sink scan of the head's added lines;
+- accepts the verdict only from that App, on the PR's head, with a matching digest and a tier at least the computed one;
+- holds R3, and anything the approver passed to a human, until a listed approver approves the head commit;
+- never passes Restricted.
+
+The workflows, the target policy files and the rulesets that make these checks required are rolled out to the fixtures with P2-05b.
 
 ## Budgets and limits
 
