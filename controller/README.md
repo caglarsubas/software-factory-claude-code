@@ -48,6 +48,10 @@ A run goes checkout → triage → spec → rounds of build → gates → review
   - `takeover` (`stages/takeover.ts`, `session/takeover-session.ts`) runs the operator's pinned Claude Code in the worktree, under the build session's walls and in auto mode. `stage_completed` records the session id it resumes.
   - On exit, the operator's head is committed again as the latest round's `build.json`, from the same inputs. The build stays done, every step that reads `build.json` runs again, and the task moves back to `BUILDING`.
 - **Spec approvals** are bound to the spec they were given on (`spec_digest`): a spec that runs again reopens the gate, through `BLOCKED` when the build had already started.
+- **The factory App and verdicts (P2-05, `github/app.ts`, `governance/`):**
+  - With an App set, a run acts as it, with an installation token narrowed to its target.
+  - Publish posts `factory/verdict` on the candidate through the outbox (`check_run/verdict`): a canonical verdict and its sha256, copied to `verdict-check.json`.
+  - `governance/policy-check.ts` is the target-side check: base-branch policy, the tier computed again from GitHub's diff and a sink scan (`sinks.ts`), and the verdict verified against both.
 - **Reviewer graph (P2-09, `stages/reviewers.ts`):** the code and security reviewers see every candidate whose gates pass.
   - The dependency and migration reviewers join a round when the policy engine's `reviews` for that round's candidate include theirs. The engine reads the candidate's diff, gate signals, triage and spec, all committed, so a resumed round picks the same reviewers.
   - Their reports go to the refuter, the approver and the summarizer like the others.

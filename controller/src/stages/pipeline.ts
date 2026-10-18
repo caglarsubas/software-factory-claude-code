@@ -16,7 +16,7 @@ import { parse, stringify } from "yaml";
 import type { GatesResult, RunOptions as GateRunOptions } from "../../../gates/src/run.ts";
 import { cacheVolumeFor } from "../../../gates/src/run.ts";
 import { activeMs, budgetTier, calibrate, completedRuns, meteredSpend, monthOf, monthSpend, sessionCap, taskSpend } from "../budget/budget.ts";
-import { writeManifest } from "../bundle/manifest.ts";
+import { policyDigest, writeManifest } from "../bundle/manifest.ts";
 import { storeTree } from "../durable/objects.ts";
 import { writeAtomic } from "../fsutil.ts";
 import { changedFiles, commitAll, createTaskClone, diffPatch, fetchBundle, GitError, head, headBundle, mirrorPath, resetClone, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
@@ -40,6 +40,7 @@ import { describeAlarm, modelAlarms, type Telemetry } from "../telemetry.ts";
 import { commitArtifacts, freshness, inputsOf, isCommitted, recover, specDigest, type Output } from "./commit.ts";
 import { findingFingerprint, gateFingerprint } from "./fingerprint.ts";
 import { OUTPUTS } from "./outputs.ts";
+import { renderVerdict, VERDICT_CHECK, verdictDigest, type Verdict } from "../governance/verdict.ts";
 import { selectReviewers, type Reviewer } from "./reviewers.ts";
 import { approvePrompt, buildPrompt, refutePrompt, reviewPrompt, specPrompt, summarizePrompt, triagePrompt, type TaskText } from "./prompts.ts";
 import { latestRound, roundLabel, roundPath } from "./rounds.ts";
@@ -55,6 +56,11 @@ export interface Deps {
   /** null: push only, the operator opens the PR (no GitHub token). */
   github: GitHub | null;
   auth: GitAuth | null;
+  /**
+   * The factory App's ID when github acts as the App (P2-05): publish then posts the
+   * factory/verdict check run on the candidate. null with a personal token, which cannot.
+   */
+  appId?: number | null;
   keyFile: string;
   /**
    * The credential gateway (P2-02) live sessions call instead of the API: each gets a token good
@@ -752,7 +758,36 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
         repo: task.target.repo, head: c.branch, base: c.base_branch, title: `[factory] ${taskId}: ${task.title}`, body: summary.pr_body + footer, draft: decision.tier === "Restricted", commit: cand,
       });
     }
-    return [out("publish.json", { branch: c.branch, head_commit: pushed, pr_number: pr?.number ?? null, pr_url: pr?.url ?? null }, null)];
+    // The verdict on the candidate (P2-05), as the App: policy-check on the target trusts nothing else.
+    let check: { verdict: Verdict; digest: string; url: string } | null = null;
+    if (deps.github !== null && pr !== null && deps.appId !== undefined && deps.appId !== null) {
+      const v = verdictOf(n, c.base_commit, decision);
+      const rendered = renderVerdict(v);
+      const ref = await outbox.checkRun({ ...where, name: "verdict" }, {
+        repo: task.target.repo, name: VERDICT_CHECK, headSha: cand, conclusion: decision.tier === "Restricted" ? "failure" : "success", ...rendered,
+      });
+      check = { verdict: v, digest: verdictDigest(v), url: ref.url };
+    }
+    return [
+      out("publish.json", { branch: c.branch, head_commit: pushed, pr_number: pr?.number ?? null, pr_url: pr?.url ?? null, verdict_check_url: check?.url ?? null }, null),
+      ...(check === null ? [] : [out("verdict-check.json", { app_id: deps.appId, digest: check.digest, url: check.url, verdict: check.verdict }, null)]),
+    ];
+  };
+
+  /** The verdict policy-check verifies: what was judged, the decision, and the digest of every artifact it rests on. */
+  const verdictOf = (n: number, base: string, decision: Decision): Verdict => {
+    const latest = new Map<string, string>();
+    for (const e of store.events(taskId)) {
+      if (e.type !== "artifact_committed") continue;
+      for (const a of e.payload["artifacts"] as { path: string; digest: string }[]) latest.set(a.path, a.digest);
+    }
+    const approver = readJson("verdict.json") as { decision: string };
+    return {
+      schema_version: 1, task_id: taskId, repo: task.target.repo, head_sha: candidate(n), base_commit: base, tier: decision.tier,
+      decision: approver.decision === "approve" ? "approve" : "needs_human", reviews: decision.reviews, spec_digest: specDigest(dir),
+      artifacts: [...latest].sort(([a], [b]) => a.localeCompare(b)).map(([path, digest]) => ({ path, digest })),
+      factory: { version: release.info?.tag ?? `v${release.version}-dev`, ...(release.info === null ? {} : { commit: release.info.sha }), policy: policyDigest(risk) },
+    };
   };
 
   const publishExit = (): void => {

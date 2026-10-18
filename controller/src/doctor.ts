@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { APP_PERMISSIONS, appConfig, appInfo, appTokens, permissionDiff, readAppKey, type AppConfig } from "./github/app.ts";
 import { replicaStatus } from "./durable/replica.ts";
 import { describeHalt, readHalt } from "./halt.ts";
 import type { Home } from "./home.ts";
@@ -48,7 +49,13 @@ export function doctor(home: Home, release: Release, keyFile: string, env: NodeJ
   const keyOk = existsSync(keyFile) && (statSync(keyFile).mode & 0o077) === 0;
   add("api key file", keyOk, existsSync(keyFile) ? `${keyFile} must be readable by you only (chmod 600)` : `create ${keyFile} (chmod 600) holding the Console key`);
   add("factory home", existsSync(home.root) && (statSync(home.root).mode & 0o077) === 0, `${home.root} must exist and be private (chmod 700)`);
-  add("github token", env["FACTORY_GITHUB_TOKEN"] !== undefined, "FACTORY_GITHUB_TOKEN pushes branches and opens PRs; without it a run stops after pushing nothing", "warn");
+  let appSet = false;
+  try {
+    appSet = appConfig(home, env) !== null;
+  } catch {
+    // appCheck reports it.
+  }
+  add("github token", appSet || env["FACTORY_GITHUB_TOKEN"] !== undefined, appSet ? "the factory App pushes, opens PRs and posts verdicts; FACTORY_GITHUB_TOKEN is not needed for runs" : "FACTORY_GITHUB_TOKEN pushes branches and opens PRs; without it a run stops after pushing nothing", "warn");
 
   add("git", which("git"), "git is required");
   const docker = spawnSync(process.env["FACTORY_CONTAINER_ENGINE"] ?? "docker", ["info", "--format", "{{.ServerVersion}}"], { encoding: "utf8" });
@@ -159,5 +166,38 @@ export async function rulesetCheck(o: { repo: string; expected: Ruleset; token: 
     return diffs.length === 0 ? { name, status: "ok", detail: `${o.expected.name} matches .github/rulesets/main.json` } : { name, status: "fail", detail: diffs.join("; ") };
   } catch (e) {
     return { name, status: "warn", detail: `could not reach GitHub: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/**
+ * The factory App (P2-05): its IDs and key, the App GitHub knows by that key, its permissions
+ * against exactly what it needs (more is as wrong as less), and an installation token minted.
+ */
+export async function appCheck(o: { home: Home; env?: NodeJS.ProcessEnv; api: string; fetchFn?: typeof fetch }): Promise<Check[]> {
+  const name = "github app";
+  let app: AppConfig | null;
+  try {
+    app = appConfig(o.home, o.env ?? process.env);
+  } catch (e) {
+    return [{ name, status: "fail", detail: e instanceof Error ? e.message : String(e) }];
+  }
+  if (app === null) return [{ name, status: "warn", detail: "not set: factoryctl app init --app-id N --installation-id N (verdicts and R0–R1 merges need it)" }];
+  try {
+    readAppKey(app.keyFile);
+  } catch (e) {
+    return [{ name, status: "fail", detail: e instanceof Error ? e.message : String(e) }];
+  }
+  const ctx = { app, api: o.api, ...(o.fetchFn === undefined ? {} : { fetchFn: o.fetchFn }) };
+  try {
+    const info = await appInfo(ctx);
+    const checks: Check[] = [];
+    checks.push(info.id === app.appId ? { name, status: "ok", detail: `${info.slug} (app ${String(info.id)}), key ${app.keyFile}` } : { name, status: "fail", detail: `the key belongs to app ${String(info.id)}, not ${String(app.appId)}` });
+    const diffs = permissionDiff(info.permissions);
+    checks.push({ name: "github app permissions", status: diffs.length === 0 ? "ok" : "fail", detail: diffs.length === 0 ? Object.entries(APP_PERMISSIONS).map(([k, v]) => `${k}: ${v}`).join(", ") : diffs.join("; ") });
+    await appTokens(ctx).refresh();
+    checks.push({ name: "github app installation", status: "ok", detail: `installation ${String(app.installationId)}: a token was minted` });
+    return checks;
+  } catch (e) {
+    return [{ name, status: "fail", detail: `GitHub refused the App: ${e instanceof Error ? e.message : String(e)}` }];
   }
 }

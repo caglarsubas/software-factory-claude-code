@@ -35,6 +35,8 @@ export interface CheckRunInput {
   conclusion: "success" | "failure" | "neutral";
   title: string;
   summary: string;
+  /** Longer output: the factory/verdict run carries its canonical verdict here (P2-05). */
+  text?: string;
 }
 
 export interface CheckRunRef {
@@ -71,9 +73,13 @@ export class GitHubError extends Error {}
 
 type Call = (method: string, path: string, body?: unknown) => Promise<unknown>;
 
+/** A token, or where to get a current one: the App's installation tokens expire within the hour. */
+export type TokenSource = string | (() => Promise<string>);
+
 /** A public repository needs no token for reads. */
-function caller(token: string | null, api: string, fetchFn: typeof fetch): Call {
+function caller(source: TokenSource | null, api: string, fetchFn: typeof fetch): Call {
   return async (method, path, body) => {
+    const token = typeof source === "function" ? await source() : source;
     const res = await fetchFn(`${api}${path}`, {
       method,
       headers: {
@@ -89,7 +95,7 @@ function caller(token: string | null, api: string, fetchFn: typeof fetch): Call 
   };
 }
 
-export function restCommitChecks(token: string | null, api = "https://api.github.com", fetchFn: typeof fetch = fetch): CommitChecks {
+export function restCommitChecks(token: TokenSource | null, api = "https://api.github.com", fetchFn: typeof fetch = fetch): CommitChecks {
   const call = caller(token, api, fetchFn);
   return {
     async checkRuns(repo, sha) {
@@ -111,7 +117,7 @@ const pull = (p: RestPull): PullRequest => ({ number: p.number, url: p.html_url,
 
 const PAGES = 10;
 
-export function restGitHub(token: string, api = "https://api.github.com", fetchFn: typeof fetch = fetch): GitHub {
+export function restGitHub(token: TokenSource, api = "https://api.github.com", fetchFn: typeof fetch = fetch): GitHub {
   const call = caller(token, api, fetchFn);
   return {
     async pullRequests(repo, head) {
@@ -149,7 +155,7 @@ export function restGitHub(token: string, api = "https://api.github.com", fetchF
     },
     async createCheckRun(i) {
       const r = (await call("POST", `/repos/${i.repo}/check-runs`, {
-        name: i.name, head_sha: i.headSha, external_id: i.externalId, status: "completed", conclusion: i.conclusion, output: { title: i.title, summary: i.summary },
+        name: i.name, head_sha: i.headSha, external_id: i.externalId, status: "completed", conclusion: i.conclusion, output: { title: i.title, summary: i.summary, ...(i.text === undefined ? {} : { text: i.text }) },
       })) as { id: number; html_url: string };
       return { id: r.id, url: r.html_url };
     },

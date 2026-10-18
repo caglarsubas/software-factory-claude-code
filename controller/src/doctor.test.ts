@@ -1,10 +1,12 @@
 // doctor's drift checks (P2-08): the runner's managed settings against what the release
 // generates, and this repository's ruleset on GitHub against the release's copy.
+import { generateKeyPairSync } from "node:crypto";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { doctor, rulesetCheck, rulesetDiff } from "./doctor.ts";
+import { appCheck, doctor, rulesetCheck, rulesetDiff } from "./doctor.ts";
+import { memoryGitHub, serveGitHub, type StubApp } from "./github/testing.ts";
 import { factoryHome } from "./home.ts";
 import { REPO_ROOT } from "./policy/load.ts";
 import { loadRelease } from "./release.ts";
@@ -60,5 +62,25 @@ describe("doctor's drift checks", () => {
     expect(await rulesetCheck({ ...base, fetchFn: answer({ "/repos/o/r/rulesets": [200, [{ id: 7, name: "main" }]], "/repos/o/r/rulesets/7": [200, { ...expected, enforcement: "disabled" }] }) })).toMatchObject({ status: "fail", detail: "enforcement is disabled, expected active" });
     expect(await rulesetCheck({ ...base, fetchFn: answer({ "/repos/o/r/rulesets": [200, []] }) })).toMatchObject({ status: "fail", detail: expect.stringContaining("no ruleset named main") as unknown });
     expect(await rulesetCheck({ ...base, fetchFn: answer({ "/repos/o/r/rulesets": [403, null] }) })).toMatchObject({ status: "warn", detail: expect.stringContaining("Administration: read") as unknown });
+  });
+
+  it("checks the factory App: its key, the App GitHub knows by it, its exact permissions and its installation", async () => {
+    const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const keyFile = join(scratch, "app.pem");
+    writeFileSync(keyFile, keys.privateKey.export({ type: "pkcs1", format: "pem" }), { mode: 0o600 });
+    const app: StubApp = { id: 4242, installationId: 77, publicKey: keys.publicKey, permissions: { checks: "write", contents: "write", metadata: "read", pull_requests: "write" }, minted: [], calls: [] };
+    const api = await serveGitHub(memoryGitHub(), app);
+    try {
+      const env = { FACTORY_GITHUB_APP_ID: "4242", FACTORY_GITHUB_APP_INSTALLATION_ID: "77", FACTORY_GITHUB_APP_KEY_FILE: keyFile };
+      expect((await appCheck({ home, env, api: api.url })).map((c) => [c.name, c.status])).toEqual([["github app", "ok"], ["github app permissions", "ok"], ["github app installation", "ok"]]);
+      app.permissions = { ...app.permissions, workflows: "write" };
+      expect((await appCheck({ home, env, api: api.url })).find((c) => c.name === "github app permissions")).toMatchObject({ status: "fail", detail: "workflows is write, expected not granted" });
+      // Another app's key: GitHub refuses the JWT.
+      expect(await appCheck({ home, env: { ...env, FACTORY_GITHUB_APP_ID: "5" }, api: api.url })).toEqual([expect.objectContaining({ status: "fail", detail: expect.stringContaining("HTTP 401") as unknown })]);
+      expect(await appCheck({ home, env: {}, api: api.url })).toEqual([expect.objectContaining({ status: "warn", detail: expect.stringContaining("factoryctl app init") as unknown })]);
+      expect(await appCheck({ home, env: { ...env, FACTORY_GITHUB_APP_KEY_FILE: join(scratch, "none.pem") }, api: api.url })).toEqual([expect.objectContaining({ status: "fail", detail: expect.stringContaining("missing") as unknown })]);
+    } finally {
+      await api.close();
+    }
   });
 });

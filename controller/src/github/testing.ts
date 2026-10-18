@@ -1,5 +1,6 @@
 // Test support: GitHub in memory, and the same served over HTTP as the REST API restGitHub
 // calls, so a factoryctl process can be pointed at it with FACTORY_GITHUB_API_URL.
+import { verify, type KeyObject } from "node:crypto";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { CheckRunInput, CheckRunRef, GitHub, IssueComment, PullRequest, PullRequestInput } from "./client.ts";
@@ -65,8 +66,29 @@ const body = async (req: IncomingMessage): Promise<Record<string, unknown>> => {
 
 const rest = (p: PullRequest) => ({ number: p.number, html_url: p.url, state: p.state, merged_at: p.merged ? "2026-10-13T00:00:00Z" : null, head: { sha: p.headSha } });
 
-/** Serves `gh` on a loopback port as the subset of the REST API restGitHub uses. */
-export async function serveGitHub(gh: GitHub): Promise<{ url: string; close: () => Promise<void> }> {
+/** A GitHub App the stub answers for (P2-05): JWTs must verify against `publicKey`. */
+export interface StubApp {
+  id: number;
+  installationId: number;
+  publicKey: KeyObject;
+  permissions: Record<string, string>;
+  /** Every installation token minted, with the repositories it was narrowed to. */
+  minted: { token: string; repositories: string[] | null }[];
+  /** The Authorization header of every REST call other than the App's own. */
+  calls: { method: string; path: string; authorization: string }[];
+}
+
+/** Verifies an RS256 App JWT: signature, issuer and expiry. */
+function appJwtValid(header: string | undefined, app: StubApp): boolean {
+  const jwt = /^Bearer (.+)$/.exec(header ?? "")?.[1];
+  const [h = "", p = "", sig = ""] = (jwt ?? "").split(".");
+  if (!verify("RSA-SHA256", Buffer.from(`${h}.${p}`), app.publicKey, Buffer.from(sig, "base64url"))) return false;
+  const claims = JSON.parse(Buffer.from(p, "base64url").toString("utf8")) as { iss?: string; exp?: number };
+  return claims.iss === String(app.id) && (claims.exp ?? 0) > Date.now() / 1000;
+}
+
+/** Serves `gh` on a loopback port as the subset of the REST API restGitHub uses, and the App's token routes when `app` is given. */
+export async function serveGitHub(gh: MemoryGitHub, app?: StubApp): Promise<{ url: string; close: () => Promise<void> }> {
   const server = createServer((req, res) => {
     const send = (status: number, data: unknown): void => {
       res.writeHead(status, { "content-type": "application/json" });
@@ -74,6 +96,22 @@ export async function serveGitHub(gh: GitHub): Promise<{ url: string; close: () 
     };
     void (async () => {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (app !== undefined && url.pathname.startsWith("/app")) {
+        if (!appJwtValid(req.headers.authorization, app)) {
+          send(401, { message: "A JSON web token could not be decoded" });
+        } else if (req.method === "GET" && url.pathname === "/app") {
+          send(200, { id: app.id, slug: "factory-test", permissions: app.permissions });
+        } else if (req.method === "POST" && url.pathname === `/app/installations/${String(app.installationId)}/access_tokens`) {
+          const b = await body(req);
+          const token = `ghs_test${String(app.minted.length + 1)}`;
+          app.minted.push({ token, repositories: Array.isArray(b["repositories"]) ? (b["repositories"] as string[]) : null });
+          send(201, { token, expires_at: new Date(Date.now() + 3_600_000).toISOString(), permissions: app.permissions });
+        } else {
+          send(404, { message: "Not Found" });
+        }
+        return;
+      }
+      app?.calls.push({ method: req.method ?? "", path: url.pathname, authorization: req.headers.authorization ?? "" });
       const m = /^\/repos\/([^/]+\/[^/]+)\/(.+)$/.exec(url.pathname);
       const repo = m?.[1] ?? "";
       const resource = m?.[2] ?? "";
@@ -85,6 +123,14 @@ export async function serveGitHub(gh: GitHub): Promise<{ url: string; close: () 
         send(201, rest(await gh.createPullRequest({ repo, head: String(b["head"]), base: String(b["base"]), title: String(b["title"]), body: String(b["body"]), draft: b["draft"] === true })));
       } else if (req.method === "GET" && /^pulls\/[0-9]+$/.test(resource)) {
         send(200, rest(await gh.pullRequest(repo, Number(resource.split("/")[1]))));
+      } else if (req.method === "GET" && /^commits\/[0-9a-f]{40}\/check-runs$/.test(resource)) {
+        const sha = resource.split("/")[1];
+        const runs = gh.checks.filter((c) => c.repo === repo && c.headSha === sha);
+        send(200, { total_count: runs.length, check_runs: runs.map((c) => ({ id: c.id, html_url: c.url, external_id: c.externalId, name: c.name, head_sha: c.headSha, status: "completed", conclusion: c.conclusion, app: app === undefined ? null : { id: app.id, slug: "factory-test" }, output: { title: c.title, summary: c.summary, text: c.text ?? null } })) });
+      } else if (req.method === "POST" && resource === "check-runs") {
+        const b = await body(req);
+        const output = b["output"] as { title: string; summary: string; text?: string };
+        send(201, await gh.createCheckRun({ repo, name: String(b["name"]), headSha: String(b["head_sha"]), externalId: String(b["external_id"]), conclusion: b["conclusion"] as "success", title: output.title, summary: output.summary, ...(output.text === undefined ? {} : { text: output.text }) }).then((r) => ({ id: r.id, html_url: r.url })));
       } else {
         send(404, { message: "Not Found" });
       }

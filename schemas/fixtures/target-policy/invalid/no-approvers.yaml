@@ -1,0 +1,5 @@
+schema_version: 1
+app_id: 1234567
+approvers: []
+protected_paths: []
+restricted: []
