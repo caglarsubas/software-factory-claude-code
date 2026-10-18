@@ -1,5 +1,7 @@
 # Autonomy ladder (ROADMAP §4). Moving a tier to auto_merge needs the gate named in the roadmap.
 schema_version: 1
+# G1 was signed on 2026-10-17 (#39): R0–R1 auto-merge is allowed from Phase 2, through P2-05's governance.
+current_phase: P2
 spec_gate_tiers: [R3]
 phases:
   P0: {R0: human_merge, R1: human_merge, R2: human_merge, R3: human_merge, Restricted: prepare_only}

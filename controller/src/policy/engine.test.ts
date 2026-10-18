@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { evaluate, TIERS, type ChangedFile, type DiffFacts, type ReviewKind, type Tier } from "./engine.ts";
-import { loadRiskPolicy, REPO_ROOT } from "./load.ts";
+import { loadRiskPolicy, REPO_ROOT, withProfile } from "./load.ts";
 
 const policy = loadRiskPolicy();
 const selfPolicy = loadRiskPolicy(REPO_ROOT, join(REPO_ROOT, "profiles/self/profile.yaml"));
@@ -73,6 +73,16 @@ describe("evaluate with policies/risk.yaml", () => {
 describe("evaluate with the self profile", () => {
   it.each(selfCases)("$name", ({ facts: f, tier }) => {
     expect(evaluate(f, selfPolicy).tier).toBe(tier);
+  });
+});
+
+describe("a profile's own paths", () => {
+  it("bring in the migration reviewer for the target's migration paths, and protect .factory/", () => {
+    const withMigrations = withProfile(policy, { protected_paths: [], restricted: [], reviewers: { migration_paths: ["db/schema/**"] } });
+    expect(evaluate(facts([file("db/schema/0001.sql")]), withMigrations)).toMatchObject({ tier: "R3", reviews: ["migration"] });
+    expect(evaluate(facts([file("db/schema/0001.sql")]), policy)).toMatchObject({ tier: "R1", reviews: [] });
+    // The target's governance files: changing them always needs a human (P2-05b).
+    expect(evaluate(facts([file(".factory/policy.yaml")]), policy).tier).toBe("R3");
   });
 });
 

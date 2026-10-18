@@ -1,17 +1,23 @@
 // Test support: GitHub in memory, and the same served over HTTP as the REST API restGitHub
 // calls, so a factoryctl process can be pointed at it with FACTORY_GITHUB_API_URL.
 import { verify, type KeyObject } from "node:crypto";
+import { GITHUB_ACTIONS_APP_ID } from "../governance/footprint.ts";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { CheckRunInput, CheckRunRef, GitHub, IssueComment, PullRequest, PullRequestInput } from "./client.ts";
 
 export interface MemoryGitHub extends GitHub {
   prs: (PullRequestInput & PullRequest)[];
+  /** The checks GitHub Actions posts on a commit (gates, policy-check): set by a test, as the target's workflows would. */
+  actionsRuns: { repo: string; sha: string; name: string; status: string; conclusion: string | null }[];
   issueComments: (IssueComment & { repo: string; issue: number })[];
   checks: (CheckRunInput & CheckRunRef)[];
   /** Every call that changed something, in order. */
   writes: string[];
 }
+
+/** GitHub Actions' own app ID: the required checks are pinned to it. */
+export const GITHUB_ACTIONS_APP = GITHUB_ACTIONS_APP_ID;
 
 /** `headOf` answers where a branch points when a PR is opened from it. */
 export function memoryGitHub(headOf: (repo: string, branch: string) => string = () => "0".repeat(40)): MemoryGitHub {
@@ -19,10 +25,12 @@ export function memoryGitHub(headOf: (repo: string, branch: string) => string = 
   const issueComments: MemoryGitHub["issueComments"] = [];
   const checks: MemoryGitHub["checks"] = [];
   const writes: string[] = [];
+  const actionsRuns: MemoryGitHub["actionsRuns"] = [];
   // An open PR follows its branch, as GitHub's does.
   const view = (p: PullRequestInput & PullRequest): PullRequest => ({ number: p.number, url: p.url, state: p.state, merged: p.merged, headSha: p.state === "open" ? headOf(p.repo, p.head) || p.headSha : p.headSha });
   return {
     prs,
+    actionsRuns,
     issueComments,
     checks,
     writes,
@@ -48,6 +56,24 @@ export function memoryGitHub(headOf: (repo: string, branch: string) => string = 
     findCheckRun: (repo, sha, externalId) => {
       const r = checks.find((c) => c.repo === repo && c.headSha === sha && c.externalId === externalId);
       return Promise.resolve(r === undefined ? null : { id: r.id, url: r.url });
+    },
+    checkRunsOn: (repo, sha) =>
+      Promise.resolve([
+        ...actionsRuns.filter((r) => r.repo === repo && r.sha === sha).map((r) => ({ name: r.name, status: r.status, conclusion: r.conclusion, appId: GITHUB_ACTIONS_APP })),
+        ...checks.filter((c) => c.repo === repo && c.headSha === sha).map((c) => ({ name: c.name, status: "completed", conclusion: c.conclusion, appId: null })),
+      ]),
+    mergePullRequest: (repo, number, sha) => {
+      const p = prs.find((x) => x.repo === repo && x.number === number);
+      if (p === undefined) return Promise.reject(new Error(`no PR ${String(number)} in ${repo}`));
+      const head = view(p).headSha;
+      // GitHub answers 409 when the head moved and 405 when the PR cannot be merged.
+      if (p.state !== "open" || p.merged) return Promise.reject(new Error(`PUT /repos/${repo}/pulls/${String(number)}/merge: HTTP 405`));
+      if (head !== sha) return Promise.reject(new Error(`PUT /repos/${repo}/pulls/${String(number)}/merge: HTTP 409`));
+      writes.push(`merge ${repo} ${String(number)}`);
+      p.state = "closed";
+      p.merged = true;
+      p.headSha = head;
+      return Promise.resolve({ merged: true, sha: `${"f".repeat(39)}${String(number % 10)}` });
     },
     createCheckRun: (input) => {
       writes.push(`check_run ${input.repo} ${input.name}`);
@@ -126,7 +152,21 @@ export async function serveGitHub(gh: MemoryGitHub, app?: StubApp): Promise<{ ur
       } else if (req.method === "GET" && /^commits\/[0-9a-f]{40}\/check-runs$/.test(resource)) {
         const sha = resource.split("/")[1];
         const runs = gh.checks.filter((c) => c.repo === repo && c.headSha === sha);
-        send(200, { total_count: runs.length, check_runs: runs.map((c) => ({ id: c.id, html_url: c.url, external_id: c.externalId, name: c.name, head_sha: c.headSha, status: "completed", conclusion: c.conclusion, app: app === undefined ? null : { id: app.id, slug: "factory-test" }, output: { title: c.title, summary: c.summary, text: c.text ?? null } })) });
+        const actions = gh.actionsRuns.filter((r) => r.repo === repo && r.sha === sha);
+        send(200, {
+          total_count: runs.length + actions.length,
+          check_runs: [
+            ...runs.map((c) => ({ id: c.id, html_url: c.url, external_id: c.externalId, name: c.name, head_sha: c.headSha, status: "completed", conclusion: c.conclusion, app: app === undefined ? null : { id: app.id, slug: "factory-test" }, output: { title: c.title, summary: c.summary, text: c.text ?? null } })),
+            ...actions.map((r, k) => ({ id: 100_000 + k, html_url: "", external_id: null, name: r.name, head_sha: r.sha, status: r.status, conclusion: r.conclusion, app: { id: GITHUB_ACTIONS_APP, slug: "github-actions" }, output: { title: null, summary: null, text: null } })),
+          ],
+        });
+      } else if (req.method === "PUT" && /^pulls\/[0-9]+\/merge$/.test(resource)) {
+        const b = await body(req);
+        try {
+          send(200, { ...(await gh.mergePullRequest(repo, Number(resource.split("/")[1]), String(b["sha"]))), message: "Pull Request successfully merged" });
+        } catch (e) {
+          send(Number(/HTTP ([0-9]{3})/.exec(String(e))?.[1] ?? "500"), { message: String(e) });
+        }
       } else if (req.method === "POST" && resource === "check-runs") {
         const b = await body(req);
         const output = b["output"] as { title: string; summary: string; text?: string };

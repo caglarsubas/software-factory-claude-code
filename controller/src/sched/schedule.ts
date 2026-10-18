@@ -1,7 +1,7 @@
 // What `factoryctl serve` runs next (ROADMAP P2-03): pure rules over the tasks' events, leases
 // and specs. A task is eligible when it can move (not ended, not paused, not leased to a live
-// writer) and something happened since this scheduler last ran it; a task at the merge gate is
-// polled for its merge now and then. Tasks on one target whose spec scopes overlap run one at a
+// writer) and something happened since this scheduler last ran it; a task at the merge gate, or
+// waiting to merge itself, is polled now and then. Tasks on one target whose spec scopes overlap run one at a
 // time, and a task without a spec yet overlaps every task on its target.
 
 export interface TaskView {
@@ -51,8 +51,11 @@ export function eligible(t: TaskView, ledger: Ledger, now: number): boolean {
   if (TERMINAL.has(t.state) || t.paused || t.lease === "held") return false;
   const finished = ledger.finished.get(t.id);
   if (finished === undefined || t.lastSeq > finished) return true;
-  return t.state === "NEEDS_HUMAN" && t.gate === "merge" && now - (ledger.polled.get(t.id) ?? 0) >= MERGE_POLL_MS;
+  return waitsOnGitHub(t) && now - (ledger.polled.get(t.id) ?? 0) >= MERGE_POLL_MS;
 }
+
+/** A task only GitHub can move on: the human merge gate, or an auto-merge waiting on its required checks (P2-05b). */
+export const waitsOnGitHub = (t: Pick<TaskView, "state" | "gate">): boolean => (t.state === "NEEDS_HUMAN" && t.gate === "merge") || t.state === "AUTO_APPROVED" || t.state === "MERGE_QUEUED";
 
 /** The tasks to start now, by priority then age, within the concurrency limit and never beside an overlapping one. */
 export function nextTasks(tasks: readonly TaskView[], running: readonly TaskView[], max: number, ledger: Ledger, now: number): TaskView[] {

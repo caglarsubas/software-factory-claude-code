@@ -237,12 +237,22 @@
         "min_agreement",
         "min_decisions"
       ]
+    },
+    "current_phase": {
+      "enum": [
+        "P0",
+        "P1",
+        "P2",
+        "P3"
+      ],
+      "description": "The phase the factory runs in: its ladder decides which tiers factoryctl merges itself (P2-05). Moving it to a later phase needs that phase's gate."
     }
   },
   "required": [
     "schema_version",
     "spec_gate_tiers",
     "phases",
-    "r2_auto_merge"
+    "r2_auto_merge",
+    "current_phase"
   ]
 }

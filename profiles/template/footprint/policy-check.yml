@@ -1,0 +1,42 @@
+# policy-check (P2-05): whether a factory PR may merge. It runs on pull_request_target, so the
+# workflow and the code that run are the base branch's and the pinned factory release's, never
+# the PR's: nothing from the PR is checked out or executed. Its reads of the PR's diff and head
+# files are data, and its token can only read. A label change re-runs it after an approval.
+name: policy-check
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+
+permissions: {}
+
+concurrency:
+  group: policy-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  policy-check:
+    name: policy-check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+    steps:
+      - name: Check out the factory release
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: "@FACTORY_REPO@"
+          ref: "@FACTORY_REF@" # @FACTORY_TAG@
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+      - name: Install the factory
+        run: pnpm install --frozen-lockfile
+      - name: Check the PR against its verdict and the base branch's policy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node controller/src/governance/policy-check-cli.ts

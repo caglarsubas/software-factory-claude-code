@@ -4,6 +4,26 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-18
+
+### Added
+
+- **The governance footprint (P2-05b).** It is rendered from a target's profile (`governance.approvers`, new), the App's ID and a release commit:
+  - `.factory/policy.yaml` and `.factory/gates.yaml`;
+  - a `factory-gates` workflow on `pull_request`;
+  - a `policy-check` workflow on `pull_request_target` that never checks out the PR and can only read;
+  - the `factory-main` and `factory-branches` rulesets.
+
+  `scripts/mirror-fixture.ts --footprint --factory-ref vX.Y.Z --push --rulesets` rolls it out to a fixture, and `doctor` checks each governed fixture's rulesets.
+- **R0–R1 merge themselves in Phase 2.** With the App, an approved R0–R1 task waits as `AUTO_APPROVED` until the required checks pass on the judged commit. `factoryctl` then squash-merges the PR at exactly that commit, through the outbox, so a crash never merges twice. A failed check, a moved head or a refused merge sends it to the human merge gate. `serve` polls it with the merge gate.
+- **`policies/approvals.yaml` names the current phase** (`current_phase: P2`). Its ladder decides both what `factoryctl` merges and what `policy-check` passes without a human.
+
+### Changed
+
+- **`policy-check` follows the approvals ladder.** In Phase 2, R2 and R3 need an approver's review of the head commit, and Restricted is never merged.
+- **`.factory/**` is protected:** R3 in the risk policy, and denied to every session by the guard.
+- **A profile's `reviewers.migration_paths`** bring in the migration reviewer, as `**/migrations/**` does.
+
 ## [0.10.0] - 2026-10-18
 
 ### Added
@@ -262,7 +282,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.7.0...v0.8.0

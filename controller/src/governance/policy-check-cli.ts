@@ -8,6 +8,7 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { ensureImage } from "../../../gates/src/image.ts";
 import { loadRiskPolicy } from "../policy/load.ts";
+import { loadRelease } from "../release.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { policyCheck, type PolicyCheckResult } from "./policy-check.ts";
 import { restPolicyReads } from "./reads.ts";
@@ -37,12 +38,15 @@ async function main(): Promise<number> {
   const eventPath = env["GITHUB_EVENT_PATH"];
   if (repo === undefined || eventPath === undefined) throw new Error("GITHUB_REPOSITORY and GITHUB_EVENT_PATH must be set (run it in GitHub Actions)");
   const pr = prFromEvent(JSON.parse(readFileSync(eventPath, "utf8")));
+  const validator = createValidator();
+  const { approvals } = loadRelease(validator);
   const result = await policyCheck({
     repo,
     pr,
     reads: restPolicyReads(env["GITHUB_TOKEN"] ?? null, env["GITHUB_API_URL"] ?? "https://api.github.com"),
     risk: loadRiskPolicy(),
-    validator: createValidator(),
+    ladder: approvals.phases[approvals.current_phase],
+    validator,
     scanSinks: containerSinkScanner(ensureImage()),
   });
   const summary = summaryMarkdown(repo, pr, result);

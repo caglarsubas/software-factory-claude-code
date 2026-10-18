@@ -26,7 +26,7 @@ manifests:
   - "**/Cargo.toml"
 
 rules:
-  - when: {any_path: [".claude/**", ".github/**", "**/CODEOWNERS", ".claude-plugin/**"]}
+  - when: {any_path: [".claude/**", ".github/**", "**/CODEOWNERS", ".claude-plugin/**", ".factory/**"]}
     minimum_risk: R3
     note: agent and CI guardrails
   - when: {any_path: ["**/auth/**", "**/authz/**", "**/billing/**", "**/payments/**", "**/migrations/**", "infra/**", "**/*.tf"]}

@@ -4,8 +4,8 @@
 //
 //   - each effect has a key, `task/stage/round/kind[/name]` (D6), and an attempt number per key;
 //   - an effect first looks for itself (the branch at the commit, a PR from the branch at the
-//     commit, a comment with the key's marker, a check run with the key as external_id) and acts
-//     only when it finds nothing;
+//     commit, a comment with the key's marker, a check run with the key as external_id, a PR
+//     already merged) and acts only when it finds nothing;
 //   - at the start of every run, reconcile() looks up each intent left without a done and records
 //     what it found, so no intent stays dangling.
 //
@@ -13,9 +13,9 @@
 import { tmpdir } from "node:os";
 import { pushFromMirror, remoteBranchSha, type GitAuth } from "../git/repo.ts";
 import type { EventStore, FactoryEvent } from "../store/events.ts";
-import type { CheckRunInput, CheckRunRef, GitHub, IssueComment, PullRequest, PullRequestInput } from "./client.ts";
+import type { CheckRunInput, CheckRunRef, GitHub, IssueComment, MergeResult, PullRequest, PullRequestInput } from "./client.ts";
 
-export type EffectKind = "push" | "pull_request" | "comment" | "check_run";
+export type EffectKind = "push" | "pull_request" | "comment" | "check_run" | "merge";
 /** done: this attempt made it; found: it already existed; absent: a dangling intent's effect never happened; failed: the attempt threw. */
 export type EffectOutcome = "done" | "found" | "absent" | "failed";
 
@@ -55,6 +55,8 @@ export interface Outbox {
   pullRequest(w: Where, input: PullRequestInput & { commit: string }): Promise<PullRequest>;
   comment(w: Where & { name: string }, p: { repo: string; issue: number; body: string }): Promise<IssueComment>;
   checkRun(w: Where & { name: string }, input: Omit<CheckRunInput, "externalId">): Promise<CheckRunRef>;
+  /** Squash-merges the PR at exactly `sha` (P2-05b); a PR already merged is found, not merged again. */
+  merge(w: Where, p: { repo: string; number: number; sha: string }): Promise<MergeResult>;
   /** Resolves every dangling intent by looking its effect up; returns what it recorded. */
   reconcile(): Promise<{ key: string; attempt: number; outcome: EffectOutcome }[]>;
 }
@@ -78,6 +80,10 @@ export function createOutbox(deps: OutboxDeps): Outbox {
   const findComment = async (key: string, p: { repo: string; issue: number }): Promise<IssueComment | null> =>
     (await github().comments(p.repo, p.issue)).find((c) => c.body.includes(commentMarker(key))) ?? null;
   const findCheck = (key: string, p: { repo: string; sha: string }): Promise<CheckRunRef | null> => github().findCheckRun(p.repo, p.sha, key);
+  const findMerge = async (p: { repo: string; number: number }): Promise<MergeResult | null> => {
+    const pr = await github().pullRequest(p.repo, p.number);
+    return pr.merged ? { merged: true, sha: pr.headSha } : null;
+  };
 
   async function effect<T>(
     w: Where,
@@ -121,6 +127,9 @@ export function createOutbox(deps: OutboxDeps): Outbox {
     checkRun(w, input) {
       return effect(w, "check_run", { repo: input.repo, sha: input.headSha, name: input.name }, (key) => findCheck(key, { repo: input.repo, sha: input.headSha }), (key) => github().createCheckRun({ ...input, externalId: key }), (r) => ({ id: r.id, url: r.url }));
     },
+    merge(w, p) {
+      return effect(w, "merge", { repo: p.repo, number: p.number, sha: p.sha }, () => findMerge(p), () => github().mergePullRequest(p.repo, p.number, p.sha), (r) => ({ merged: r.merged, merge_commit: r.sha }));
+    },
     async reconcile() {
       const recorded: { key: string; attempt: number; outcome: EffectOutcome }[] = [];
       for (const intent of danglingIntents(store.events(taskId))) {
@@ -139,6 +148,9 @@ export function createOutbox(deps: OutboxDeps): Outbox {
           } else if (kind === "comment") {
             const c = await findComment(key, { repo: String(p["repo"]), issue: Number(p["issue"]) });
             found = c === null ? null : { id: c.id, url: c.url };
+          } else if (kind === "merge") {
+            const m = await findMerge({ repo: String(p["repo"]), number: Number(p["number"]) });
+            found = m === null ? null : { merged: true };
           } else {
             const r = await findCheck(key, { repo: String(p["repo"]), sha: String(p["sha"]) });
             found = r === null ? null : { id: r.id, url: r.url };

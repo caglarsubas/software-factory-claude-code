@@ -32,6 +32,11 @@ describe("eligibility", () => {
     expect(eligible(merge, ledger, 1000 + MERGE_POLL_MS - 1)).toBe(false);
     expect(eligible(merge, ledger, 1000 + MERGE_POLL_MS)).toBe(true);
     expect(eligible(task("T-0001", { state: "NEEDS_HUMAN", gate: "spec" }), ledger, 10 * MERGE_POLL_MS)).toBe(false);
+    // An auto-merge waiting on its required checks is polled the same way (P2-05b).
+    for (const state of ["AUTO_APPROVED", "MERGE_QUEUED"]) {
+      expect(eligible(task("T-0001", { state, gate: "checks" }), ledger, 1000 + MERGE_POLL_MS - 1), state).toBe(false);
+      expect(eligible(task("T-0001", { state, gate: "checks" }), ledger, 1000 + MERGE_POLL_MS), state).toBe(true);
+    }
   });
 });
 

@@ -54,6 +54,23 @@ export interface GitHub {
   findCheckRun(repo: string, sha: string, externalId: string): Promise<CheckRunRef | null>;
   /** Needs a GitHub App token: a fine-grained personal token cannot create check runs. */
   createCheckRun(input: CheckRunInput): Promise<CheckRunRef>;
+  /** Every check run on a commit, with the app that posted it (P2-05b: the required checks). */
+  checkRunsOn(repo: string, sha: string): Promise<CheckState[]>;
+  /** Squash-merges the PR only if its head is still `sha` (P2-05b); GitHub refuses otherwise. */
+  mergePullRequest(repo: string, number: number, sha: string): Promise<MergeResult>;
+}
+
+export interface CheckState {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  appId: number | null;
+}
+
+export interface MergeResult {
+  merged: boolean;
+  /** The merge commit on the base branch. */
+  sha: string;
 }
 
 export interface CheckRun {
@@ -152,6 +169,19 @@ export function restGitHub(token: TokenSource, api = "https://api.github.com", f
         if (body.check_runs.length < 100) break;
       }
       return null;
+    },
+    async checkRunsOn(repo, sha) {
+      const all: CheckState[] = [];
+      for (let page = 1; page <= PAGES; page++) {
+        const body = (await call("GET", `/repos/${repo}/commits/${sha}/check-runs?filter=latest&per_page=100&page=${String(page)}`)) as { check_runs: { name: string; status: string; conclusion: string | null; app: { id: number } | null }[] };
+        all.push(...body.check_runs.map((r) => ({ name: r.name, status: r.status, conclusion: r.conclusion, appId: r.app?.id ?? null })));
+        if (body.check_runs.length < 100) break;
+      }
+      return all;
+    },
+    async mergePullRequest(repo, number, sha) {
+      const r = (await call("PUT", `/repos/${repo}/pulls/${String(number)}/merge`, { sha, merge_method: "squash" })) as { merged: boolean; sha: string };
+      return { merged: r.merged, sha: r.sha };
     },
     async createCheckRun(i) {
       const r = (await call("POST", `/repos/${i.repo}/check-runs`, {
