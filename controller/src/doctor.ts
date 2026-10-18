@@ -135,6 +135,8 @@ export function rulesetDiff(expected: Ruleset, actual: Ruleset): string[] {
       continue;
     }
     for (const [k, v] of Object.entries(rule.parameters ?? {})) {
+      // GitHub leaves a boolean parameter out when it is false, its default.
+      if (v === false && got[k] === undefined) continue;
       if (JSON.stringify(got[k]) !== JSON.stringify(v)) diffs.push(`${rule.type}.${k} is ${JSON.stringify(got[k])}, expected ${JSON.stringify(v)}`);
     }
     actualRules.delete(rule.type);
