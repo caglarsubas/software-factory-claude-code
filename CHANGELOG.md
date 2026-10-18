@@ -4,6 +4,12 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-18
+
+### Fixed
+
+- **`doctor` no longer flags a fixture's `factory-branches` ruleset that matches.** GitHub leaves a boolean rule parameter out when it is false, its default, and `doctor` read the missing `update_allows_fetch_and_merge` as a difference. It now takes a missing boolean as false, and the template no longer sends the default.
+
 ## [0.11.0] - 2026-10-18
 
 ### Added
@@ -282,7 +288,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.8.0...v0.9.0

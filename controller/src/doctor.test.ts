@@ -51,6 +51,13 @@ describe("doctor's drift checks", () => {
     expect(diffs).toHaveLength(5);
   });
 
+  it("takes a boolean parameter GitHub leaves out as its default, false", () => {
+    const want = { name: "r", rules: [{ type: "update", parameters: { update_allows_fetch_and_merge: false } }] };
+    expect(rulesetDiff(want, { name: "r", rules: [{ type: "update" }] })).toEqual([]);
+    expect(rulesetDiff(want, { name: "r", rules: [{ type: "update", parameters: { update_allows_fetch_and_merge: true } }] })).toEqual(["update.update_allows_fetch_and_merge is true, expected false"]);
+    expect(rulesetDiff({ name: "r", rules: [{ type: "update", parameters: { update_allows_fetch_and_merge: true } }] }, { name: "r", rules: [{ type: "update" }] })).toEqual(["update.update_allows_fetch_and_merge is undefined, expected true"]);
+  });
+
   it("reads the ruleset from GitHub, and warns rather than fails when the token may not", async () => {
     const answer = (routes: Record<string, [number, unknown]>): typeof fetch => (async (url: string | URL | Request) => {
       const href = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
