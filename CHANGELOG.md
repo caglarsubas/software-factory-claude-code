@@ -4,6 +4,23 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-19
+
+### Added
+
+- **Re-verification on base drift (P2-06).** Before it merges an approved R0–R1 task, `factoryctl` fetches the target's base. If the base moved since the candidate was verified, it does not merge. Instead it:
+  - merges the new base into the task branch;
+  - runs the gates and the policy again;
+  - pushes the result and posts a new `factory/verdict` on it, with the approver's decision carried over;
+  - waits for the required checks on the new head.
+
+  A base change to the PR's own files, a merge conflict, red gates or a higher tier sends the task to the human merge gate instead. Each re-verification is committed under `runs/<task>/drift/<k>/`, and `manifest.json` names the new base.
+- **Serialised merges (P2-06).** `factoryctl` merges into one target one task at a time, under the target's merge lease, held from the base check to the merge. A lease whose holder died is free.
+
+### Changed
+
+- **The store gains `merge_leases`** (schema 3), and a replica now runs the store's migrations at every sync, so a replica made by an earlier release takes the new schema.
+
 ## [0.11.1] - 2026-10-18
 
 ### Fixed
@@ -288,7 +305,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.9.0...v0.10.0

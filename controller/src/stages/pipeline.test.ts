@@ -36,6 +36,7 @@ import { captureTask } from "../evals/capture.ts";
 import { specDigest } from "./commit.ts";
 import { ProtocolError, runTask, type Deps } from "./pipeline.ts";
 import { applyTakeover, checkTakeover, resumableSession } from "./takeover.ts";
+import { takeMergeLease } from "../sched/lease.ts";
 import { describeMessage } from "../session/attach.ts";
 import { addedLinesOf, policyCheck, POLICY_FILE, type PolicyReads, type PrFile } from "../governance/policy-check.ts";
 import { parseVerdict, VERDICT_CHECK, verdictDigest } from "../governance/verdict.ts";
@@ -842,6 +843,187 @@ describe("merging R0–R1 itself (P2-05b)", () => {
     expect(currentState(world.store.events(id))).toBe("MERGE_QUEUED");
     expect(await live(id)).toBe("DONE");
     expect(world.github.writes.filter((w) => w.startsWith("merge"))).toHaveLength(1);
+  });
+});
+
+describe("re-verification on base drift and serialised merges (P2-06)", () => {
+  const APP = 4242;
+  const green = (id: string): void => {
+    for (const name of ["gates", "policy-check"] as const) world.github.actionsRuns.push({ repo: "example/ts-mini", sha: remoteBranch(id), name, status: "completed", conclusion: "success" });
+  };
+  /** Someone else's commit on main: the base moves under the task. Returns main's new head. */
+  const advanceMain = (files: Record<string, string>, squash?: string): string => {
+    const other = mkdtempSync(join(scratch, "main-"));
+    sh(other, ["clone", "-q", "--branch", "main", world.remote, "."]);
+    // GitHub's squash merge of a factory branch, as the merge API makes it.
+    if (squash !== undefined) {
+      sh(other, ["fetch", "-q", "origin", `factory/${squash}`]);
+      sh(other, ["merge", "--squash", "-q", "FETCH_HEAD"]);
+    }
+    for (const [path, content] of Object.entries(files)) writeFileSync(join(other, path), content);
+    sh(other, ["add", "-A"]);
+    sh(other, ["commit", "-qm", squash === undefined ? "someone else's change" : `${squash} (squash)`]);
+    sh(other, ["push", "-q", "origin", "main"]);
+    return sh(other, ["rev-parse", "HEAD"]);
+  };
+  const gateLabels: string[] = [];
+  const counting = (over: (label: string) => Partial<GatesResult> = () => ({})): Deps["runGates"] => async (o, label) => {
+    gateLabels.push(label);
+    return { ...(await passingGates()(o, label)), ...over(label) };
+  };
+  const live = (id: string, runGates: Deps["runGates"] = counting(), t = transcripts(id)): Promise<State> => run(id, deps(replayRunner(t), { appId: APP, runGates }));
+  const drift = (id: string, k = 1): Record<string, unknown> => JSON.parse(readFileSync(join(runDir(world.home, id), `drift/${String(k)}/drift.json`), "utf8")) as Record<string, unknown>;
+  const merges = (): string[] => world.github.writes.filter((w) => w.startsWith("merge"));
+  beforeEach(() => {
+    gateLabels.length = 0;
+  });
+
+  it("re-runs the gates and the policy on a moved base, re-posts the verdict, and merges the re-verified head", async () => {
+    const id = newTask();
+    expect(await live(id)).toBe("AUTO_APPROVED");
+    const judged = remoteBranch(id);
+    const base = (JSON.parse(readFileSync(join(runDir(world.home, id), "checkout.json"), "utf8")) as { base_commit: string }).base_commit;
+    green(id);
+    const main = advanceMain({ "NOTES.md": "Someone else's notes.\n" });
+
+    // The base moved since the candidate was verified: no merge; the base is merged in and verified again.
+    expect(await live(id)).toBe("AUTO_APPROVED");
+    expect(merges()).toEqual([]);
+    expect(gateLabels).toEqual(["gates", "gates-drift-1"]);
+    const head = remoteBranch(id);
+    expect(sh(world.remote, ["rev-list", "--parents", "-n", "1", head]).split(" ").slice(1)).toEqual([judged, main]);
+    expect(drift(id)).toMatchObject({ outcome: "reverified", reviewed_base_commit: base, base_commit: main, start_commit: judged, candidate_commit: head, base_changed: ["NOTES.md"], tier_before: "R1", tier_after: "R1", carried_over: { decision: "approve", from_commit: judged } });
+    for (const f of ["gates.json", "policy.json", "candidate.bundle"]) expect(existsSync(join(runDir(world.home, id), "drift/1", f)), f).toBe(true);
+    // A new factory/verdict on the new head, judged against the new base; the approved tier stays.
+    const verdicts = world.github.checks.filter((c) => c.name === VERDICT_CHECK);
+    expect(verdicts.map((c) => c.headSha)).toEqual([judged, head]);
+    expect(verdicts[1]?.externalId).toBe(`${id}/drift/1/check_run/verdict`);
+    const { verdict, stated } = parseVerdict(verdicts[1]?.text ?? null);
+    expect(stated).toBe(verdictDigest(verdict));
+    expect(verdict).toMatchObject({ head_sha: head, base_commit: main, tier: "R1", decision: "approve" });
+    expect(verdict.artifacts.map((a) => a.path)).toEqual(expect.arrayContaining(["drift/1/drift.json", "drift/1/gates.json", "drift/1/policy.json"]));
+    expect(JSON.parse(readFileSync(join(runDir(world.home, id), "manifest.json"), "utf8"))).toMatchObject({ reviewed_base_commit: main, candidate_commit: head });
+
+    // It waits for the required checks on the new head, then merges exactly that head.
+    expect(await live(id)).toBe("AUTO_APPROVED");
+    expect(merges()).toEqual([]);
+    green(id);
+    expect(await live(id)).toBe("DONE");
+    expect(merges()).toHaveLength(1);
+    expect(world.store.events(id).find((e) => e.type === "side_effect_intent" && e.payload["kind"] === "merge")?.payload["sha"]).toBe(head);
+    expect(gateLabels).toEqual(["gates", "gates-drift-1"]);
+  });
+
+  it("hands the merge to a human when the base changed the PR's files, the gates fail on the merge, or the tier rises", async () => {
+    const reasonOf = (id: string): string => String(currentStatePayload(world.store.events(id))["reason"]);
+    // The base changed a file the PR changes: nothing is merged in or re-run.
+    const overlap = newTask();
+    await live(overlap);
+    green(overlap);
+    advanceMain({ "src/cart.ts": `${CART}\n// someone else's change\n` });
+    expect(await live(overlap)).toBe("NEEDS_HUMAN");
+    expect(reasonOf(overlap)).toBe("base drift: the base changed src/cart.ts, which the PR changes too");
+    expect(drift(overlap)).toMatchObject({ outcome: "needs_human", candidate_commit: null, base_changed: ["src/cart.ts"] });
+    expect(gateLabels).toEqual(["gates"]);
+
+    // Red gates on the merge with the new base.
+    const red = newTask();
+    await live(red);
+    green(red);
+    advanceMain({ "NOTES.md": "notes\n" });
+    const failing = counting((label) => (label.startsWith("gates-drift") ? { passed: false, gates: [{ name: "test", status: "fail", duration_ms: 1, summary: "exit 1" }] } : {}));
+    expect(await live(red, failing)).toBe("NEEDS_HUMAN");
+    expect(reasonOf(red)).toBe("base drift: the gates did not pass on the merge with the new base: test");
+    expect(existsSync(join(runDir(world.home, red), "drift/1/gates.json"))).toBe(true);
+
+    // A sink on the merge raises the tier above the approved R1.
+    const raised = newTask();
+    await live(raised);
+    green(raised);
+    advanceMain({ "NOTES.md": "more notes\n" });
+    const sink = counting((label) => (label.startsWith("gates-drift") ? { signals: { sink_added: ["code_exec"], secret_material: false } } : {}));
+    expect(await live(raised, sink)).toBe("NEEDS_HUMAN");
+    expect(reasonOf(raised)).toBe("base drift: the policy now puts the change at R3, above the approved R1");
+    expect(drift(raised)).toMatchObject({ outcome: "needs_human", tier_before: "R1", tier_after: "R3" });
+    // None of them merged, and none posted a second verdict.
+    expect(merges()).toEqual([]);
+    expect(world.github.checks.filter((c) => c.name === VERDICT_CHECK)).toHaveLength(3);
+  });
+
+  it("merges into one target one task at a time: the second waits, then re-verifies on the first's merge", async () => {
+    const a = newTask();
+    const b = newTask("Add a hasItems helper for carts, with a test.");
+    const wt = worktreeDir(world.home, b);
+    const otherBuild: SDKMessage[] = [
+      assistant(pins["sonnet"] ?? "", [
+        toolUse("Write", { file_path: join(wt, "src/items.ts"), content: "export const hasItems = (n: number): boolean => n > 0;\n" }),
+        toolUse("Write", { file_path: join(wt, "test/items.test.ts"), content: 'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { hasItems } from "../src/items.ts";\n\ntest("items", () => {\n  assert.equal(hasItems(1), true);\n});\n' }),
+        toolUse("Bash", { command: "git add -A && git commit -m 'Add hasItems'" }),
+        toolUse("Write", { file_path: join(runDir(world.home, b), "work/build/build-report.md"), content: "Added hasItems.\n" }),
+      ]),
+      result(pins["sonnet"] ?? "", { costUsd: 1.1 }),
+    ];
+    const tb = transcripts(b, { build: otherBuild });
+    expect(await live(a)).toBe("AUTO_APPROVED");
+    expect(await live(b, counting(), tb)).toBe("AUTO_APPROVED");
+    green(a);
+    green(b);
+
+    // A holds the target's merge lease: B checks nothing and merges nothing until A is done.
+    const held = takeMergeLease(world.store, "example/ts-mini", a);
+    expect(held).not.toBeNull();
+    expect(await live(b, counting(), tb)).toBe("AUTO_APPROVED");
+    expect(merges()).toEqual([]);
+    if (held !== null) world.store.releaseMergeLease(held);
+
+    expect(await live(a)).toBe("DONE");
+    advanceMain({}, a);
+    // B's base moved by A's merge, which changed none of B's files: B is re-verified on it, then merges.
+    expect(await live(b, counting(), tb)).toBe("AUTO_APPROVED");
+    expect(drift(b)).toMatchObject({ outcome: "reverified", base_changed: ["src/cart.ts", "test/empty.test.ts"] });
+    green(b);
+    expect(await live(b, counting(), tb)).toBe("DONE");
+    expect(merges()).toEqual(["merge example/ts-mini 1", "merge example/ts-mini 2"]);
+    // Each merge happened under the target's lease, taken and freed around it.
+    for (const id of [a, b]) {
+      const lease = world.store.events(id).filter((e) => e.payload["command"] === "merge_lease").map((e) => e.payload["action"]);
+      expect(lease.slice(-2), id).toEqual(["acquired", "released"]);
+    }
+    expect(world.store.mergeLease("example/ts-mini")).toBeNull();
+  });
+
+  it("publishes a re-verification a crash interrupted after it was committed, and runs it only once", async () => {
+    const id = newTask();
+    await live(id);
+    green(id);
+    advanceMain({ "NOTES.md": "notes\n" });
+    let dead = false;
+    const dying = new Proxy(world.store, {
+      get(target, key) {
+        if (key === "append") {
+          return (e: Parameters<EventStore["append"]>[0]) => {
+            if (dead || (e.type === "side_effect_intent" && e.payload["kind"] === "push" && String(e.payload["key"]).includes("/drift/"))) {
+              dead = true;
+              throw new Error("killed");
+            }
+            return target.append(e);
+          };
+        }
+        const v: unknown = Reflect.get(target, key);
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    await expect(runTask({ home: world.home, store: dying, validator, release, deps: deps(replayRunner(transcripts(id)), { appId: APP, runGates: counting() }), taskId: id })).rejects.toThrow("killed");
+    const committedHead = drift(id)["candidate_commit"];
+    expect(world.github.checks.filter((c) => c.name === VERDICT_CHECK)).toHaveLength(1);
+    // The next run pushes and posts what was committed, without merging the base in again.
+    expect(await live(id)).toBe("AUTO_APPROVED");
+    expect(remoteBranch(id)).toBe(committedHead);
+    expect(existsSync(join(runDir(world.home, id), "drift/2"))).toBe(false);
+    expect(gateLabels).toEqual(["gates", "gates-drift-1"]);
+    expect(world.github.checks.filter((c) => c.name === VERDICT_CHECK).map((c) => c.headSha)).toEqual([expect.any(String), committedHead]);
+    green(id);
+    expect(await live(id)).toBe("DONE");
   });
 });
 

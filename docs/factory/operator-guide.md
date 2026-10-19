@@ -179,6 +179,15 @@ Every run takes its task's lease first (P2-03), and everything it writes carries
 - **R0–R1 in Phase 2:** with the App, an approved R0–R1 task does not stop at the merge gate. It waits as `AUTO_APPROVED (gate: checks)` until `gates` and `policy-check` pass on the judged commit, then `factoryctl` squash-merges the PR at exactly that commit, and the task ends `DONE`.
   - `serve` polls it every 5 minutes; without `serve`, `factoryctl resume` checks once.
   - It goes to the human merge gate instead if a required check fails, the PR's head moves, or GitHub refuses the merge. The reason is in `factoryctl status`.
+  - **Merges are serialised and re-verified (P2-06).** `factoryctl` merges into a target one task at a time, under the target's merge lease, and only onto the base the candidate was verified on. If the default branch moved since then, it does not merge. Instead:
+    - it merges the new base into the task branch;
+    - it runs the gates and the policy again on the result;
+    - it pushes the result and posts a new `factory/verdict` on it, with the approver's decision carried over;
+    - it waits for `gates` and `policy-check` on the new head again.
+
+    The evidence is under `runs/T-0001/drift/<k>/`, and `manifest.json` then names the new base as `reviewed_base_commit`.
+  - Re-verification sends the task to the human merge gate instead when the base changed a file the PR changes, the merge conflicts, the gates fail on it, or the policy now puts the change above the approved tier. The reason starts with `base drift:`.
+  - A tier you merge yourself is not re-verified: check that its PR is up to date before you merge.
 
 - **Reject:** when you will not take a task's result, at either gate, end it:
 

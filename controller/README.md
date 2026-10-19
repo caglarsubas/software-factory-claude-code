@@ -39,6 +39,11 @@ A run goes checkout → triage → spec → rounds of build → gates → review
   - An effect first looks for itself and acts only when it finds nothing. It looks for the branch at the commit, a PR from the branch at the commit, a comment carrying the key as a marker, or a check run with the key as its `external_id`.
   - At the start of every run, each intent left without an outcome is looked up and recorded `found` or `absent`.
   - At the merge gate, `resume` reads the PR: merged ends the task `MERGED`, then `DONE`; closed without a merge fails it as `human_rejected` (cause `pr_closed`).
+- **Merges (P2-05b, P2-06):** an approved R0–R1 task waits as `AUTO_APPROVED` for the target's required checks. It then takes the target's merge lease (`merge_leases` in the store; `sched/lease.ts`), fetches the base and squash-merges at the judged commit (`MERGE_QUEUED`, the outbox's `merge`).
+  - The lease is held only from the base check to the merge, so merges into one target happen one at a time. A lease whose holder died is free.
+  - A base that moved since the candidate was verified is not merged onto. `reverify` merges it into the candidate, runs the gates and the policy on the result, and commits `drift/<k>/` (`drift.json`, `gates.json`, `policy.json`, `candidate.bundle`).
+  - A clean result at a tier no higher than the approved one is pushed, a new `factory/verdict` is posted on it (outbox keys `drift/<k>`), and the task waits for its checks.
+  - Otherwise, or when the base changed a file the PR changes, the task goes to the human merge gate.
 - **Processes (P1-02, `proc.ts`):** the run lock and every session process are named by pid and start time, so a reused pid is never mistaken for them.
   - Each session runs in its own process group (the SDK's `spawnClaudeCodeProcess`) and is registered in `procs/` while it lives.
   - A run that starts after one died kills the dead run's process groups and removes its gate containers.

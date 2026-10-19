@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, expect, it } from "vitest";
 import { sha256 } from "../fsutil.ts";
 import { ensureHome, factoryHome, runDir, type Home } from "../home.ts";
@@ -114,6 +115,31 @@ describe("the replica", () => {
       // Another home cannot write into this replica.
       const other = newHome();
       expect(() => initReplica(other, dir, "op")).toThrow(/is the replica of/);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("brings a replica made by an earlier release up to the store's schema before copying into it", () => {
+    const home = newHome();
+    const dir = join(scratch, `replica-${String(n)}`);
+    initReplica(home, dir, "op");
+    const store = EventStore.open(home.db);
+    try {
+      seedTask(home, store);
+      syncReplica(home);
+      // As an earlier release left it: no merge leases (P2-06), at the schema before them.
+      const old = new DatabaseSync(join(dir, "factory.db"));
+      old.exec("DROP TABLE merge_leases; UPDATE meta SET value = '2' WHERE key = 'schema_version'");
+      old.close();
+      expect(syncReplica(home)).toMatchObject({ events: 0 });
+      const replica = new DatabaseSync(join(dir, "factory.db"), { readOnly: true });
+      try {
+        expect(replica.prepare("SELECT name FROM sqlite_master WHERE name = 'merge_leases'").get()).toBeDefined();
+        expect(replica.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()).toEqual({ value: "3" });
+      } finally {
+        replica.close();
+      }
     } finally {
       store.close();
     }

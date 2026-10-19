@@ -10,7 +10,7 @@ import { ensureHome, factoryHome } from "../home.ts";
 import { isLive, startTime } from "../proc.ts";
 import { EventStore, LeaseHeldError, StaleEpochError } from "../store/events.ts";
 import { currentState, transition } from "../task/lifecycle.ts";
-import { holderId, leaseState, LEASE_TTL_MS, takeLease } from "./lease.ts";
+import { holderId, leaseState, LEASE_TTL_MS, takeLease, takeMergeLease } from "./lease.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "lease-"));
 afterAll(() => {
@@ -121,4 +121,38 @@ describe("taking a lease over", () => {
     expect(leaseState(store.lease("T-0003"), t)).toBe("free");
     expect((await takeLease(home, store, "T-0003", { now: () => t })).epoch).toBe(2);
   }, 60_000);
+});
+
+describe("the merge lease (P2-06)", () => {
+  it("lets one task at a time merge into a target, and frees it when its holder is gone", () => {
+    const store = EventStore.open(join(scratch, "merge.db"));
+    for (const id of ["T-0001", "T-0002", "T-0003"]) created(store, id);
+    const first = takeMergeLease(store, "o/r", "T-0001");
+    expect(first).toMatchObject({ target: "o/r", task_id: "T-0001", holder: holderId() });
+    // Another task waits while T-0001's holder lives; T-0001 itself may take it again.
+    expect(takeMergeLease(store, "o/r", "T-0002")).toBeNull();
+    expect(takeMergeLease(store, "o/r", "T-0001")).not.toBeNull();
+    // Another target is not held up.
+    expect(takeMergeLease(store, "o/other", "T-0002")).not.toBeNull();
+    if (first !== null) store.releaseMergeLease(first);
+    expect(store.mergeLease("o/r")).toBeNull();
+    expect(takeMergeLease(store, "o/r", "T-0002")).not.toBeNull();
+    // A holder that died frees the lease, and the next grant names whom it came from.
+    store.unsafeExec("UPDATE merge_leases SET holder = '999999@gone' WHERE target = 'o/r'");
+    expect(takeMergeLease(store, "o/r", "T-0003")).toMatchObject({ task_id: "T-0003" });
+    expect(store.events("T-0003").filter((e) => e.payload["command"] === "merge_lease").map((e) => e.payload)).toEqual([{ command: "merge_lease", action: "acquired", target: "o/r", holder: holderId(), from: "T-0002" }]);
+    // A release by a task that no longer holds it changes nothing.
+    store.releaseMergeLease({ target: "o/r", task_id: "T-0002", holder: holderId(), acquired_at: "" });
+    expect(store.mergeLease("o/r")?.task_id).toBe("T-0003");
+    store.close();
+  });
+
+  it("is refused to a writer whose task lease was taken over", () => {
+    const { a, b } = stores();
+    created(a, "T-0001");
+    a.acquireLease("T-0001", "1@a", LEASE_TTL_MS, () => false);
+    b.acquireLease("T-0001", "2@b", LEASE_TTL_MS, () => true);
+    expect(() => takeMergeLease(a, "o/r", "T-0001")).toThrow(StaleEpochError);
+    expect(a.mergeLease("o/r")).toBeNull();
+  });
 });

@@ -102,8 +102,9 @@ export function syncReplica(home: Home, now: Date = new Date(), cache: { objects
   const previous = readReplicaState(dir);
   if (previous !== null && previous.source !== home.root) throw new ReplicaError(`${dir} is the replica of ${previous.source}`);
   const dbPath = join(dir, "factory.db");
-  // The replica's schema is the store's own: open it once through the store, so its migrations run.
-  if (!existsSync(dbPath)) EventStore.open(dbPath).close();
+  // The replica's schema is the store's own: open it through the store, so its migrations run, a
+  // new release's included, before rows and the schema version are copied into it.
+  EventStore.open(dbPath).close();
   // Several writers may sync at once (a serve and its workers): the replica's write lock orders
   // them, and each copies only the rows after the replica's last one, read under that lock.
   const primary = new DatabaseSync(home.db, { readOnly: true });

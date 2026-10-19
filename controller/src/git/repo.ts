@@ -93,6 +93,17 @@ export function commitAll(dir: string, message: string): boolean {
   return true;
 }
 
+/**
+ * Merges `commit` into the clone's HEAD as a merge commit (P2-06: the moved base into the
+ * candidate); returns the new head, or null on a conflict, which is aborted and leaves HEAD as it was.
+ */
+export function mergeInto(dir: string, commit: string, message: string): string | null {
+  const r = spawnSync("git", [...NO_HOOKS, "-c", `user.name=${FACTORY_IDENTITY.name}`, "-c", `user.email=${FACTORY_IDENTITY.email}`, "merge", "--no-ff", "--no-verify", "--quiet", "-m", message, commit], { cwd: dir, encoding: "utf8", env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+  if (r.status === 0) return head(dir);
+  git(dir, ["merge", "--abort"], { allowFail: true });
+  return null;
+}
+
 /** Files changed between two commits, with renames resolved, for the policy engine. */
 export function changedFiles(dir: string, base: string, candidate: string): ChangedFile[] {
   const out = git(dir, ["diff", "--numstat", "-z", "-M", "--no-ext-diff", base, candidate]);

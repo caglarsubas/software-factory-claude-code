@@ -13,3 +13,14 @@ export function latestRound(dir: string): number {
   while (existsSync(join(dir, roundPath("build.json", n + 1)))) n++;
   return n;
 }
+
+// Re-verification on base drift (P2-06): each time the base moved before a merge, the base is
+// merged into the candidate and its gates and policy run again under drift/<k>/.
+export const driftPath = (name: string, k: number): string => `drift/${String(k)}/${name}`;
+
+/** The last re-verification that committed its drift.json; 0 when the base never moved. */
+export function latestDrift(dir: string): number {
+  let k = 0;
+  while (existsSync(join(dir, driftPath("drift.json", k + 1)))) k++;
+  return k;
+}

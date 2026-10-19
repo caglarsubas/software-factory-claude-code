@@ -19,7 +19,8 @@ const NEXT: Readonly<Partial<Record<State, readonly State[]>>> = {
   NEEDS_HUMAN: ["BUILDING", "MERGE_QUEUED", "MERGED"],
   // An auto-merge a required check, a moved head or GitHub refuses falls back to the human merge gate (P2-05b).
   AUTO_APPROVED: ["MERGE_QUEUED", "NEEDS_HUMAN"],
-  MERGE_QUEUED: ["MERGED", "NEEDS_HUMAN"],
+  // A base that moved before the merge was made sends it back to wait for checks on the re-verified head (P2-06).
+  MERGE_QUEUED: ["MERGED", "NEEDS_HUMAN", "AUTO_APPROVED"],
   MERGED: ["DEPLOYING", "DONE"],
   DEPLOYING: ["OBSERVING", "ROLLED_BACK"],
   OBSERVING: ["DONE", "ROLLED_BACK"],

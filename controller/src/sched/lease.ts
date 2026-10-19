@@ -9,7 +9,7 @@ import { removeTaskContainers } from "../../../gates/src/container.ts";
 import type { Home } from "../home.ts";
 import { isLive, reap, self, type ProcRef } from "../proc.ts";
 import { removeTaskRunnerContainers } from "../runner/container.ts";
-import { LeaseHeldError, StaleEpochError, type EventStore, type Lease } from "../store/events.ts";
+import { LeaseHeldError, StaleEpochError, type EventStore, type Lease, type MergeLease } from "../store/events.ts";
 
 /** Long enough to outlast a blocking git clone of a large target: a lease lapses only when its writer is hung or gone. */
 export const LEASE_TTL_MS = 300_000;
@@ -112,4 +112,16 @@ export function keepLease(store: EventStore, lease: Lease, lost: (e: StaleEpochE
     },
     current: () => held,
   };
+}
+
+/**
+ * Takes the target's merge lease for a task (P2-06), or returns null while another task's live
+ * holder has it. It is held only while the task checks the base and merges, so merges into one
+ * target happen one at a time; a holder that died frees it, and it never lapses under a live one.
+ */
+export function takeMergeLease(store: EventStore, target: string, taskId: string): MergeLease | null {
+  return store.acquireMergeLease(target, taskId, holderId(), (current) => {
+    const p = parseHolder(current.holder);
+    return p === null || !isLive(p);
+  });
 }
