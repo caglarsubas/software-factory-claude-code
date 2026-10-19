@@ -232,6 +232,45 @@ describe.concurrent("the kill-point suite (P1-02, G1-1)", { timeout: 120_000 }, 
     expect(danglingIntents(events(w))).toEqual([]);
   });
 
+  // Re-verification on base drift (P2-06): a kill anywhere in it leaves one re-verification, one push of its head, one verdict on it and one merge.
+  it.each(["drift-1:gates", "drift-1:staged", "drift-1:committed", "drift:push:intent", "drift:push:acted", "drift:check_run/verdict:intent", "drift:check_run/verdict:acted"])("SIGKILL at %s, then resume: the moved base is re-verified once (P2-06)", async (point) => {
+    const w = world(point, "clean");
+    writeFileSync(join(w.replay, "replay.json"), JSON.stringify({ gates: {} }));
+    expect((await factoryctl(w, ["run", TASK, "--replay", w.replay])).stdout.trim()).toContain("AUTO_APPROVED");
+    const green = (): string => {
+      const head = spawnSync("git", ["-C", w.remote, "rev-parse", BRANCH], { encoding: "utf8" }).stdout.trim();
+      for (const name of ["gates", "policy-check"]) gh.actionsRuns.push({ repo: w.repo, sha: head, name, status: "completed", conclusion: "success" });
+      return head;
+    };
+    const judged = green();
+    // Someone else's commit moves main.
+    const other = join(w.root, "other");
+    for (const args of [["clone", "-q", w.remote, other], ["-C", other, "-c", "user.email=op@example.invalid", "-c", "user.name=op", "commit", "-q", "--allow-empty", "-m", "elsewhere"], ["-C", other, "push", "-q", "origin", "HEAD:main"]]) {
+      const r = spawnSync("git", args, { encoding: "utf8" });
+      if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+    }
+    writeFileSync(join(w.replay, "replay.json"), JSON.stringify({ gates: {}, kill_at: point }));
+    const killed = await factoryctl(w, ["resume", TASK, "--replay", w.replay]);
+    expect(killed.signal, `${point} was never reached: ${killed.stdout}${killed.stderr}`).toBe("SIGKILL");
+    writeFileSync(join(w.replay, "replay.json"), JSON.stringify({ gates: {} }));
+    const resumed = await factoryctl(w, ["resume", TASK, "--replay", w.replay]);
+    expect(resumed.code, resumed.stderr).toBe(0);
+    expect(resumed.stdout.trim()).toBe(`${TASK} AUTO_APPROVED (gate: checks) https://github.com/${w.repo}/pull/1`);
+    const head = green();
+    expect(head).not.toBe(judged);
+    const done = await factoryctl(w, ["resume", TASK, "--replay", w.replay]);
+    expect(done.stdout.trim(), done.stderr).toBe(`${TASK} DONE`);
+    const all = events(w);
+    expect(all.filter((e) => e.type === "artifact_committed" && e.payload["stage"] === "drift").map((e) => e.payload["label"])).toEqual(["drift-1"]);
+    expect(existsSync(join(w.home, "runs", TASK, "drift/2"))).toBe(false);
+    expect(readFileSync(w.pushLog, "utf8").trim().split("\n").filter((l) => l.startsWith(`refs/heads/${BRANCH} `))).toEqual([`refs/heads/${BRANCH} ${judged}`, `refs/heads/${BRANCH} ${head}`]);
+    expect(gh.checks.filter((c) => c.repo === w.repo && c.name === VERDICT_CHECK).map((c) => c.headSha)).toEqual([judged, head]);
+    expect(gh.writes.filter((x) => x === `merge ${w.repo} 1`)).toHaveLength(1);
+    expect(all.find((e) => e.type === "side_effect_intent" && e.payload["kind"] === "merge")?.payload["sha"]).toBe(head);
+    expect(danglingIntents(all)).toEqual([]);
+    expect(walk(join(w.home, "runs", TASK)).filter((f) => f.endsWith(".pending") || /\.tmp-[0-9]+$/.test(f))).toEqual([]);
+  });
+
   it("treats a lock whose pid now names another process as stale: never signalled, replaced on the next run", async () => {
     const w = world("stale-lock", "clean");
     const home = factoryHome({ FACTORY_HOME: w.home });

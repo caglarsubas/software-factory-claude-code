@@ -19,20 +19,21 @@ import { activeMs, budgetTier, calibrate, completedRuns, meteredSpend, monthOf, 
 import { policyDigest, writeManifest } from "../bundle/manifest.ts";
 import { storeTree } from "../durable/objects.ts";
 import { writeAtomic } from "../fsutil.ts";
-import { changedFiles, commitAll, createTaskClone, diffPatch, fetchBundle, GitError, head, headBundle, mirrorPath, resetClone, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
+import { changedFiles, commitAll, createTaskClone, diffPatch, fetchBundle, GitError, head, headBundle, mergeInto, mirrorPath, resetClone, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
 import type { GitHub } from "../github/client.ts";
 import { writeTokenFile, type Gateway } from "../gateway/gateway.ts";
 import { createOutbox } from "../github/outbox.ts";
 import { describeHalt, readHalt } from "../halt.ts";
 import { runDir, worktreeDir, type Home } from "../home.ts";
-import { evaluate, type Decision, type DiffFacts, type RiskPolicy, type Tier } from "../policy/engine.ts";
+import { evaluate, TIERS, type ChangedFile, type Decision, type DiffFacts, type RiskPolicy, type Tier } from "../policy/engine.ts";
 import { loadRiskPolicy } from "../policy/load.ts";
 import type { BudgetTier, Release } from "../release.ts";
 import type { Validator } from "../schemas/validate.ts";
 import { prepareSession, type StageSpec } from "../session/options.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionRunner, StageOutcome } from "../session/runner.ts";
-import { StaleEpochError, type EventStore, type FactoryEvent, type State } from "../store/events.ts";
+import { takeMergeLease } from "../sched/lease.ts";
+import { StaleEpochError, type EventStore, type FactoryEvent, type MergeLease, type State } from "../store/events.ts";
 import { canMove, currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
 import { loadProfile, readTask, type Profile, type Task } from "../task/task.ts";
 import { buildCategory, sdkCategory, type Category } from "../task/taxonomy.ts";
@@ -44,7 +45,7 @@ import { renderVerdict, VERDICT_CHECK, verdictDigest, type Verdict } from "../go
 import { GITHUB_ACTIONS_APP_ID, REQUIRED_CHECKS } from "../governance/footprint.ts";
 import { selectReviewers, type Reviewer } from "./reviewers.ts";
 import { approvePrompt, buildPrompt, refutePrompt, reviewPrompt, specPrompt, summarizePrompt, triagePrompt, type TaskText } from "./prompts.ts";
-import { latestRound, roundLabel, roundPath } from "./rounds.ts";
+import { driftPath, latestDrift, latestRound, roundLabel, roundPath } from "./rounds.ts";
 
 export interface Deps {
   runner: SessionRunner;
@@ -105,6 +106,27 @@ interface Triage {
   uncertain: boolean;
   duplicate_of: string | null;
   summary: string;
+}
+
+/** One re-verification on base drift (P2-06), committed as drift/<k>/drift.json. */
+interface Drift {
+  schema_version: 1;
+  task_id: string;
+  drift: number;
+  /** The base the candidate was verified on before, and the one it is verified on now. */
+  reviewed_base_commit: string;
+  base_commit: string;
+  /** The verified candidate, and the base merged into it (null when it went to a human first). */
+  start_commit: string;
+  candidate_commit: string | null;
+  /** Files the base changed since the candidate was verified. */
+  base_changed: string[];
+  outcome: "reverified" | "needs_human";
+  reason: string;
+  tier_before: Tier;
+  tier_after: Tier | null;
+  /** The approver's decision on the candidate, carried over to the merge without a new review. */
+  carried_over: { decision: string; from_commit: string } | null;
 }
 
 interface Spec {
@@ -288,8 +310,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     if (isTerminal(state())) endReason = state().toLowerCase();
     try {
       emit("command", { command: "run_ended", at: now().toISOString(), reason: endReason });
-      const last = latestRound(dir);
-      if (has(roundPath("build.json", last))) writeManifest({ dir, taskId, store, validator, release, risk, build: roundPath("build.json", last) });
+      if (has(roundPath("build.json", latestRound(dir)))) writeManifest({ dir, taskId, store, validator, release, risk, build: judged().file });
       // The run's evidence, versioned in the object store (P2-07): its transcripts, manifest and committed files, as of this run's end.
       const stored = storeTree(home.objects, dir);
       emit("command", { command: "evidence_stored", tree: stored.tree, files: stored.files });
@@ -412,6 +433,19 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   // --- checkout: the bare mirror and the task's own clone -------------------------------
   const checkoutInfo = (): Checkout => readJson("checkout.json") as Checkout;
   const candidate = (n: number): string => (readJson(roundPath("build.json", n)) as { candidate_commit: string }).candidate_commit;
+  /**
+   * What the PR's head should be and the base it was verified on: the latest re-verification on
+   * base drift (P2-06), or else the last round's candidate on the checkout's base. `file` holds
+   * both (the manifest reads it); `bundle` holds the commits a restore rebuilds the clone from.
+   */
+  const judged = (): { file: string; bundle: string; base: string; head: string } => {
+    for (let k = latestDrift(dir); k > 0; k--) {
+      const d = readJson(driftPath("drift.json", k)) as Drift;
+      if (d.outcome === "reverified" && d.candidate_commit !== null) return { file: driftPath("drift.json", k), bundle: driftPath("candidate.bundle", k), base: d.base_commit, head: d.candidate_commit };
+    }
+    const n = latestRound(dir);
+    return { file: roundPath("build.json", n), bundle: roundPath("candidate.bundle", n), base: checkoutInfo().base_commit, head: candidate(n) };
+  };
 
   const checkout = (): Promise<Output[]> => {
     const mirror = syncMirror(home.mirrors, task.target.repo, remote, deps.auth);
@@ -428,7 +462,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     const mirror = syncMirror(home.mirrors, task.target.repo, c.remote, deps.auth);
     rmSync(worktree, { recursive: true, force: true });
     createTaskClone(mirror, worktree, c.branch, c.base_commit);
-    const bundle = roundPath("candidate.bundle", latestRound(dir));
+    const bundle = has(roundPath("build.json", latestRound(dir))) ? judged().bundle : roundPath("candidate.bundle", 1);
     const fetched = committed(bundle) ? fetchBundle(worktree, join(dir, bundle)) : null;
     deps.log(`${taskId}: rebuilt its clone from ${task.target.repo}${fetched === null ? "" : ` and its candidate ${fetched.slice(0, 12)}`}`);
   };
@@ -764,7 +798,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     // The verdict on the candidate (P2-05), as the App: policy-check on the target trusts nothing else.
     let check: { verdict: Verdict; digest: string; url: string } | null = null;
     if (deps.github !== null && pr !== null && deps.appId !== undefined && deps.appId !== null) {
-      const v = verdictOf(n, c.base_commit, decision);
+      const v = verdictOf(cand, c.base_commit, decision);
       const rendered = renderVerdict(v);
       const ref = await outbox.checkRun({ ...where, name: "verdict" }, {
         repo: task.target.repo, name: VERDICT_CHECK, headSha: cand, conclusion: decision.tier === "Restricted" ? "failure" : "success", ...rendered,
@@ -778,7 +812,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   };
 
   /** The verdict policy-check verifies: what was judged, the decision, and the digest of every artifact it rests on. */
-  const verdictOf = (n: number, base: string, decision: Decision): Verdict => {
+  const verdictOf = (headSha: string, base: string, decision: Decision): Verdict => {
     const latest = new Map<string, string>();
     for (const e of store.events(taskId)) {
       if (e.type !== "artifact_committed") continue;
@@ -786,7 +820,7 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     }
     const approver = readJson("verdict.json") as { decision: string };
     return {
-      schema_version: 1, task_id: taskId, repo: task.target.repo, head_sha: candidate(n), base_commit: base, tier: decision.tier,
+      schema_version: 1, task_id: taskId, repo: task.target.repo, head_sha: headSha, base_commit: base, tier: decision.tier,
       decision: approver.decision === "approve" ? "approve" : "needs_human", reviews: decision.reviews, spec_digest: specDigest(dir),
       artifacts: [...latest].sort(([a], [b]) => a.localeCompare(b)).map(([path, digest]) => ({ path, digest })),
       factory: { version: release.info?.tag ?? `v${release.version}-dev`, ...(release.info === null ? {} : { commit: release.info.sha }), policy: policyDigest(risk) },
@@ -839,6 +873,10 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
    * policy-check, from GitHub Actions) pass on the candidate, factoryctl squash-merges the PR at that
    * exact commit through the outbox. A failed check, a head that moved, or a PR GitHub will not
    * merge goes to the human merge gate; checks still running leave it waiting.
+   *
+   * Merges into a target are serialised (P2-06): the task takes the target's merge lease, fetches
+   * the base, and merges only if the base is still the one its candidate was verified on. A base
+   * that moved is re-verified first (reverify), and the task waits for its checks again.
    */
   async function autoMerge(): Promise<State> {
     if (deps.github === null) return state();
@@ -846,12 +884,18 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
     const p = readJson("publish.json") as { pr_number: number; pr_url: string };
     const decision = readJson("policy.json") as Decision;
     const repo = task.target.repo;
-    const cand = candidate(latestRound(dir));
     const toHuman = (reason: string): State => {
       transition(store, taskId, "NEEDS_HUMAN", { gate: "merge", tier: decision.tier, pr_url: p.pr_url, reason });
       deps.log(`${taskId}: ${reason}; it waits at the merge gate`);
       return state();
     };
+    // A re-verification committed before an interruption is published before anything relies on it.
+    const last = latestDrift(dir);
+    if (last > 0 && (readJson(driftPath("drift.json", last)) as Drift).outcome === "reverified" && !driftPublished(last)) {
+      const refused = await publishDrift(last);
+      if (refused !== null) return toHuman(refused);
+    }
+    const { base, head: cand } = judged();
     const merged = (headCommit: string, mergeCommit: string | null): State => {
       if (state() === "AUTO_APPROVED") transition(store, taskId, "MERGE_QUEUED", { pr_number: p.pr_number, sha: cand });
       transition(store, taskId, "MERGED", { pr_number: p.pr_number, pr_url: p.pr_url, head_commit: headCommit, ...(mergeCommit === null ? {} : { merge_commit: mergeCommit }) });
@@ -878,16 +922,131 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
         deps.log(`${taskId}: waiting for ${waiting.join(", ")} on ${cand.slice(0, 12)}`);
         return state();
       }
-      transition(store, taskId, "MERGE_QUEUED", { pr_number: p.pr_number, sha: cand });
+    }
+    const lease = takeMergeLease(store, repo, taskId);
+    if (lease === null) {
+      deps.log(`${taskId}: waiting for ${store.mergeLease(repo)?.task_id ?? "another task"} to finish merging into ${repo}`);
+      return state();
     }
     try {
-      const m = await outbox.merge({ stage: "merge", round: 1 }, { repo, number: p.pr_number, sha: cand });
-      return merged(cand, m.sha);
+      const c = checkoutInfo();
+      const baseNow = resolveCommit(syncMirror(home.mirrors, repo, c.remote, deps.auth), `refs/heads/${c.base_branch}`);
+      if (baseNow !== base) {
+        if (state() === "MERGE_QUEUED") transition(store, taskId, "AUTO_APPROVED", { gate: "checks", tier: decision.tier, pr_url: p.pr_url, reason: "the base moved before the merge" });
+        deps.log(`${taskId}: ${c.base_branch} moved from ${base.slice(0, 12)} to ${baseNow.slice(0, 12)} since ${cand.slice(0, 12)} was verified; re-verifying`);
+        const reason = await reverify(base, cand, baseNow);
+        if (reason !== null) return toHuman(reason);
+        deps.log(`${taskId}: re-verified on ${baseNow.slice(0, 12)} as ${judged().head.slice(0, 12)}; waiting for its required checks`);
+        return state();
+      }
+      if (state() === "AUTO_APPROVED") transition(store, taskId, "MERGE_QUEUED", { pr_number: p.pr_number, sha: cand });
+      try {
+        const m = await outbox.merge({ stage: "merge", round: 1 }, { repo, number: p.pr_number, sha: cand });
+        return merged(cand, m.sha);
+      } catch (e) {
+        // 405: GitHub will not merge it (a rule or check says no); 409: the head moved.
+        if (/HTTP (405|409)/.test(e instanceof Error ? e.message : String(e))) return toHuman(`GitHub refused the merge: ${e instanceof Error ? e.message : String(e)}`);
+        throw e;
+      }
+    } finally {
+      freeMergeLease(lease);
+    }
+  }
+
+  const freeMergeLease = (lease: MergeLease): void => {
+    try {
+      store.releaseMergeLease(lease);
     } catch (e) {
-      // 405: GitHub will not merge it (a rule or check says no); 409: the head moved.
-      if (/HTTP (405|409)/.test(e instanceof Error ? e.message : String(e))) return toHuman(`GitHub refused the merge: ${e instanceof Error ? e.message : String(e)}`);
+      // Taken over meanwhile: this process is being stopped, and a lease whose holder is gone is free.
+      if (!(e instanceof StaleEpochError)) throw e;
+    }
+  };
+
+  const driftPublished = (k: number): boolean =>
+    store.events(taskId).some((e) => e.type === "side_effect_done" && e.payload["key"] === `${taskId}/drift/${String(k)}/check_run/verdict` && (e.payload["outcome"] === "done" || e.payload["outcome"] === "found"));
+
+  /**
+   * Re-verification on base drift (P2-06). The candidate was verified on `prevBase`; the base is
+   * now `baseNow`. If the base changed none of the PR's files, it is merged into the candidate and
+   * the gates and the policy run again on the result. A clean result with a tier no higher than
+   * the approved one carries the approver's decision over: the new head is pushed and a new
+   * factory/verdict posted on it, without another review. Anything else goes to a human. Every
+   * outcome is committed as drift/<k>/. Returns null when re-verified, else why it needs a human.
+   */
+  async function reverify(prevBase: string, start: string, baseNow: string): Promise<string | null> {
+    const k = latestDrift(dir) + 1;
+    const label = `drift-${String(k)}`;
+    const decision = readJson("policy.json") as Decision;
+    const approver = readJson("verdict.json") as { decision: string };
+    const c = checkoutInfo();
+    resetClone(worktree, start);
+    const paths = (files: ChangedFile[]): string[] => files.flatMap((f) => (f.previousPath === undefined ? [f.path] : [f.path, f.previousPath]));
+    const onBase = [...new Set(paths(changedFiles(worktree, prevBase, baseNow)))].sort();
+    const ours = new Set(paths(changedFiles(worktree, prevBase, start)));
+    const record = (d: Pick<Drift, "candidate_commit" | "outcome" | "reason" | "tier_after">, more: Output[] = []): Drift => {
+      const drift: Drift = {
+        schema_version: 1, task_id: taskId, drift: k, reviewed_base_commit: prevBase, base_commit: baseNow, start_commit: start, base_changed: onBase, tier_before: decision.tier,
+        carried_over: d.outcome === "reverified" ? { decision: approver.decision, from_commit: start } : null, ...d,
+      };
+      commitArtifacts(store, dir, { taskId, stage: "drift", label, round: k }, inputsOf(dir, [judged().file, "policy.json", "verdict.json"]), [out(driftPath("drift.json", k), drift, null), ...more], probe, home.objects);
+      return drift;
+    };
+    const human = (reason: string, more: Output[] = [], after: Tier | null = null): string => {
+      record({ candidate_commit: null, outcome: "needs_human", reason, tier_after: after }, more);
+      return `base drift: ${reason}`;
+    };
+
+    const overlap = onBase.filter((f) => ours.has(f));
+    if (overlap.length > 0) return human(`the base changed ${overlap.join(", ")}, which the PR changes too`);
+    const mergedHead = mergeInto(worktree, baseNow, `factory: merge ${c.base_branch} at ${baseNow.slice(0, 12)} into ${c.branch} for re-verification (${taskId})`);
+    if (mergedHead === null) return human(`merging ${c.base_branch} at ${baseNow.slice(0, 12)} into the candidate conflicts`);
+
+    // The gates and the policy again, on the merge, against the new base.
+    probe(`${label}:gates`);
+    const g = await deps.runGates({
+      worktree, base: baseNow, taskId, profile, image: deps.gateImage(), cacheVolume: cacheVolumeFor(task.target.repo), osvVolume: "sf-gates-osv",
+      ...(deps.gatesFetchNetwork === undefined ? {} : { fetchNetwork: deps.gatesFetchNetwork }),
+      ...(deps.gatesCaFile === undefined ? {} : { caFile: deps.gatesCaFile }),
+      log: (l) => {
+        deps.log(`${taskId}: ${label} gates: ${l}`);
+      },
+    }, `gates-${label}`);
+    const gatesOut = out(driftPath("gates.json", k), g, "gates.schema.json");
+    if (!g.passed) return human(`the gates did not pass on the merge with the new base: ${g.gates.filter((x) => x.status !== "pass").map((x) => x.name).join(", ")}`, [gatesOut]);
+    const t = readJson("triage.json") as Triage;
+    const sp = parse(readFileSync(join(dir, "spec.yaml"), "utf8")) as Spec;
+    const after = evaluate({
+      files: changedFiles(worktree, baseNow, mergedHead), sinksAdded: g.signals.sink_added, secretMaterial: g.signals.secret_material,
+      classificationUncertain: t.uncertain, operationRequested: sp.operation_requested === true, graphHopsToProtected: null, proposedTier: t.proposed_tier,
+    }, risk);
+    const policyOut = out(driftPath("policy.json", k), after, null);
+    if (TIERS.indexOf(after.tier) > TIERS.indexOf(decision.tier)) return human(`the policy now puts the change at ${after.tier}, above the approved ${decision.tier}`, [gatesOut, policyOut], after.tier);
+
+    record({ candidate_commit: mergedHead, outcome: "reverified", reason: `the gates and the policy pass on ${baseNow.slice(0, 12)}; the approver's ${approver.decision} carries over`, tier_after: after.tier }, [
+      gatesOut, policyOut, { path: driftPath("candidate.bundle", k), content: headBundle(worktree, baseNow) },
+    ]);
+    return publishDrift(k);
+  }
+
+  /** Pushes a re-verified head and posts its factory/verdict, through the outbox; returns why a human is needed instead, or null. */
+  async function publishDrift(k: number): Promise<string | null> {
+    const d = readJson(driftPath("drift.json", k)) as Drift;
+    const head = d.candidate_commit ?? "";
+    const c = checkoutInfo();
+    const where = { stage: "drift", round: k };
+    resetClone(worktree, head);
+    try {
+      const pushed = await outbox.push(where, { remote: c.remote, mirror: mirrorPath(home.mirrors, task.target.repo), clone: worktree, branch: c.branch, commit: head });
+      if (pushed !== head) return `base drift: the remote's ${c.branch} holds ${pushed.slice(0, 12)}, not the re-verified ${head.slice(0, 12)}`;
+    } catch (e) {
+      if (e instanceof GitError && /\[rejected\]|non-fast-forward|fetch first/.test(e.message)) return `base drift: the remote's ${c.branch} has commits the re-verified head lacks`;
       throw e;
     }
+    // The tier stays the approved one: the re-verification never lowers it.
+    const v = verdictOf(head, d.base_commit, readJson("policy.json") as Decision);
+    await outbox.checkRun({ ...where, name: "verdict" }, { repo: task.target.repo, name: VERDICT_CHECK, headSha: head, conclusion: "success", ...renderVerdict(v) });
+    writeManifest({ dir, taskId, store, validator, release, risk, build: driftPath("drift.json", k) });
+    return null;
   }
 
   // --- the run loop ----------------------------------------------------------------------
@@ -920,7 +1079,10 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
   if (isTerminal(initial)) return initial;
   if (initial === "NEEDS_HUMAN" && currentStatePayload(store.events(taskId))["gate"] === "merge") return mergeGate();
   if (initial === "AUTO_APPROVED" || initial === "MERGE_QUEUED") {
-    // A merge a killed run attempted is looked up first, as every run does with its dangling intents.
+    // A merge a killed run attempted is looked up first, as every run does with its dangling intents,
+    // and a re-verification's files a crash left staged are finished or removed (P2-06).
+    recover(dir, store.events(taskId));
+    if (!existsSync(join(worktree, ".git"))) rehydrate();
     for (const r of await outbox.reconcile()) deps.log(`${taskId}: reconciled ${r.key} (attempt ${String(r.attempt)}): ${r.outcome === "found" ? "it happened before the interruption" : "it never happened"}`);
     return autoMerge();
   }

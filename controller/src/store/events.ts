@@ -49,6 +49,14 @@ export interface Lease {
   expires_at: number;
 }
 
+/** A target's merge lease (P2-06): the one task that may check its base and merge into it now. */
+export interface MergeLease {
+  target: string;
+  task_id: string;
+  holder: string;
+  acquired_at: string;
+}
+
 /** Forward-only migrations: each runs once, in order, inside a transaction. */
 const MIGRATIONS: readonly string[] = [
   `CREATE TABLE events (
@@ -66,6 +74,13 @@ const MIGRATIONS: readonly string[] = [
      holder TEXT NOT NULL,
      epoch INTEGER NOT NULL CHECK (epoch > 0),
      expires_at INTEGER NOT NULL
+   );`,
+  // Transient: a lease whose holder is gone is free, so the replica does not copy them.
+  `CREATE TABLE merge_leases (
+     target TEXT PRIMARY KEY,
+     task_id TEXT NOT NULL,
+     holder TEXT NOT NULL,
+     acquired_at TEXT NOT NULL
    );`,
 ];
 
@@ -202,6 +217,35 @@ export class EventStore {
   releaseLease(lease: Lease): void {
     this.#tx(() => {
       this.#db.prepare("UPDATE leases SET expires_at = 0 WHERE task_id = ? AND holder = ? AND epoch = ?").run(lease.task_id, lease.holder, lease.epoch);
+    });
+  }
+
+  mergeLease(target: string): MergeLease | null {
+    const row = this.#db.prepare("SELECT target, task_id, holder, acquired_at FROM merge_leases WHERE target = ?").get(target) as MergeLease | undefined;
+    return row === undefined ? null : { target: row.target, task_id: row.task_id, holder: row.holder, acquired_at: row.acquired_at };
+  }
+
+  /**
+   * Grants `taskId` the target's merge lease (P2-06), or returns null while another task's holder
+   * may still act on it (`mayTake` decides: its holder is gone). The grant is on the task's record,
+   * at the task's epoch, so a writer whose task lease was taken over cannot take it.
+   */
+  acquireMergeLease(target: string, taskId: string, holder: string, mayTake: (current: MergeLease) => boolean): MergeLease | null {
+    return this.#tx(() => {
+      const current = this.mergeLease(target);
+      if (current !== null && current.task_id !== taskId && !mayTake(current)) return null;
+      const lease: MergeLease = { target, task_id: taskId, holder, acquired_at: this.#now().toISOString() };
+      this.#db.prepare("INSERT INTO merge_leases (target, task_id, holder, acquired_at) VALUES (?, ?, ?, ?) ON CONFLICT (target) DO UPDATE SET task_id = excluded.task_id, holder = excluded.holder, acquired_at = excluded.acquired_at").run(target, taskId, holder, lease.acquired_at);
+      this.#insert({ task_id: taskId, actor: { kind: "factoryctl", id: "factoryctl" }, type: "command", payload: { command: "merge_lease", action: "acquired", target, holder, ...(current === null || current.task_id === taskId ? {} : { from: current.task_id }) } });
+      return lease;
+    });
+  }
+
+  /** Frees the target's merge lease if `taskId` still holds it. */
+  releaseMergeLease(lease: MergeLease): void {
+    this.#tx(() => {
+      const r = this.#db.prepare("DELETE FROM merge_leases WHERE target = ? AND task_id = ? AND holder = ?").run(lease.target, lease.task_id, lease.holder);
+      if (Number(r.changes) > 0) this.#insert({ task_id: lease.task_id, actor: { kind: "factoryctl", id: "factoryctl" }, type: "command", payload: { command: "merge_lease", action: "released", target: lease.target } });
     });
   }
 
