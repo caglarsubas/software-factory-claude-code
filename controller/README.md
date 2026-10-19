@@ -39,6 +39,10 @@ A run goes checkout → triage → spec → rounds of build → gates → review
   - An effect first looks for itself and acts only when it finds nothing. It looks for the branch at the commit, a PR from the branch at the commit, a comment carrying the key as a marker, or a check run with the key as its `external_id`.
   - At the start of every run, each intent left without an outcome is looked up and recorded `found` or `absent`.
   - At the merge gate, `resume` reads the PR: merged ends the task `MERGED`, then `DONE`; closed without a merge fails it as `human_rejected` (cause `pr_closed`).
+- **Intake (P2-04, `intake/`):** `factoryctl intake PROFILE...` reads each target's open issues that carry the profile's intake label, in one GraphQL query: their text, the last edit of the body, and the label and title events.
+  - An issue whose label was last applied by a listed maintainer, and that was not edited since, becomes a task (`source.kind: github_issue`, untrusted text, the label event in `task_created`).
+  - A label from anyone else is ignored. An edit after the label holds the issue until it is labelled again. A re-label while the earlier task is live waits for that task to end.
+  - `intake/mirror.ts` keeps one status comment per admitted issue. Intake makes it, and the end of every run edits it through the outbox's `comment_edit` effect, only when the state changed.
 - **Merges (P2-05b, P2-06):** an approved R0–R1 task waits as `AUTO_APPROVED` for the target's required checks. It then takes the target's merge lease (`merge_leases` in the store; `sched/lease.ts`), fetches the base and squash-merges at the judged commit (`MERGE_QUEUED`, the outbox's `merge`).
   - The lease is held only from the base check to the merge, so merges into one target happen one at a time. A lease whose holder died is free.
   - A base that moved since the candidate was verified is not merged onto. `reverify` merges it into the candidate, runs the gates and the policy on the result, and commits `drift/<k>/` (`drift.json`, `gates.json`, `policy.json`, `candidate.bundle`).

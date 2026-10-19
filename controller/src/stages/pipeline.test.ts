@@ -1027,6 +1027,28 @@ describe("re-verification on base drift and serialised merges (P2-06)", () => {
   });
 });
 
+describe("the issue status mirror (P2-04)", () => {
+  it("brings an admitted issue's one status comment up to date at the end of every run", async () => {
+    const id = createTask(world.home, world.store, validator, {
+      profilePath: world.profilePath, title: "Add isEmpty", body: "Add an isEmpty helper for carts, with a test.", trust: "untrusted", admittedBy: "maintainer", remote: world.remote,
+      issue: { repo: "example/ts-mini", number: 12, url: "https://github.com/example/ts-mini/issues/12", labeled_by: "maintainer", labeled_at: "2026-10-19T08:00:00Z" },
+    }).id;
+    expect(await run(id, deps(replayRunner(transcripts(id))))).toBe("NEEDS_HUMAN");
+    const comments = world.github.issueComments.filter((c) => c.issue === 12);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]?.body).toContain("State: `NEEDS_HUMAN` (gate: merge)");
+    expect(comments[0]?.body).toContain("Pull request: https://github.com/example/ts-mini/pull/1");
+    // Nothing changed since: the next run leaves the comment as it is.
+    const writes = world.github.writes.length;
+    expect(await run(id, deps(replayRunner(transcripts(id))))).toBe("NEEDS_HUMAN");
+    expect(world.github.writes).toHaveLength(writes);
+    // A task created by hand has no issue, and no comment anywhere.
+    const manual = newTask();
+    await run(manual, deps(replayRunner(transcripts(manual))));
+    expect(world.github.issueComments).toHaveLength(1);
+  });
+});
+
 describe("attach, pause and takeover (P1-04)", () => {
   it("sends a takeover's commits back through the gates and every review, to the same PR", async () => {
     const id = newTask();

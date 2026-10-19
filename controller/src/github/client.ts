@@ -44,6 +44,26 @@ export interface CheckRunRef {
   url: string;
 }
 
+/** What GitHub records about an issue's intake label and edits (P2-04), oldest first. */
+export interface IssueEvent {
+  kind: "labeled" | "unlabeled" | "renamed";
+  /** The label's name, for labeled and unlabeled. */
+  label: string | null;
+  actor: string | null;
+  at: string;
+}
+
+/** An open issue carrying the intake label, as intake reads it (P2-04). */
+export interface IntakeIssue {
+  number: number;
+  url: string;
+  title: string;
+  body: string;
+  /** When the body was last edited, or null if never. */
+  lastEditedAt: string | null;
+  events: IssueEvent[];
+}
+
 export interface GitHub {
   /** The PRs from `head` in the repository's own owner, open or closed. */
   pullRequests(repo: string, head: string): Promise<PullRequest[]>;
@@ -58,6 +78,10 @@ export interface GitHub {
   checkRunsOn(repo: string, sha: string): Promise<CheckState[]>;
   /** Squash-merges the PR only if its head is still `sha` (P2-05b); GitHub refuses otherwise. */
   mergePullRequest(repo: string, number: number, sha: string): Promise<MergeResult>;
+  /** Open issues (never PRs) carrying `label`, with their label and title events (P2-04). */
+  intakeIssues(repo: string, label: string): Promise<IntakeIssue[]>;
+  comment(repo: string, id: number): Promise<IssueComment>;
+  updateComment(repo: string, id: number, body: string): Promise<IssueComment>;
 }
 
 export interface CheckState {
@@ -134,6 +158,38 @@ const pull = (p: RestPull): PullRequest => ({ number: p.number, url: p.html_url,
 
 const PAGES = 10;
 
+// One GraphQL query per poll: REST has no time for an issue body's last edit, which intake needs
+// to hold an edit made after the label (P2-04).
+const INTAKE_QUERY = `query($owner: String!, $name: String!, $label: String!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    issues(labels: [$label], states: OPEN, first: 50, after: $after, orderBy: {field: CREATED_AT, direction: ASC}) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number url title body lastEditedAt
+        timelineItems(last: 100, itemTypes: [LABELED_EVENT, UNLABELED_EVENT, RENAMED_TITLE_EVENT]) {
+          nodes {
+            __typename
+            ... on LabeledEvent { createdAt actor { login } label { name } }
+            ... on UnlabeledEvent { createdAt actor { login } label { name } }
+            ... on RenamedTitleEvent { createdAt actor { login } }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+interface GraphIssue {
+  number: number;
+  url: string;
+  title: string;
+  body: string;
+  lastEditedAt: string | null;
+  timelineItems: { nodes: { __typename: string; createdAt: string; actor: { login: string } | null; label?: { name: string } }[] };
+}
+
+const KINDS: Record<string, IssueEvent["kind"]> = { LabeledEvent: "labeled", UnlabeledEvent: "unlabeled", RenamedTitleEvent: "renamed" };
+
 export function restGitHub(token: TokenSource, api = "https://api.github.com", fetchFn: typeof fetch = fetch): GitHub {
   const call = caller(token, api, fetchFn);
   return {
@@ -182,6 +238,38 @@ export function restGitHub(token: TokenSource, api = "https://api.github.com", f
     async mergePullRequest(repo, number, sha) {
       const r = (await call("PUT", `/repos/${repo}/pulls/${String(number)}/merge`, { sha, merge_method: "squash" })) as { merged: boolean; sha: string };
       return { merged: r.merged, sha: r.sha };
+    },
+    async intakeIssues(repo, label) {
+      const [owner = "", name = ""] = repo.split("/");
+      const all: IntakeIssue[] = [];
+      let after: string | null = null;
+      for (let page = 0; page < PAGES; page++) {
+        const r = (await call("POST", "/graphql", { query: INTAKE_QUERY, variables: { owner, name, label, after } })) as {
+          data?: { repository: { issues: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: GraphIssue[] } } | null };
+          errors?: { message: string }[];
+        };
+        if (r.errors !== undefined && r.errors.length > 0) throw new GitHubError(`POST /graphql: ${r.errors.map((e) => e.message).join("; ")}`);
+        const issues = r.data?.repository?.issues;
+        if (issues === undefined) throw new GitHubError(`POST /graphql: no repository ${repo}`);
+        for (const i of issues.nodes) {
+          const events = i.timelineItems.nodes.flatMap((e): IssueEvent[] => {
+            const kind = KINDS[e.__typename];
+            return kind === undefined ? [] : [{ kind, label: e.label?.name ?? null, actor: e.actor?.login ?? null, at: e.createdAt }];
+          });
+          all.push({ number: i.number, url: i.url, title: i.title, body: i.body, lastEditedAt: i.lastEditedAt, events });
+        }
+        if (!issues.pageInfo.hasNextPage) break;
+        after = issues.pageInfo.endCursor;
+      }
+      return all;
+    },
+    async comment(repo, id) {
+      const c = (await call("GET", `/repos/${repo}/issues/comments/${String(id)}`)) as { id: number; html_url: string; body: string };
+      return { id: c.id, url: c.html_url, body: c.body };
+    },
+    async updateComment(repo, id, body) {
+      const c = (await call("PATCH", `/repos/${repo}/issues/comments/${String(id)}`, { body })) as { id: number; html_url: string; body: string };
+      return { id: c.id, url: c.html_url, body: c.body };
     },
     async createCheckRun(i) {
       const r = (await call("POST", `/repos/${i.repo}/check-runs`, {

@@ -74,10 +74,11 @@ describe("the factory App", () => {
   });
 
   it("names every permission the App holds beyond or short of what it needs", async () => {
-    expect(permissionDiff({ checks: "write", contents: "write", metadata: "read", pull_requests: "write" })).toEqual([]);
+    expect(permissionDiff({ checks: "write", contents: "write", issues: "write", metadata: "read", pull_requests: "write" })).toEqual([]);
     expect(permissionDiff({ checks: "read", contents: "write", metadata: "read", pull_requests: "write", workflows: "write", administration: "read" })).toEqual([
       "administration is read, expected not granted",
       "checks is read, expected write",
+      "issues is not granted, expected write",
       "workflows is write, expected not granted",
     ]);
     const fetchFn = (async () => Promise.resolve(new Response(JSON.stringify({ id: 4242, slug: "software-factory-x", permissions: { checks: "write" } }), { status: 200 }))) as typeof fetch;

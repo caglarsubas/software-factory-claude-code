@@ -148,7 +148,7 @@ function sources(dir: string): string[] {
 
 describe("conformance: every effect goes through the outbox", () => {
   it("leaves no push or GitHub write outside the outbox", () => {
-    const effectCall = /\b(pushFromMirror|createPullRequest|createComment|createCheckRun)\s*\(/;
+    const effectCall = /\b(pushFromMirror|createPullRequest|createComment|updateComment|createCheckRun|mergePullRequest)\s*\(/;
     const allowed = new Set(["controller/src/github/outbox.ts", "controller/src/github/client.ts", "controller/src/github/testing.ts", "controller/src/git/repo.ts"]);
     const offenders = sources(join(REPO_ROOT, "controller/src"))
       .map((f) => relative(REPO_ROOT, f))

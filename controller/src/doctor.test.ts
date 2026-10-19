@@ -75,7 +75,7 @@ describe("doctor's drift checks", () => {
     const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
     const keyFile = join(scratch, "app.pem");
     writeFileSync(keyFile, keys.privateKey.export({ type: "pkcs1", format: "pem" }), { mode: 0o600 });
-    const app: StubApp = { id: 4242, installationId: 77, publicKey: keys.publicKey, permissions: { checks: "write", contents: "write", metadata: "read", pull_requests: "write" }, minted: [], calls: [] };
+    const app: StubApp = { id: 4242, installationId: 77, publicKey: keys.publicKey, permissions: { checks: "write", contents: "write", issues: "write", metadata: "read", pull_requests: "write" }, minted: [], calls: [] };
     const api = await serveGitHub(memoryGitHub(), app);
     try {
       const env = { FACTORY_GITHUB_APP_ID: "4242", FACTORY_GITHUB_APP_INSTALLATION_ID: "77", FACTORY_GITHUB_APP_KEY_FILE: keyFile };

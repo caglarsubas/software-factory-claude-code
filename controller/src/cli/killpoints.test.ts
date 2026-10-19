@@ -37,7 +37,7 @@ const gh: MemoryGitHub = memoryGitHub((repo, branch) => spawnSync("git", ["-C", 
 const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const appKey = join(scratch, "github-app.pem");
 writeFileSync(appKey, keys.privateKey.export({ type: "pkcs1", format: "pem" }), { mode: 0o600 });
-const app: StubApp = { id: 4242, installationId: 77, publicKey: keys.publicKey, permissions: { checks: "write", contents: "write", metadata: "read", pull_requests: "write" }, minted: [], calls: [] };
+const app: StubApp = { id: 4242, installationId: 77, publicKey: keys.publicKey, permissions: { checks: "write", contents: "write", issues: "write", metadata: "read", pull_requests: "write" }, minted: [], calls: [] };
 let api = { url: "", close: () => Promise.resolve() };
 beforeAll(async () => {
   api = await serveGitHub(gh, app);

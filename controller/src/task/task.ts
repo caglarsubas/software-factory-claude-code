@@ -21,6 +21,17 @@ export interface Profile {
   spec_dir: string;
   /** The target's monthly cap (P1-01, D3). */
   budgets: { monthly_usd: number };
+  /** GitHub intake (P2-04): who may admit an issue by labelling it. */
+  intake?: { label: string; maintainers: string[] };
+}
+
+/** An issue admitted by its label (P2-04): where it came from and the label event that admitted it. */
+export interface IssueSource {
+  repo: string;
+  number: number;
+  url: string;
+  labeled_by: string;
+  labeled_at: string;
 }
 
 export interface Task {
@@ -46,6 +57,8 @@ export interface CreateTaskInput {
   remote?: string;
   baseBranch?: string;
   now?: Date;
+  /** An issue intake admitted (P2-04): its text is always untrusted, and the labeller admitted it. */
+  issue?: IssueSource;
 }
 
 export const sha256 = (data: string | Buffer): string => `sha256:${createHash("sha256").update(data).digest("hex")}`;
@@ -68,8 +81,10 @@ export function createTask(home: Home, store: EventStore, validator: Validator, 
     id,
     created_at: (input.now ?? new Date()).toISOString(),
     target: { repo: profile.target.repo, profile: profilePath, base_branch: input.baseBranch ?? profile.target.default_branch },
-    source: { kind: "manual", admitted_by: input.admittedBy, snapshot_digest: sha256(body) },
-    text_trust: input.trust,
+    source: input.issue === undefined
+      ? { kind: "manual", admitted_by: input.admittedBy, snapshot_digest: sha256(body) }
+      : { kind: "github_issue", ref: `${input.issue.repo}#${String(input.issue.number)}`, admitted_by: input.issue.labeled_by, snapshot_digest: sha256(body) },
+    text_trust: input.issue === undefined ? input.trust : "untrusted",
     title: input.title,
     priority: input.priority ?? "normal",
   };
@@ -79,7 +94,8 @@ export function createTask(home: Home, store: EventStore, validator: Validator, 
   writeAtomic(join(dir, "task.json"), json);
   // Both files go into the object store (P2-07), so a restore brings back a task that never ran.
   const files = { "task.md": putObject(home.objects, body), "task.json": putObject(home.objects, json) };
-  store.append({ task_id: id, actor: { kind: "operator", id: input.admittedBy }, type: "task_created", payload: { remote: input.remote ?? githubRemote(profile.target.repo), commit_protocol: 1, files } });
+  const actor = input.issue === undefined ? { kind: "operator" as const, id: input.admittedBy } : { kind: "github" as const, id: input.issue.labeled_by };
+  store.append({ task_id: id, actor, type: "task_created", payload: { remote: input.remote ?? githubRemote(profile.target.repo), commit_protocol: 1, files, ...(input.issue === undefined ? {} : { issue: input.issue }) } });
   return task;
 }
 

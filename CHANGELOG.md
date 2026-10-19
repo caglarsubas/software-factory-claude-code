@@ -4,6 +4,20 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-19
+
+### Added
+
+- **GitHub intake (P2-04).** `factoryctl intake PROFILE...` turns a target's labelled issues into tasks.
+  - A profile's new `intake:` block names the label and the maintainers who may apply it.
+  - An issue enters only when the latest application of the label is a maintainer's, and only as the text it had then. An edit after the label holds it until a maintainer labels it again, and a label from anyone else is ignored.
+  - Issue text is always untrusted. The task records who admitted it and which label event.
+- **The issue status mirror (P2-04).** An admitted issue gets one comment from the App: the task's ID, state and PR. The end of every run updates it through the outbox's new `comment_edit` effect.
+
+### Changed
+
+- **Breaking:** the factory App needs **issues: read and write** too. Grant it in the App's settings and accept the change on its installation; `doctor` fails until then.
+
 ## [0.12.0] - 2026-10-19
 
 ### Added
@@ -305,7 +319,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.10.0...v0.11.0

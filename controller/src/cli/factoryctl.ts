@@ -3,6 +3,7 @@
 // doctor, the kill switch, releases and gate evidence.
 //
 //   factoryctl task create --profile FILE --title TEXT --body-file FILE [--untrusted] [--remote URL]
+//   factoryctl intake PROFILE.yaml...         admit the targets' labelled issues as tasks (P2-04)
 //   factoryctl run T-0001 [--attach] [--replay DIR]     drive a task until it needs a human or ends
 //   factoryctl resume T-0001 [--attach] [--replay DIR]  the same, after a stop, a pause, a halt or a crash
 //   factoryctl pause T-0001 [--reason TEXT]  stop the task at its next step boundary, until resume
@@ -73,6 +74,7 @@ import { REVIEWERS } from "../stages/reviewers.ts";
 import { EventStore, LeaseHeldError, type FactoryEvent } from "../store/events.ts";
 import { currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
 import { createTask, loadProfile, readTask } from "../task/task.ts";
+import { pollIntake } from "../intake/intake.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { describeMessage } from "../session/attach.ts";
 import { takeoverLaunch, versionMatches } from "../session/takeover-session.ts";
@@ -603,6 +605,37 @@ async function main(): Promise<void> {
         const replica = keepReplica(home, log);
         await s.done;
         replica.stop();
+        return;
+      }
+      case "intake": {
+        const profiles = positionals.slice(1);
+        if (profiles.length === 0) fail("usage: factoryctl intake PROFILE.yaml... (each with an intake: block)");
+        const validator = createValidator();
+        const targets = profiles.map((p) => {
+          const profile = loadProfile(resolve(p), validator);
+          if (profile.intake === undefined) fail(`${p} has no intake: block (label and maintainers)`);
+          return { profilePath: resolve(p), profile };
+        });
+        const app = appConfig(home);
+        const token = process.env["FACTORY_GITHUB_TOKEN"];
+        const api = apiUrl();
+        if (app === null && token === undefined) fail("intake reads issues as the factory App (factoryctl app init) or with FACTORY_GITHUB_TOKEN");
+        // As the App, a token narrowed to each target in turn.
+        const github = async (repo: string): Promise<GitHub> => {
+          if (app === null) return restGitHub(token ?? "", api);
+          const tokens = appTokens({ app, api, repositories: [repo.split("/")[1] ?? repo] });
+          await tokens.refresh();
+          return restGitHub(() => tokens.token(), api);
+        };
+        const log = (line: string): void => {
+          process.stderr.write(`factoryctl: ${line}\n`);
+        };
+        for (const r of await pollIntake({ home, store, validator, github, targets, log })) {
+          const what = `${r.repo}#${String(r.number)}`;
+          if (r.outcome === "admitted") out(`admitted ${what} as ${r.task ?? ""}`);
+          else if (r.outcome === "known") out(`${what} is ${r.task ?? ""}`);
+          else out(`${r.outcome} ${what}: ${r.reason ?? ""}`);
+        }
         return;
       }
       case "worker":

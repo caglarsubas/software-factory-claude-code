@@ -11,11 +11,12 @@
 //
 // Nothing else in the controller may push or write to GitHub (outbox.test.ts enforces it).
 import { tmpdir } from "node:os";
+import { sha256 } from "../fsutil.ts";
 import { pushFromMirror, remoteBranchSha, type GitAuth } from "../git/repo.ts";
 import type { EventStore, FactoryEvent } from "../store/events.ts";
 import type { CheckRunInput, CheckRunRef, GitHub, IssueComment, MergeResult, PullRequest, PullRequestInput } from "./client.ts";
 
-export type EffectKind = "push" | "pull_request" | "comment" | "check_run" | "merge";
+export type EffectKind = "push" | "pull_request" | "comment" | "comment_edit" | "check_run" | "merge";
 /** done: this attempt made it; found: it already existed; absent: a dangling intent's effect never happened; failed: the attempt threw. */
 export type EffectOutcome = "done" | "found" | "absent" | "failed";
 
@@ -54,6 +55,8 @@ export interface Outbox {
   push(w: Where, p: { remote: string; mirror: string; clone: string; branch: string; commit: string }): Promise<string>;
   pullRequest(w: Where, input: PullRequestInput & { commit: string }): Promise<PullRequest>;
   comment(w: Where & { name: string }, p: { repo: string; issue: number; body: string }): Promise<IssueComment>;
+  /** Sets a comment the outbox made to `body` (P2-04: the issue's status); a comment already saying it is found. The body keeps the comment's marker. */
+  editComment(w: Where & { name: string }, p: { repo: string; id: number; body: string }): Promise<IssueComment>;
   checkRun(w: Where & { name: string }, input: Omit<CheckRunInput, "externalId">): Promise<CheckRunRef>;
   /** Squash-merges the PR at exactly `sha` (P2-05b); a PR already merged is found, not merged again. */
   merge(w: Where, p: { repo: string; number: number; sha: string }): Promise<MergeResult>;
@@ -79,6 +82,10 @@ export function createOutbox(deps: OutboxDeps): Outbox {
     (await github().pullRequests(p.repo, p.head)).find((pr) => pr.headSha === p.commit) ?? null;
   const findComment = async (key: string, p: { repo: string; issue: number }): Promise<IssueComment | null> =>
     (await github().comments(p.repo, p.issue)).find((c) => c.body.includes(commentMarker(key))) ?? null;
+  const findEdit = async (p: { repo: string; id: number; digest: string }): Promise<IssueComment | null> => {
+    const c = await github().comment(p.repo, p.id);
+    return sha256(c.body) === p.digest ? c : null;
+  };
   const findCheck = (key: string, p: { repo: string; sha: string }): Promise<CheckRunRef | null> => github().findCheckRun(p.repo, p.sha, key);
   const findMerge = async (p: { repo: string; number: number }): Promise<MergeResult | null> => {
     const pr = await github().pullRequest(p.repo, p.number);
@@ -124,6 +131,10 @@ export function createOutbox(deps: OutboxDeps): Outbox {
     comment(w, p) {
       return effect(w, "comment", { repo: p.repo, issue: p.issue }, (key) => findComment(key, p), (key) => github().createComment(p.repo, p.issue, `${p.body.trimEnd()}\n\n${commentMarker(key)}`), (c) => ({ id: c.id, url: c.url }));
     },
+    editComment(w, p) {
+      const digest = sha256(p.body);
+      return effect(w, "comment_edit", { repo: p.repo, id: p.id, digest }, () => findEdit({ ...p, digest }), () => github().updateComment(p.repo, p.id, p.body), (c) => ({ id: c.id, url: c.url }));
+    },
     checkRun(w, input) {
       return effect(w, "check_run", { repo: input.repo, sha: input.headSha, name: input.name }, (key) => findCheck(key, { repo: input.repo, sha: input.headSha }), (key) => github().createCheckRun({ ...input, externalId: key }), (r) => ({ id: r.id, url: r.url }));
     },
@@ -147,6 +158,9 @@ export function createOutbox(deps: OutboxDeps): Outbox {
             found = pr === null ? null : { number: pr.number, url: pr.url };
           } else if (kind === "comment") {
             const c = await findComment(key, { repo: String(p["repo"]), issue: Number(p["issue"]) });
+            found = c === null ? null : { id: c.id, url: c.url };
+          } else if (kind === "comment_edit") {
+            const c = await findEdit({ repo: String(p["repo"]), id: Number(p["id"]), digest: String(p["digest"]) });
             found = c === null ? null : { id: c.id, url: c.url };
           } else if (kind === "merge") {
             const m = await findMerge({ repo: String(p["repo"]), number: Number(p["number"]) });

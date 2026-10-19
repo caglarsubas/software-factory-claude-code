@@ -23,6 +23,7 @@ import { changedFiles, commitAll, createTaskClone, diffPatch, fetchBundle, GitEr
 import type { GitHub } from "../github/client.ts";
 import { writeTokenFile, type Gateway } from "../gateway/gateway.ts";
 import { createOutbox } from "../github/outbox.ts";
+import { mirrorIssue } from "../intake/mirror.ts";
 import { describeHalt, readHalt } from "../halt.ts";
 import { runDir, worktreeDir, type Home } from "../home.ts";
 import { evaluate, TIERS, type ChangedFile, type Decision, type DiffFacts, type RiskPolicy, type Tier } from "../policy/engine.ts";
@@ -193,7 +194,26 @@ const PREFLIGHT_MS = 1_500_000;
 const HEARTBEAT_MS = 15_000;
 const DETAIL_LIMIT = 4000;
 
+/**
+ * Runs a task as far as it goes now. A task admitted from an issue (P2-04) then brings the
+ * issue's status comment up to date; a failure to do so is logged, never the task's.
+ */
 export async function runTask(inputs: PipelineInputs): Promise<State> {
+  try {
+    return await runTaskCore(inputs);
+  } finally {
+    const { deps, store, taskId } = inputs;
+    if (deps.github !== null) {
+      try {
+        await mirrorIssue({ store, taskId, outbox: createOutbox({ store, taskId, github: deps.github, auth: deps.auth, ...(deps.probe === undefined ? {} : { probe: deps.probe }), log: deps.log }) });
+      } catch (e) {
+        deps.log(`${taskId}: could not update its issue's status comment: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+  }
+}
+
+async function runTaskCore(inputs: PipelineInputs): Promise<State> {
   const { home, store, validator, release, deps, taskId } = inputs;
   const task: Task = readTask(home, taskId);
   const profilePath = task.target.profile;

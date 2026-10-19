@@ -118,6 +118,23 @@ The evidence lives in `$FACTORY_HOME/runs/T-0001/`:
 
 `manifest.json` holds digests of every artifact, the commits judged, the release and its commit, the model IDs and the cost per stage.
 
+### From GitHub issues
+
+From `v0.13.0` (P2-04) a target's issues can become tasks. Give its profile an `intake:` block, `intake: {label: factory, maintainers: [your-login]}`, then poll it:
+
+```bash
+factoryctl intake PROFILE.yaml [PROFILE.yaml ...]   # once; schedule it to poll
+```
+
+Each poll reads every open issue carrying the label and prints what it did with each one:
+
+- **Admitted:** the latest application of the label is a listed maintainer's, and the issue's body and title have not changed since. The task is the issue's text as it was then. Its text is always untrusted, and the maintainer is recorded as the one who admitted it. Run it as any other task.
+- **Ignored:** someone not on the list labelled it. The factory writes nothing to the issue.
+- **Held:** it was edited after the label. A maintainer reads the edit and labels it again (remove the label, add it back) to admit it.
+- **Waiting:** it was labelled again while the task from its earlier label is still live; the new text is admitted once that task ends.
+
+An admitted issue gets one comment from the App: the task's ID, its state and its PR. Every run of the task brings it up to date, through the outbox. It never repeats the issue's text or anything an agent wrote. This needs the App's issues permission (see [GitHub App and verdicts](#github-app-and-verdicts)): `doctor` fails until you grant it.
+
 ### Watch, pause and take over
 
 - **Watch:** `factoryctl run T-0001 --attach`, or `resume --attach`. You see a line for each message as the session works: what it says, each tool call with the file or command it touches, tool errors, and each session's result with its cost.
@@ -232,7 +249,7 @@ From `v0.10.0` (P2-05) `factoryctl` acts as the factory's own GitHub App when on
 **Set it up once:**
 
 1. **Register the App** under your account:
-   - repository permissions: checks, contents and pull requests read and write, metadata read; nothing else;
+   - repository permissions: checks, contents, issues and pull requests read and write, metadata read; nothing else (issues from `v0.13.0`, for intake);
    - no webhook;
    - installable only on your account.
 2. **Install it** on the target repositories only.
