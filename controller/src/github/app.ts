@@ -15,7 +15,7 @@ export interface AppConfig {
 }
 
 /** What the App must be granted, exactly (ROADMAP §3.2): no workflows, no administration. */
-export const APP_PERMISSIONS: Readonly<Record<string, string>> = { checks: "write", contents: "write", metadata: "read", pull_requests: "write" };
+export const APP_PERMISSIONS: Readonly<Record<string, string>> = { checks: "write", contents: "write", issues: "write", metadata: "read", pull_requests: "write" };
 
 export class AppConfigError extends Error {}
 

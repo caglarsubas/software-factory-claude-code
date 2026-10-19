@@ -73,6 +73,46 @@ describe("restGitHub", () => {
   });
 });
 
+describe("intake reads (P2-04)", () => {
+  it("reads labelled issues and their label and title events in one GraphQL query per page", async () => {
+    const node = (number: number) => ({
+      number, url: `https://github.com/owner/name/issues/${String(number)}`, title: "T", body: "B", lastEditedAt: number === 2 ? "2026-10-19T09:00:00Z" : null,
+      timelineItems: { nodes: [
+        { __typename: "LabeledEvent", createdAt: "2026-10-19T08:00:00Z", actor: { login: "maintainer" }, label: { name: "factory" } },
+        { __typename: "UnlabeledEvent", createdAt: "2026-10-19T08:01:00Z", actor: null, label: { name: "factory" } },
+        { __typename: "RenamedTitleEvent", createdAt: "2026-10-19T08:02:00Z", actor: { login: "someone" } },
+      ] },
+    });
+    const f = fakeFetch(
+      { data: { repository: { issues: { pageInfo: { hasNextPage: true, endCursor: "c1" }, nodes: [node(1)] } } } },
+      { data: { repository: { issues: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node(2)] } } } },
+    );
+    const issues = await restGitHub("t", "https://api.example", f.fn).intakeIssues("owner/name", "factory");
+    expect(issues.map((i) => [i.number, i.lastEditedAt])).toEqual([[1, null], [2, "2026-10-19T09:00:00Z"]]);
+    expect(issues[0]?.events).toEqual([
+      { kind: "labeled", label: "factory", actor: "maintainer", at: "2026-10-19T08:00:00Z" },
+      { kind: "unlabeled", label: "factory", actor: null, at: "2026-10-19T08:01:00Z" },
+      { kind: "renamed", label: null, actor: "someone", at: "2026-10-19T08:02:00Z" },
+    ]);
+    expect(f.calls.map((c) => `${c.init.method ?? ""} ${c.url}`)).toEqual(["POST https://api.example/graphql", "POST https://api.example/graphql"]);
+    expect(JSON.parse(f.calls[1]?.init.body as string)).toMatchObject({ variables: { owner: "owner", name: "name", label: "factory", after: "c1" } });
+  });
+
+  it("fails on a GraphQL error rather than reading no issues", async () => {
+    const f = fakeFetch({ data: null, errors: [{ message: "Resource not accessible by integration" }] });
+    await expect(restGitHub("t", "https://api.example", f.fn).intakeIssues("owner/name", "factory")).rejects.toThrow(/Resource not accessible by integration/);
+  });
+
+  it("reads and edits one comment", async () => {
+    const f = fakeFetch({ id: 9, html_url: "https://github.com/owner/name/issues/3#issuecomment-9", body: "old" }, { id: 9, html_url: "https://github.com/owner/name/issues/3#issuecomment-9", body: "new" });
+    const gh = restGitHub("t", "https://api.example", f.fn);
+    expect((await gh.comment("owner/name", 9)).body).toBe("old");
+    expect((await gh.updateComment("owner/name", 9, "new")).body).toBe("new");
+    expect(f.calls.map((c) => `${c.init.method ?? ""} ${c.url}`)).toEqual(["GET https://api.example/repos/owner/name/issues/comments/9", "PATCH https://api.example/repos/owner/name/issues/comments/9"]);
+    expect(JSON.parse(f.calls[1]?.init.body as string)).toEqual({ body: "new" });
+  });
+});
+
 describe("FACTORY_GITHUB_API_URL", () => {
   it("defaults to api.github.com, and takes https or loopback http only", () => {
     expect(githubApiUrl(undefined)).toBe("https://api.github.com");

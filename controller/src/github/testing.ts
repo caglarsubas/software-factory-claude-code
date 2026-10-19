@@ -4,7 +4,7 @@ import { verify, type KeyObject } from "node:crypto";
 import { GITHUB_ACTIONS_APP_ID } from "../governance/footprint.ts";
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { CheckRunInput, CheckRunRef, GitHub, IssueComment, PullRequest, PullRequestInput } from "./client.ts";
+import type { CheckRunInput, CheckRunRef, GitHub, IntakeIssue, IssueComment, PullRequest, PullRequestInput } from "./client.ts";
 
 export interface MemoryGitHub extends GitHub {
   prs: (PullRequestInput & PullRequest)[];
@@ -12,6 +12,8 @@ export interface MemoryGitHub extends GitHub {
   actionsRuns: { repo: string; sha: string; name: string; status: string; conclusion: string | null }[];
   issueComments: (IssueComment & { repo: string; issue: number })[];
   checks: (CheckRunInput & CheckRunRef)[];
+  /** Open issues by repository, as intake reads them (P2-04): set by a test, as people would. */
+  issues: Map<string, (IntakeIssue & { labels: string[] })[]>;
   /** Every call that changed something, in order. */
   writes: string[];
 }
@@ -26,11 +28,13 @@ export function memoryGitHub(headOf: (repo: string, branch: string) => string = 
   const checks: MemoryGitHub["checks"] = [];
   const writes: string[] = [];
   const actionsRuns: MemoryGitHub["actionsRuns"] = [];
+  const issues: MemoryGitHub["issues"] = new Map();
   // An open PR follows its branch, as GitHub's does.
   const view = (p: PullRequestInput & PullRequest): PullRequest => ({ number: p.number, url: p.url, state: p.state, merged: p.merged, headSha: p.state === "open" ? headOf(p.repo, p.head) || p.headSha : p.headSha });
   return {
     prs,
     actionsRuns,
+    issues,
     issueComments,
     checks,
     writes,
@@ -74,6 +78,18 @@ export function memoryGitHub(headOf: (repo: string, branch: string) => string = 
       p.merged = true;
       p.headSha = head;
       return Promise.resolve({ merged: true, sha: `${"f".repeat(39)}${String(number % 10)}` });
+    },
+    intakeIssues: (repo, label) => Promise.resolve((issues.get(repo) ?? []).filter((i) => i.labels.includes(label)).map((i) => structuredClone({ number: i.number, url: i.url, title: i.title, body: i.body, lastEditedAt: i.lastEditedAt, events: i.events }))),
+    comment: (repo, id) => {
+      const c = issueComments.find((x) => x.repo === repo && x.id === id);
+      return c === undefined ? Promise.reject(new Error(`GET /repos/${repo}/issues/comments/${String(id)}: HTTP 404`)) : Promise.resolve({ id: c.id, url: c.url, body: c.body });
+    },
+    updateComment: (repo, id, body) => {
+      const c = issueComments.find((x) => x.repo === repo && x.id === id);
+      if (c === undefined) return Promise.reject(new Error(`PATCH /repos/${repo}/issues/comments/${String(id)}: HTTP 404`));
+      writes.push(`comment_edit ${repo} ${String(id)}`);
+      c.body = body;
+      return Promise.resolve({ id: c.id, url: c.url, body });
     },
     createCheckRun: (input) => {
       writes.push(`check_run ${input.repo} ${input.name}`);

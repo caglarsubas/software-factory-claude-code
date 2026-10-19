@@ -19,3 +19,4 @@ budgets: {monthly_usd: 25}
 spec_dir: docs/specs
 retention_days: {bundles: 30, transcripts: 30, otel: 30}
 governance: {approvers: [caglarsubas]}
+intake: {label: factory, maintainers: [caglarsubas]}
