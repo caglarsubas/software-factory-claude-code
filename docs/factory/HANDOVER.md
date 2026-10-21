@@ -14,7 +14,7 @@ A new Claude Code session picks up the factory's development from here. Read thi
 - **The §11 re-check before the freeze:** done on 2026-10-21 and logged in STATUS's platform log.
   - No advisory affects the pin.
   - The pin lacks about 25 later fixes without an advisory that apply to the factory's sessions.
-  - Mods are on by default from the pinned 2.1.286.
+  - Mods are on by default from the pinned 2.1.286. A probe showed `settingSources: []` keeps a target's `AGENTS.md` out of sessions, and a mod in a session's own `dev-mods/` loading even under `dontAsk`.
   - The operator decided to move the pin before the freeze.
 - **Parallel items:** P2-10, P2-11, P2-13 and P2-14 are todo. P2-12 stays stopped until a written egress policy exists (Appendix A).
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
@@ -37,16 +37,13 @@ A new Claude Code session picks up the factory's development from here. Read thi
 
 ## What comes next
 
-1. **Mods and `AGENTS.md`: probe, then harden** (a core release). It runs on the current pin.
-   - **Probe:** add runner conformance cases with the stub model:
-     - a target `AGENTS.md` carrying a canary never reaches the model;
-     - the session's `system/init` names only the release's plugin and expected built-ins;
-     - a mod planted in the session's `dev-mods/` never runs;
-     - a sandboxed command cannot write into the plugin or config directory.
-   - **Harden:**
-     - set `instructionFiles: "managed-only"` on the built-in `AGENTS.md` loader in session settings and the runner's managed settings;
-     - set `allowManagedModsOnly` on the built-in guard in the runner's managed settings;
-     - make `takeover` refuse while the session's `dev-mods/` holds anything.
+1. **Mods and `AGENTS.md`** (a core release). It runs on the current pin.
+   - **Keep mods out:**
+     - the session sandbox denies writes to the session's config directory and the release's plugin;
+     - a session, or a takeover, refuses a config directory whose `dev-mods/` holds anything;
+     - the runner's managed settings set `allowManagedModsOnly` on the built-in guard.
+   - **Turn the `AGENTS.md` loader off:** `instructionFiles: "managed-only"`, in session settings and the runner's managed settings.
+   - **Show it in the runner conformance suite:** a target carrying canary instruction files and a mod, and a session mod planted in `dev-mods/`. No canary reaches the model and no mod runs.
 2. **The pin move** (a core release of its own), built on or after Oct 27.
    - **Version:** the newest npm `stable` at or above 2.1.305 that is at least 7 days old (`minimumReleaseAge`), with the SDK whose `claudeCodeVersion` matches. 2.1.304 fails behind the gateway when ToolSearch is outside a session's tools. If `stable` is still 2.1.304 then, use 2.1.305 and log a deviation.
    - **Bump the pin in:** `config/factory.yaml`, `controller/package.json` and the lockfile, `runner/Dockerfile` (URLs and checksums), the CI workflows' `npx` lines, and the `verify-tools` test fixture.
