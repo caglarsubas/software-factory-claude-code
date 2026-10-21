@@ -197,7 +197,8 @@ interface Remediation {
  */
 const PRE: Partial<Record<State, number>> = { RECEIVED: 0, TRIAGED: 1, SPECIFIED: 2 };
 const IN_ROUND: Partial<Record<State, number>> = { BUILDING: 0, VERIFYING: 1, REVIEWING: 2, REMEDIATING: 3 };
-const DIFF_LIMIT = 400_000;
+/** The judges' diff cap, in bytes; the plugin's factory-review workflow uses it too. */
+export const DIFF_LIMIT = 400_000;
 const CLAUDE_MD_LIMIT = 20_000;
 const PREFLIGHT_MS = 1_500_000;
 const HEARTBEAT_MS = 15_000;
