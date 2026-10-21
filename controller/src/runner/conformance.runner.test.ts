@@ -220,30 +220,36 @@ describe("runner conformance (P2-01)", () => {
   }, 120_000);
 
   it("loads nothing of the target's and no mod: no instruction file reaches the model, no planted mod runs", async () => {
-    const r = await runCase(w, "instructions", {
-      tweak: (p) => {
-        // A user's own plugin, and a mod "this session" wrote, planted after prepareSession checked
-        // the config directory, where Claude Code 2.1.286 loads them on the host.
-        const cfg = p.env.CLAUDE_CONFIG_DIR;
-        plantMod(join(cfg, "skills/user-mod"), "user-mod", "SF-MOD-USER");
-        plantMod(join(cfg, "dev-mods", MOD_SESSION, "dev-mod"), "dev-mod", "SF-MOD-DEV");
-        own(cfg);
-        p.options.sessionId = MOD_SESSION;
-      },
-    }, validator);
-    expect(r.outcome.ok, r.outcome.errors.join("; ")).toBe(true);
-    // No request, the session's own or a side call, carried the target's instruction files.
-    const log = readFileSync(w.stubLog, "utf8").split("\n").filter((l) => l !== "").map((l) => JSON.parse(l) as { seen?: string[] });
-    expect(log.flatMap((e) => e.seen ?? []), `watched ${CANARIES.join(", ")}`).toEqual([]);
-    // No planted mod ran: the probe command ran as it was, and every plugin is the release's or built in.
-    const [, , probe] = results("instructions");
-    expect(text(probe)).toContain("sf-mod-probe");
-    expect(text(probe)).not.toContain("SF-MOD");
-    const init = messages(r.transcript).find((m) => m.type === "system" && m.subtype === "init") as { plugins?: { name: string; path: string }[] } | undefined;
-    for (const plugin of init?.plugins ?? []) expect([w.pluginDir, "builtin"], plugin.name).toContain(plugin.path);
-    // The session can write into neither the release's plugin nor its own config directory.
-    expect(existsSync(join(w.pluginDir, "hooks/sf-written"))).toBe(false);
-    expect(existsSync(join(configDir(), "skills/sf-written"))).toBe(false);
+    // A user's own plugin, and a mod "this session" wrote, planted after prepareSession checked the
+    // config directory, where Claude Code 2.1.286 loads them on the host. Every case shares the
+    // task's config directory, and a later session would refuse to start beside them: they go after.
+    const planted = [join(configDir(), "skills"), join(configDir(), "dev-mods")];
+    try {
+      const r = await runCase(w, "instructions", {
+        tweak: (p) => {
+          const cfg = p.env.CLAUDE_CONFIG_DIR;
+          plantMod(join(cfg, "skills/user-mod"), "user-mod", "SF-MOD-USER");
+          plantMod(join(cfg, "dev-mods", MOD_SESSION, "dev-mod"), "dev-mod", "SF-MOD-DEV");
+          own(cfg);
+          p.options.sessionId = MOD_SESSION;
+        },
+      }, validator);
+      expect(r.outcome.ok, r.outcome.errors.join("; ")).toBe(true);
+      // No request, the session's own or a side call, carried the target's instruction files.
+      const log = readFileSync(w.stubLog, "utf8").split("\n").filter((l) => l !== "").map((l) => JSON.parse(l) as { seen?: string[] });
+      expect(log.flatMap((e) => e.seen ?? []), `watched ${CANARIES.join(", ")}`).toEqual([]);
+      // No planted mod ran: the probe command ran as it was, and every plugin is the release's or built in.
+      const [, , probe] = results("instructions");
+      expect(text(probe)).toContain("sf-mod-probe");
+      expect(text(probe)).not.toContain("SF-MOD");
+      const init = messages(r.transcript).find((m) => m.type === "system" && m.subtype === "init") as { plugins?: { name: string; path: string }[] } | undefined;
+      for (const plugin of init?.plugins ?? []) expect([w.pluginDir, "builtin"], plugin.name).toContain(plugin.path);
+      // The session can write into neither the release's plugin nor its own config directory.
+      expect(existsSync(join(w.pluginDir, "hooks/sf-written"))).toBe(false);
+      expect(existsSync(join(configDir(), "skills/sf-written"))).toBe(false);
+    } finally {
+      for (const p of planted) rmSync(p, { recursive: true, force: true });
+    }
   }, 300_000);
 
   it("brokers the build's preflight to the host: a failure keeps the builder going, a pass lets it stop", async () => {
