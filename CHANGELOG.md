@@ -4,6 +4,14 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-21
+
+### Added
+
+- **Injection signals (G2-2).** Two deterministic signals keep a possible injection away from auto-merge:
+  - **A denied tool call.** A task in which the guard or a stage's tool list denied any tool call goes to the human merge gate, and its `factory/verdict` says `needs_human`.
+  - **Instructions aimed at an agent.** The policy step scans the task's text, and the target files its sessions read or its candidate changed. A line addressed to an AI near an ask no task needs makes the task at least R2, with a security review. That is a new `injection_suspect` rule in `policies/risk.yaml`. The lines found are committed as `injection.json`.
+
 ## [0.13.0] - 2026-10-19
 
 ### Added
@@ -319,7 +327,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.11.0...v0.11.1

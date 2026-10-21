@@ -18,6 +18,7 @@ export interface Condition {
   graph_reaches_protected_within_hops?: number;
   classification_uncertain?: true;
   operation_requested?: true;
+  injection_suspect?: true;
 }
 
 export interface Rule {
@@ -56,6 +57,8 @@ export interface DiffFacts {
   graphHopsToProtected: number | null;
   /** The triager's proposal. It can raise the tier, never lower it. */
   proposedTier?: Tier;
+  /** Untrusted input the task's sessions saw addresses instructions to an agent (policy/injection.ts). */
+  injectionSuspect?: boolean;
 }
 
 export interface TraceEntry {
@@ -108,6 +111,7 @@ function conditionHolds(when: Condition, facts: DiffFacts, paths: string[], poli
   if (when.secret_material !== undefined) checks.push(facts.secretMaterial);
   if (when.classification_uncertain !== undefined) checks.push(facts.classificationUncertain);
   if (when.operation_requested !== undefined) checks.push(facts.operationRequested);
+  if (when.injection_suspect !== undefined) checks.push(facts.injectionSuspect === true);
   if (when.graph_reaches_protected_within_hops !== undefined) {
     const hops = facts.graphHopsToProtected;
     checks.push(hops !== null && hops <= when.graph_reaches_protected_within_hops);

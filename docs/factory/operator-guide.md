@@ -193,6 +193,9 @@ Every run takes its task's lease first (P2-03), and everything it writes carries
   - `factoryctl approve --gate merge` deliberately does nothing.
   - From `v0.11.0`, on a target with the footprint, `policy-check` requires an approving review of the head commit from a listed approver for every tier the ladder leaves to a human: R2 and R3 in Phase 2.
   - After you approve on GitHub, add or remove any label on the PR: that re-runs `policy-check`. A review alone does not, because a review event would run the PR's own workflow.
+- **Injection signals (G2-2, from `v0.14.0`):** two signals keep a possible injection away from auto-merge.
+  - **A denied tool call.** If the guard or a stage's tool list denied any tool call during the task, the task stops at the merge gate. The reason is `N tool call(s) were denied during the task: possible injection`, and its `factory/verdict` says `needs_human`, so `policy-check` waits for your review too.
+  - **Instructions aimed at an agent.** The policy step scans the task's text, and the target files its sessions read or its candidate changed. A line addressed to an AI, near an ask no task needs, raises the task to R2, which you approve. Asks of this kind include a push to `main`, secrets or tokens, CI workflows, ignoring instructions, or sending data out. The lines it found, never their text, are in `runs/T-0001/injection.json`.
 - **R0–R1 in Phase 2:** with the App, an approved R0–R1 task does not stop at the merge gate. It waits as `AUTO_APPROVED (gate: checks)` until `gates` and `policy-check` pass on the judged commit, then `factoryctl` squash-merges the PR at exactly that commit, and the task ends `DONE`.
   - `serve` polls it every 5 minutes; without `serve`, `factoryctl resume` checks once.
   - It goes to the human merge gate instead if a required check fails, the PR's head moves, or GitHub refuses the merge. The reason is in `factoryctl status`.
