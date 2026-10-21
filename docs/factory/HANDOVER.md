@@ -17,7 +17,7 @@ A new Claude Code session picks up the factory's development from here. Read thi
   - Mods are on by default from the pinned 2.1.286. A probe showed `settingSources: []` keeps a target's `AGENTS.md` out of sessions, and a mod in a session's own `dev-mods/` loading even under `dontAsk`.
   - The operator decided to move the pin before the freeze.
 - **`v0.18.0` (#61):** keeps mods out of sessions' config directories and turns the `AGENTS.md` loader off.
-- **P2-14 (`v0.19.0`):** the plugin's `factory-review` workflow, for interactive use only.
+- **P2-14 (`v0.19.0`, #63):** the plugin's `factory-review` workflow, for interactive use only.
 - **Parallel items:** P2-10, P2-11 and P2-13 are todo. P2-12 stays stopped until a written egress policy exists (Appendix A).
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
 
