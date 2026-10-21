@@ -11,6 +11,11 @@ A new Claude Code session picks up the factory's development from here. Read thi
   - #56 (`v0.15.0`): the seeded fixtures;
   - #57 (`v0.16.0`): `factoryctl gate G2`, the G2-5 canary and `drill serve-kill`;
   - #58 (`v0.17.0`): the switch-on of live `serve` and live sessions in the runner container, which P2-02 left for P2-05 and nothing had done.
+- **The §11 re-check before the freeze:** done on 2026-10-21 and logged in STATUS's platform log.
+  - No advisory affects the pin.
+  - The pin lacks about 25 later fixes without an advisory that apply to the factory's sessions.
+  - Mods are on by default from the pinned 2.1.286. A probe showed `settingSources: []` keeps a target's `AGENTS.md` out of sessions, and a mod in a session's own `dev-mods/` loading even under `dontAsk`.
+  - The operator decided to move the pin before the freeze.
 - **Parallel items:** P2-10, P2-11, P2-13 and P2-14 are todo. P2-12 stays stopped until a written egress policy exists (Appendix A).
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
 
@@ -26,17 +31,31 @@ A new Claude Code session picks up the factory's development from here. Read thi
    | `v0.17.0` | `a574e4d` (#58) |
 
    Then `factoryctl release install v0.17.0`, `release use v0.17.0` and `factoryctl doctor`. Record each tag and install in STATUS's Factory release row as earlier releases are recorded.
-2. **One live task in the runner.** This bills the operator's account. Run one `ts-mini` R0 task with `factoryctl run T-… --runner container --attach`, then check `$FACTORY_HOME/runs/T-…/egress/proxy.ndjson` for its requests on the gateway route.
+2. **One live task in the runner.** This bills the operator's account. Run one `ts-mini` R0 task with `factoryctl run T-… --runner container --attach`, then check `$FACTORY_HOME/runs/T-…/egress/proxy.ndjson` for its requests on the gateway route. Once the pin move is installed, run one again on the new pin, before the G2 sample.
 3. **T-0020** is admitted from an issue and still `RECEIVED`: run it or cancel it.
 4. **Before the G2 sample:** reset both fixture mirrors to the frozen release. `v0.15.0` changed both fixture bases. Use `node scripts/mirror-fixture.ts NAME --footprint --factory-ref TAG --push --reset --rulesets`.
 
 ## What comes next
 
-1. **The §11 re-check, before the freeze.** Re-verify ROADMAP §11's platform facts against the current Claude Code and Agent SDK documentation and releases.
-   - Propose keeping or moving the CLI and SDK pin (2.1.286 and 0.3.286). The operator decides.
-   - Log the result in STATUS's platform log and update the threat model.
-2. **Parallel items** that touch no core file, if time allows before the freeze: P2-10, P2-11, P2-13, P2-14.
-3. **The freeze and G2.**
+1. **Mods and `AGENTS.md`** (a core release). It runs on the current pin.
+   - **Keep mods out:**
+     - the session sandbox denies writes to the session's config directory and the release's plugin;
+     - a session, or a takeover, refuses a config directory whose `dev-mods/` holds anything;
+     - the runner's managed settings set `allowManagedModsOnly` on the built-in guard.
+   - **Turn the `AGENTS.md` loader off:** `instructionFiles: "managed-only"`, in session settings and the runner's managed settings.
+   - **Show it in the runner conformance suite:** a target carrying canary instruction files and a mod, and a session mod planted in `dev-mods/`. No canary reaches the model and no mod runs.
+2. **The pin move** (a core release of its own), built on or after Oct 27.
+   - **Version:** the newest npm `stable` at or above 2.1.305 that is at least 7 days old (`minimumReleaseAge`), with the SDK whose `claudeCodeVersion` matches. 2.1.304 fails behind the gateway when ToolSearch is outside a session's tools. If `stable` is still 2.1.304 then, use 2.1.305 and log a deviation.
+   - **Bump the pin in:** `config/factory.yaml`, `controller/package.json` and the lockfile, `runner/Dockerfile` (URLs and checksums), the CI workflows' `npx` lines, and the `verify-tools` test fixture.
+   - **Adapt to:**
+     - tool search through the gateway;
+     - OTel's new `prompt_text`;
+     - the SDK's `--flag=value` argv;
+     - structured output on a refusal;
+     - tighter Bash checks that become denials under `dontAsk`.
+   - **Re-run:** every suite, then the eval suite on the release commit.
+3. **Parallel items** that touch no core file, if time allows before the freeze. P2-14 comes first: dynamic workflows are GA, so it needs no fallback. Then P2-11, P2-13 and P2-10.
+4. **The freeze and G2.**
    - Tag the frozen release. The operator then runs the G2 procedure in the operator guide's Gate G2 section:
      - `gate G2 --begin`;
      - the 15-attempt sample;
@@ -45,7 +64,7 @@ A new Claude Code session picks up the factory's development from here. Read thi
      - the drift, restore and kill-switch drills;
      - `factoryctl gate G2`.
    - Open the `gates/G2` evidence PR and STOP for the operator's signature (G2-7). R2 auto-merge stays off.
-4. **Phase 3** only after G2 is signed (Appendix A, Phase 3 kickoff).
+5. **Phase 3** only after G2 is signed (Appendix A, Phase 3 kickoff).
 
 ## How the operator and the agent work
 
