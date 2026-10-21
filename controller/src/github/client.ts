@@ -280,6 +280,76 @@ export function restGitHub(token: TokenSource, api = "https://api.github.com", f
   };
 }
 
+/** A commit on a PR, by the emails git recorded for it. */
+export interface PullCommit {
+  sha: string;
+  authorEmail: string | null;
+  committerEmail: string | null;
+}
+
+/** One entry of a repository's activity (pushes, branch changes, merges), newest first. */
+export interface RepoActivity {
+  type: string;
+  ref: string;
+  actor: string | null;
+  at: string;
+}
+
+/** Read-only: what gate G2's evidence asks GitHub (G2-1's human commits and change requests, G2-2's push audit, G2-3's PR count). */
+export interface GateReads {
+  pullCommits(repo: string, number: number): Promise<PullCommit[]>;
+  /** The states of the PR's reviews: APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED. */
+  pullReviews(repo: string, number: number): Promise<string[]>;
+  pullRequests(repo: string, head: string): Promise<PullRequest[]>;
+  /** The repository's activity since `since`. */
+  activity(repo: string, since: string): Promise<RepoActivity[]>;
+}
+
+const nextLink = (link: string | null): string | null => /<([^>]+)>;\s*rel="next"/.exec(link ?? "")?.[1] ?? null;
+
+export function restGateReads(token: TokenSource | null, api = "https://api.github.com", fetchFn: typeof fetch = fetch): GateReads {
+  const call = caller(token, api, fetchFn);
+  const list = async <T>(path: string): Promise<T[]> => {
+    const all: T[] = [];
+    for (let page = 1; page <= PAGES; page++) {
+      const batch = (await call("GET", `${path}${path.includes("?") ? "&" : "?"}per_page=100&page=${String(page)}`)) as T[];
+      all.push(...batch);
+      if (batch.length < 100) break;
+    }
+    return all;
+  };
+  return {
+    async pullCommits(repo, number) {
+      const commits = await list<{ sha: string; commit: { author: { email?: string } | null; committer: { email?: string } | null } }>(`/repos/${repo}/pulls/${String(number)}/commits`);
+      return commits.map((c) => ({ sha: c.sha, authorEmail: c.commit.author?.email ?? null, committerEmail: c.commit.committer?.email ?? null }));
+    },
+    async pullReviews(repo, number) {
+      return (await list<{ state: string }>(`/repos/${repo}/pulls/${String(number)}/reviews`)).map((r) => r.state);
+    },
+    async pullRequests(repo, head) {
+      const owner = repo.split("/")[0] ?? "";
+      return (await list<RestPull>(`/repos/${repo}/pulls?state=all&head=${encodeURIComponent(`${owner}:${head}`)}`)).map(pull);
+    },
+    // The activity API pages by cursor, in its Link header; newest first, so it stops at `since`.
+    async activity(repo, since) {
+      const all: RepoActivity[] = [];
+      let url: string | null = `${api}/repos/${repo}/activity?per_page=100&direction=desc`;
+      for (let page = 0; url !== null && page < PAGES * 10; page++) {
+        const t = typeof token === "function" ? await token() : token;
+        const res: Response = await fetchFn(url, { headers: { ...(t === null ? {} : { authorization: `Bearer ${t}` }), accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" } });
+        if (!res.ok) throw new GitHubError(`GET /repos/${repo}/activity: HTTP ${String(res.status)}`);
+        const batch = (await res.json()) as { ref: string; timestamp: string; activity_type: string; actor: { login: string } | null }[];
+        const fresh = batch.filter((a) => Date.parse(a.timestamp) >= Date.parse(since));
+        all.push(...fresh.map((a) => ({ type: a.activity_type, ref: a.ref, actor: a.actor?.login ?? null, at: a.timestamp })));
+        if (fresh.length < batch.length) break;
+        url = nextLink(res.headers.get("link"));
+        if (url !== null && !url.startsWith(`${api}/`)) throw new GitHubError(`GET /repos/${repo}/activity: a next page off ${api}`);
+      }
+      return all;
+    },
+  };
+}
+
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**

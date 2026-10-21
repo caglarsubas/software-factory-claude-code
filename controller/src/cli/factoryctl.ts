@@ -18,7 +18,8 @@
 //   factoryctl halt [--reason TEXT]          kill switch v0: stop every session and run now
 //   factoryctl unhalt --reason TEXT
 //   factoryctl release install TAG [--source DIR] | use TAG|SHA | status
-//   factoryctl gate G0|G1 --begin [--checkout DIR]... | gate G0|G1 [--repo OWNER/NAME]
+//   factoryctl gate G0|G1|G2 --begin [--checkout DIR]... | gate G0|G1|G2 [--repo OWNER/NAME]
+//   factoryctl drill kill-switch | restore | serve-kill
 //   factoryctl doctor
 //
 // FACTORY_HOME holds run state (default ~/.factory); FACTORY_RELEASE overrides the release the
@@ -33,13 +34,13 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { parse } from "yaml";
 import { engineHost, PROXY_ENV, removeTaskContainers } from "../../../gates/src/container.ts";
-import { haltNow, killSwitchDrill, restoreDrill, type Activity } from "../durable/drill.ts";
+import { haltNow, killSwitchDrill, restoreDrill, serveKillDrill, type Activity } from "../durable/drill.ts";
 import { initReplica, keepReplica, replicaStatus, restore, syncReplica } from "../durable/replica.ts";
 import { startRunGateway, type Gateway } from "../gateway/gateway.ts";
 import { reapRunnerContainers } from "../runner/container.ts";
 import { keepLease, leaseState, takeLease } from "../sched/lease.ts";
 import { callServe } from "../serve/client.ts";
-import { DEFAULT_PORT, liveServe, startServe } from "../serve/serve.ts";
+import { DEFAULT_PORT, liveServe, startServe, tokenPath } from "../serve/serve.ts";
 import { reapTaskNetworks } from "../runner/network.ts";
 import { runGates } from "../../../gates/src/run.ts";
 import { ensureImage } from "../../../gates/src/image.ts";
@@ -49,8 +50,10 @@ import { fixtureNames, loadFixture } from "../fixtures/targets.ts";
 import { footprintRulesets } from "../governance/footprint.ts";
 import { beginGate, evaluateG0, writeEvidence } from "../gate/g0.ts";
 import { evaluateG1 } from "../gate/g1.ts";
-import { appConfig, AppConfigError, appConfigPath, appTokens, type AppTokens } from "../github/app.ts";
-import { githubApiUrl, GitHubError, isLoopbackApi, restCommitChecks, restGitHub, type GitHub } from "../github/client.ts";
+import { evaluateG2 } from "../gate/g2.ts";
+import { CANARY_ENV, plantCanary, readCanary } from "../gate/canary.ts";
+import { appConfig, AppConfigError, appConfigPath, appInfo, appTokens, type AppTokens } from "../github/app.ts";
+import { githubApiUrl, GitHubError, isLoopbackApi, restCommitChecks, restGateReads, restGitHub, type GitHub } from "../github/client.ts";
 import type { GitAuth } from "../git/repo.ts";
 import { clearHalt, describeHalt, readHalt } from "../halt.ts";
 import { acquireRunLock, ensureHome, factoryHome, liveHolder, runDir, worktreeDir, type Home } from "../home.ts";
@@ -121,6 +124,28 @@ function keyFile(home: Home): string {
   return process.env["FACTORY_API_KEY_FILE"] ?? join(home.secrets, "anthropic.key");
 }
 
+/** G2-5: a planted canary rides in this process's own environment, where a leaked secret would come from. */
+function carryCanary(home: Home): void {
+  const canary = readCanary(home);
+  if (canary !== null) process.env[CANARY_ENV] = canary;
+}
+
+/** What gate G2 reads from GitHub: with FACTORY_GITHUB_TOKEN, else the App's installation token, else unauthenticated (public fixtures). */
+async function g2Deps(home: Home): Promise<{ github: ReturnType<typeof restGateReads>; appSlug: string | null; secretFiles: string[] }> {
+  const api = apiUrl();
+  const app = appConfig(home);
+  const token = process.env["FACTORY_GITHUB_TOKEN"];
+  const tokens = token === undefined && app !== null ? appTokens({ app, api }) : null;
+  const github = restGateReads(token ?? (tokens === null ? null : () => tokens.token()), api);
+  let appSlug: string | null = null;
+  try {
+    appSlug = app === null ? null : (await appInfo({ app, api })).slug;
+  } catch (e) {
+    process.stderr.write(`factoryctl: the App's slug is unknown (${e instanceof Error ? e.message : String(e)}); G2-2 cannot attribute pushes\n`);
+  }
+  return { github, appSlug, secretFiles: [keyFile(home), app?.keyFile ?? join(home.secrets, "github-app.pem"), tokenPath(home)] };
+}
+
 /** The review artifacts' findings, for the per-task report; a run without reviews has none. */
 function reviewsOf(home: Home, taskId: string): { findings: { severity: string }[] }[] {
   return REVIEWERS.map((r) => `${r.label}.json`).flatMap((name) => {
@@ -167,6 +192,7 @@ interface DriveOptions {
 
 async function drive(home: Home, store: EventStore, taskId: string, o: DriveOptions): Promise<void> {
   const { replay } = o;
+  carryCanary(home);
   const halt = readHalt(home);
   if (halt !== null) fail(`the factory is ${describeHalt(halt)}; lift it with: factoryctl unhalt --reason "…"`);
   if (isPaused(store.events(taskId))) {
@@ -427,7 +453,21 @@ async function main(): Promise<void> {
       process.exitCode = d.passed ? 0 : 1;
       return;
     }
-    fail("usage: factoryctl drill kill-switch | restore");
+    if (kind === "serve-kill") {
+      operatorOnly("drill serve-kill");
+      let d;
+      try {
+        d = await serveKillDrill(home);
+      } catch (e) {
+        fail(e instanceof Error ? e.message : String(e));
+      }
+      out(`${d.killed ? "killed" : "FAILED to kill"} serve (pid ${String(d.serve_pid)}) while it ran ${d.tasks.map((t) => t.task).join(", ")}`);
+      out(`record: ${d.record}`);
+      out("start serve again (factoryctl serve); G2-3 passes once those tasks reach their merge gates with no side effect made twice: factoryctl gate G2");
+      process.exitCode = d.killed ? 0 : 1;
+      return;
+    }
+    fail("usage: factoryctl drill kill-switch | restore | serve-kill");
   }
 
   if (command === "replica") {
@@ -591,6 +631,7 @@ async function main(): Promise<void> {
         const log = (line: string): void => {
           process.stderr.write(`factoryctl serve: ${line}\n`);
         };
+        carryCanary(home);
         let s;
         try {
           s = await startServe({ home, store, cli: fileURLToPath(import.meta.url), maxTasks: max, host: values.host ?? "127.0.0.1", port, replay: resolve(replay), log });
@@ -854,24 +895,30 @@ async function main(): Promise<void> {
       }
       case "gate": {
         const gate = positionals[1];
-        if (gate !== "G0" && gate !== "G1") fail("usage: factoryctl gate G0|G1 --begin [--checkout DIR]... | gate G0|G1 [--repo OWNER/NAME]");
+        if (gate !== "G0" && gate !== "G1" && gate !== "G2") fail("usage: factoryctl gate G0|G1|G2 --begin [--checkout DIR]... | gate G0|G1|G2 [--repo OWNER/NAME]");
         const validator = createValidator();
         const release = loadRelease(validator);
         if (values.begin === true) {
           const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" });
           const checkouts = values.checkout ?? (top.status === 0 ? [top.stdout.trim()] : []);
-          if (checkouts.length === 0) fail("not inside a git checkout: name the operator checkout(s) with --checkout DIR");
-          const begin = beginGate(home, gate, release, checkouts.map((c) => resolve(c)));
+          if (checkouts.length === 0 && gate !== "G2") fail("not inside a git checkout: name the operator checkout(s) with --checkout DIR");
+          // G2-5's canary: planted now, so every run and serve in the window carries it (canary.ts).
+          const begin = beginGate(home, gate, release, checkouts.map((c) => resolve(c)), new Date(), gate === "G2" ? { canary: plantCanary(home) } : {});
           for (const c of begin.checkouts) out(`snapshot ${c.path}: ${String(c.files)} files, ${c.digest}`);
           out(`${gate} evidence window open since ${begin.started_at}${begin.release === null ? " (development checkout, not an installed release)" : ` on ${begin.release.tag}`}`);
-          out(gate === "G0" ? "now run one task per fixture to its PR, then: factoryctl gate G0" : "now run at least one counted task to its merge, then: factoryctl budgets && factoryctl gate G1");
+          if (begin.canary !== undefined) out(`canary planted (${begin.canary}); runs and serve started from now on carry it`);
+          out(
+            gate === "G0" ? "now run one task per fixture to its PR, then: factoryctl gate G0"
+            : gate === "G1" ? "now run at least one counted task to its merge, then: factoryctl budgets && factoryctl gate G1"
+            : "now run the sample, the seeded suite and the drills on this release, then: factoryctl gate G2",
+          );
           return;
         }
         const checks = restCommitChecks(process.env["FACTORY_GITHUB_TOKEN"] ?? null, apiUrl());
         const evidence =
-          gate === "G0"
-            ? await evaluateG0({ home, store, validator, release, deps: { bypass: runBypassVariants, checks, doctor: doctor(home, release, keyFile(home)), repository: values.repo ?? null } })
-            : await evaluateG1({ home, store, validator, release, deps: { checks, repository: values.repo ?? null } });
+          gate === "G0" ? await evaluateG0({ home, store, validator, release, deps: { bypass: runBypassVariants, checks, doctor: doctor(home, release, keyFile(home)), repository: values.repo ?? null } })
+          : gate === "G1" ? await evaluateG1({ home, store, validator, release, deps: { checks, repository: values.repo ?? null } })
+          : await evaluateG2({ home, store, validator, release, deps: await g2Deps(home) });
         const files = writeEvidence(home, evidence);
         for (const c of evidence.criteria) out(`${c.status.padEnd(5)}  ${c.id}  ${c.detail}`);
         out(`evidence: ${files.json}`);

@@ -34,16 +34,16 @@ const ENDED: readonly State[] = [...MERGED, "FAILED", "CANCELLED", "SUPERSEDED",
 const pct = (n: number): string => `${(n * 100).toFixed(1)}%`;
 
 /** The tier a task ran at: its merge verdict's tier, else the budget tier of its last session. */
-function tierOf(events: readonly FactoryEvent[]): string | null {
+export function tierOf(events: readonly FactoryEvent[]): string | null {
   const verdict = events.findLast((e) => e.type === "state_changed" && typeof e.payload["tier"] === "string")?.payload["tier"];
   if (typeof verdict === "string") return verdict;
   const session = events.findLast((e) => e.type === "stage_started" && typeof e.payload["tier"] === "string")?.payload["tier"];
   return typeof session === "string" ? session : null;
 }
 
-const merged = (events: readonly FactoryEvent[]): boolean => events.some((e) => e.type === "state_changed" && e.to !== undefined && MERGED.includes(e.to));
+export const merged = (events: readonly FactoryEvent[]): boolean => events.some((e) => e.type === "state_changed" && e.to !== undefined && MERGED.includes(e.to));
 /** Human commits on the factory's branch: an operator takeover that changed the candidate. */
-const humanEdited = (events: readonly FactoryEvent[]): boolean => events.some((e) => e.type === "command" && e.payload["command"] === "takeover" && typeof e.payload["to_commit"] === "string");
+export const humanEdited = (events: readonly FactoryEvent[]): boolean => events.some((e) => e.type === "command" && e.payload["command"] === "takeover" && typeof e.payload["to_commit"] === "string");
 
 /** The p-th percentile (nearest rank) of a non-empty list. */
 export function percentile(values: readonly number[], p: number): number {

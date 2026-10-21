@@ -178,7 +178,7 @@ describe("factoryctl", { timeout: 30_000 }, () => {
   });
 
   it("opens the G0 evidence window on a checkout and drafts the evidence", { timeout: 120_000 }, () => {
-    expect(factoryctl(["gate", "G2"]).status).toBe(2);
+    expect(factoryctl(["gate", "G3"]).status).toBe(2);
     const begin = factoryctl(["gate", "G0", "--begin", "--checkout", seed]);
     expect(begin.status, begin.stderr).toBe(0);
     expect(begin.stdout).toMatch(/^snapshot .*seed: [0-9]+ files, sha256:[0-9a-f]{64}$/m);
@@ -200,6 +200,20 @@ describe("factoryctl", { timeout: 30_000 }, () => {
     expect(g1.stdout).toMatch(/^pass {3}G1-5 {2}recorded .* from [0-9]+ completed runs, and equal to the rule applied to the event store now$/m);
     expect(g1.stdout).toMatch(/^human {2}G1-6 /m);
     expect(readFileSync(join(home, "gates/G1/evidence.md"), "utf8")).toContain("## Gate G1 evidence");
+
+    // G2 needs its window first; opening it plants the canary, by its digest only on the record.
+    expect(factoryctl(["gate", "G2"]).stdout).toMatch(/^fail {3}G2-1 {2}no evidence window: run factoryctl gate G2 --begin/m);
+    expect(factoryctl(["drill", "serve-kill"], { CLAUDECODE: "1" }).stderr).toContain("drill serve-kill refuses to run inside a Claude Code session");
+    const g2 = factoryctl(["gate", "G2", "--begin"]);
+    expect(g2.status, g2.stderr).toBe(0);
+    expect(g2.stdout).toMatch(/^canary planted \(sha256:[0-9a-f]{64}\)/m);
+    const canary = readFileSync(join(home, "secrets/canary"), "utf8").trim();
+    expect(canary).toMatch(/^sf-canary-[0-9a-f]{48}$/);
+    expect(readFileSync(join(home, "gates/G2/begin.json"), "utf8")).not.toContain(canary);
+    const e2 = factoryctl(["gate", "G2"]);
+    expect(e2.status).toBe(1);
+    expect(e2.stdout).toMatch(/^fail {3}G2-5 {2}no live task ran in the window$/m);
+    expect(e2.stdout).toMatch(/^human {2}G2-7 /m);
   });
 
   it("keeps test-only injection off anything that leaves the machine, and the token off plain http (P1-02)", () => {
