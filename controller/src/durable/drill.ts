@@ -9,8 +9,10 @@
 //   (RTO). It compares the restored store with the live one: the events the replica lacked, and
 //   how long before the live store's newest event the replica's newest was (RPO), and checks
 //   that every file a restored task's record names came back with its digest.
+// - The serve-kill drill (G2-3) SIGKILLs a serve that holds at least three live tasks and records
+//   them; the G2 evidence then checks that each finished without a duplicate side effect.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ENGINE, killGateContainers, LABEL as GATES_LABEL } from "../../../gates/src/container.ts";
@@ -20,6 +22,7 @@ import { factoryHome, liveHolder, runDir, type Home } from "../home.ts";
 import { children, isLive } from "../proc.ts";
 import { killRunnerContainers, listContainers } from "../runner/container.ts";
 import { parseHolder } from "../sched/lease.ts";
+import { liveServe } from "../serve/serve.ts";
 import { EventStore, type FactoryEvent } from "../store/events.ts";
 import { readReplicaConfig, restore, runFiles } from "./replica.ts";
 
@@ -103,8 +106,10 @@ export function activity(home: Home): Activity {
 
 const idle = (a: Activity): boolean => a.writers + a.sessions + a.runners + a.gates === 0;
 
+const drillsDir = (home: Home): string => join(home.root, "drills");
+
 function record(home: Home, kind: string, data: Record<string, unknown>, now: Date): string {
-  const dir = join(home.root, "drills");
+  const dir = drillsDir(home);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, `${kind}-${now.toISOString().replace(/[:.]/g, "-")}.json`);
   writeAtomic(path, `${JSON.stringify({ schema_version: 1, kind, at: now.toISOString(), ...data }, null, 2)}\n`);
@@ -195,4 +200,67 @@ export async function restoreDrill(home: Home, o: { scratch?: string; keep?: boo
   } finally {
     if (o.keep !== true) rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+/** A drill's record, as `drills/<kind>-<time>.json` holds it. */
+export interface DrillRecord {
+  kind: string;
+  at: string;
+  path: string;
+  data: Record<string, unknown>;
+}
+
+/** Every drill record, oldest first. */
+export function readDrills(home: Home): DrillRecord[] {
+  const dir = drillsDir(home);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((n) => n.endsWith(".json"))
+    .flatMap((n): DrillRecord[] => {
+      try {
+        const data = JSON.parse(readFileSync(join(dir, n), "utf8")) as Record<string, unknown>;
+        return typeof data["kind"] === "string" && typeof data["at"] === "string" ? [{ kind: data["kind"], at: data["at"], path: join(dir, n), data }] : [];
+      } catch {
+        return [];
+      }
+    })
+    .sort((a, b) => a.at.localeCompare(b.at));
+}
+
+export const SERVE_KILL_MIN_TASKS = 3;
+
+export interface ServeKillDrill {
+  killed: boolean;
+  serve_pid: number;
+  tasks: { task: string; epoch: number }[];
+  record: string;
+}
+
+/** The tasks live workers hold leases on: what serve was running. */
+function heldTasks(home: Home): { task: string; epoch: number }[] {
+  const store = EventStore.open(home.db);
+  try {
+    return store.leases().filter((l) => {
+      const p = parseHolder(l.holder);
+      return p !== null && l.expires_at > 0 && isLive(p);
+    }).map((l) => ({ task: l.task_id, epoch: l.epoch }));
+  } finally {
+    store.close();
+  }
+}
+
+/** SIGKILLs serve while it runs at least three tasks, and records which; the tasks' workers are left running. */
+export async function serveKillDrill(home: Home, o: { minTasks?: number; waitMs?: number } = {}): Promise<ServeKillDrill> {
+  const serve = liveServe(home);
+  if (serve === null) throw new Error("serve is not running: start it with factoryctl serve and wait until it runs three tasks");
+  const tasks = heldTasks(home);
+  const min = o.minTasks ?? SERVE_KILL_MIN_TASKS;
+  if (tasks.length < min) throw new Error(`serve runs ${String(tasks.length)} task(s); the drill needs ${String(min)} at once`);
+  const started = new Date();
+  process.kill(serve.pid, "SIGKILL");
+  const deadline = Date.now() + (o.waitMs ?? 10_000);
+  while (isLive(serve) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+  const killed = !isLive(serve);
+  const path = record(home, "serve-kill", { killed, serve_pid: serve.pid, tasks }, started);
+  return { killed, serve_pid: serve.pid, tasks, record: path };
 }

@@ -30,7 +30,7 @@ export interface Snapshot extends TreeDigest {
   path: string;
 }
 
-export type GateId = "G0" | "G1";
+export type GateId = "G0" | "G1" | "G2";
 
 export interface Begin {
   schema_version: 1;
@@ -38,6 +38,8 @@ export interface Begin {
   started_at: string;
   release: { sha: string; tag: string } | null;
   checkouts: Snapshot[];
+  /** G2-5's canary, by its digest only (canary.ts). */
+  canary?: string;
 }
 
 export interface Criterion {
@@ -90,14 +92,15 @@ const sha256 = (data: Buffer): string => `sha256:${createHash("sha256").update(d
 export const checkoutDigest = (path: string): TreeDigest => treeDigest(path, (rel) => rel === ".git/index");
 
 /** Snapshot the operator checkouts before the gate's runs (G0-3 and G1-3 compare them afterwards). */
-export function beginGate(home: Home, gate: GateId, release: Release, checkouts: string[], now: Date = new Date()): Begin {
-  if (checkouts.length === 0) throw new Error("name at least one operator checkout (--checkout DIR)");
+export function beginGate(home: Home, gate: GateId, release: Release, checkouts: string[], now: Date = new Date(), extra: Pick<Begin, "canary"> = {}): Begin {
+  if (checkouts.length === 0 && gate !== "G2") throw new Error("name at least one operator checkout (--checkout DIR)");
   const begin: Begin = {
     schema_version: 1,
     gate,
     started_at: now.toISOString(),
     release: release.info === null ? null : { sha: release.info.sha, tag: release.info.tag },
     checkouts: checkouts.map((path) => ({ path, ...checkoutDigest(path) })),
+    ...extra,
   };
   mkdirSync(gateDir(home, gate), { recursive: true, mode: 0o700 });
   writeFileSync(beginPath(home, gate), `${JSON.stringify(begin, null, 2)}\n`, { mode: 0o600 });

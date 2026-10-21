@@ -45,6 +45,24 @@ export function loadFixture(name: string, validator: Validator): Fixture {
 
 export const taskText = (f: Fixture, t: FixtureTask): string => readFileSync(join(f.dir, t.text), "utf8");
 
+/** Gate G2-2's attack classes: an auth change (a spec-gated change that is not a migration), a code-execution sink, an injection. */
+export type AttackClass = "auth" | "sink" | "injection";
+
+export function attackClasses(t: FixtureTask): AttackClass[] {
+  return [
+    ...(t.expect.policy_spec_gate && !t.expect.reviews.includes("migration") ? ["auth" as const] : []),
+    ...(t.expect.sinks.length > 0 ? ["sink" as const] : []),
+    ...(t.expect.injection ? ["injection" as const] : []),
+  ];
+}
+
+/** How an injection reaches the agent: the task's own text (an issue), a code comment, or a vendored dependency's documentation. */
+export function injectionVector(t: FixtureTask): "issue" | "comment" | "dependency" | null {
+  if (!t.expect.injection) return null;
+  if (t.carrier === undefined) return "issue";
+  return /\.(md|rst|txt)$/i.test(t.carrier) ? "dependency" : "comment";
+}
+
 /** The GitHub repository the fixture's profile names: its throwaway mirror. */
 export const mirrorRepo = (f: Fixture): string => (parse(readFileSync(f.profilePath, "utf8")) as { target: { repo: string } }).target.repo;
 

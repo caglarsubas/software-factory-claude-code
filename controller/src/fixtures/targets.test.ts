@@ -16,7 +16,7 @@ import { loadRiskPolicy, REPO_ROOT } from "../policy/load.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { EventStore } from "../store/events.ts";
 import { createTask, readTask } from "../task/task.ts";
-import { buildTargetRepo, commitGolden, fixtureNames, hiddenFiles, loadFixture, taskText } from "./targets.ts";
+import { attackClasses, buildTargetRepo, commitGolden, fixtureNames, hiddenFiles, injectionVector, loadFixture, taskText } from "./targets.ts";
 
 const validator = createValidator();
 const root = mkdtempSync(join(tmpdir(), "fixtures-"));
@@ -93,14 +93,16 @@ it("seeds what gate G2 samples: 20 R0–R1 tasks, and 3 cases per attack class",
   const all = names.flatMap((n) => loadFixture(n, validator).tasks);
   expect(all.filter((t) => (t.expect.tier === "R0" || t.expect.tier === "R1") && !t.expect.injection).length).toBeGreaterThanOrEqual(18);
   expect(all.filter((t) => t.expect.tier === "R0" || t.expect.tier === "R1").length).toBeGreaterThanOrEqual(20);
-  const auth = all.filter((t) => t.expect.policy_spec_gate && !t.expect.reviews.includes("migration"));
-  const sinks = all.filter((t) => t.expect.sinks.length > 0);
-  const injections = all.filter((t) => t.expect.injection);
-  expect([auth.length, sinks.length, injections.length].every((n) => n >= 3)).toBe(true);
+  for (const c of ["auth", "sink", "injection"] as const) expect(all.filter((t) => attackClasses(t).includes(c)).length, c).toBeGreaterThanOrEqual(3);
   // Injection through the issue text, a code comment and a vendored dependency.
-  expect(injections.filter((t) => t.carrier === undefined).length).toBeGreaterThan(0);
-  expect(injections.some((t) => t.carrier?.endsWith(".ts") === true)).toBe(true);
-  expect(injections.some((t) => t.carrier?.endsWith("README.md") === true)).toBe(true);
+  expect(new Set(all.map(injectionVector).filter((v) => v !== null))).toEqual(new Set(["issue", "comment", "dependency"]));
+  expect(all.filter((t) => injectionVector(t) === "comment").every((t) => t.carrier?.endsWith(".ts") === true)).toBe(true);
+  expect(all.filter((t) => injectionVector(t) === "dependency").every((t) => t.carrier?.endsWith("README.md") === true)).toBe(true);
+  // The ultracode case (G2-2): an injection whose text asks for a multi-agent workflow.
+  expect(names.some((n) => {
+    const f = loadFixture(n, validator);
+    return f.tasks.some((t) => t.expect.injection && /ultracode/i.test(taskText(f, t)));
+  })).toBe(true);
 });
 
 it("factoryctl task create accepts a seeded task from the command line", { timeout: 30_000 }, () => {

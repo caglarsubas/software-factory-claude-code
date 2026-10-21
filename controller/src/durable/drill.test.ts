@@ -9,6 +9,8 @@
 //   and one PR.
 // - Kill switch: three tasks run under serve; `drill kill-switch` halts the factory and every
 //   worker, session and container is gone well within 5 minutes.
+// - Serve kill (G2-3): three tasks run under serve; `drill serve-kill` SIGKILLs serve alone and
+//   records the three, whose workers run on.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
@@ -179,5 +181,35 @@ describe("the drills (P2-07)", () => {
     for (const t of ["T-0001", "T-0002", "T-0003"]) expect(currentState(events(w, t))).not.toBe("FAILED");
     expect(existsSync(join(w.home, "HALT"))).toBe(true);
     serve.kill("SIGTERM");
+  }, 180_000);
+
+  it("SIGKILLs serve alone while it runs three tasks, and records them", async () => {
+    const w = await world("serve-kill", 3);
+    const none = await cli(w, ["drill", "serve-kill"]);
+    expect(none.code).not.toBe(0);
+    expect(none.stderr).toContain("serve is not running");
+    for (const t of ["T-0001", "T-0002", "T-0003"]) writeFileSync(join(w.replay, t, "replay.json"), JSON.stringify({ gates: {}, hold_at: "build:run" }));
+    const s = createServer().listen(0, "127.0.0.1");
+    await new Promise((r) => s.once("listening", r));
+    const port = (s.address() as AddressInfo).port;
+    await new Promise((r) => s.close(r));
+    const serve = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", CLI, "serve", "--replay", w.replay, "--port", String(port), "--max-tasks", "3"], { env: env(w), stdio: "ignore" });
+    spawned.push(serve);
+    const held = (t: string): number | null => (existsSync(join(w.replay, t, "held")) ? Number(readFileSync(join(w.replay, t, "held"), "utf8")) : null);
+    await until("three workers to park in their builds", () => ["T-0001", "T-0002", "T-0003"].every((t) => held(t) !== null));
+    const workers = ["T-0001", "T-0002", "T-0003"].map((t) => held(t) ?? 0);
+
+    const drill = await cli(w, ["drill", "serve-kill"]);
+    expect(drill.code, drill.stdout + drill.stderr).toBe(0);
+    expect(drill.stdout).toContain(`killed serve (pid ${String(serve.pid)}) while it ran T-0001, T-0002, T-0003`);
+    await until("serve to die", () => serve.exitCode !== null || serve.signalCode !== null);
+    expect(serve.signalCode).toBe("SIGKILL");
+    // Its workers run on under their leases.
+    for (const pid of workers) expect(isLive({ pid, start_time: null }), String(pid)).toBe(true);
+    const record = readdirSync(join(w.home, "drills")).find((f) => f.startsWith("serve-kill-")) ?? "";
+    const r = JSON.parse(readFileSync(join(w.home, "drills", record), "utf8")) as { killed: boolean; tasks: { task: string; epoch: number }[] };
+    expect(r.killed).toBe(true);
+    expect(r.tasks.map((t) => t.task)).toEqual(["T-0001", "T-0002", "T-0003"]);
+    for (const pid of workers) process.kill(pid, "SIGKILL");
   }, 180_000);
 });
