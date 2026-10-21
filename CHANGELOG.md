@@ -4,6 +4,13 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-21
+
+### Added
+
+- **Live sessions in the runner (the switch-on P2-02 left for P2-05).** `factoryctl run T-… --runner container` (and `resume`) runs a task's live sessions in runner containers. The task gets its own internal network and egress proxy, whose one route leads to the credential gateway; the gateway now also listens where that route reaches it. Each session gets its own gateway token. The build's preflight runs on the host through the broker, and the session's OTLP goes through the gateway to the run's collector. The network and proxy go when the run ends.
+- **Live `serve`.** Without `--replay`, `serve` runs live sessions unattended, every one in the runner. It builds the runner image before it starts, and a worker refuses live sessions anywhere else.
+
 ## [0.16.0] - 2026-10-21
 
 ### Added
@@ -364,7 +371,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.13.0...v0.14.0

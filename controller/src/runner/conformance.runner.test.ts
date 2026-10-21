@@ -7,6 +7,8 @@
 // the Stop hook, and that a run killed mid-session leaves a container reaping removes. From
 // P2-02 it also shows the model reached only through the proxy's route to the credential
 // gateway on the host, which holds the key, meters each turn and stops a session at its cap.
+// Since the switch-on, `startTaskRunner` sets a task up for live sessions the same way, and
+// removes its network and proxy when the run ends.
 //
 //   pnpm test:runner      (needs Docker; CI's runner job, on x64 and arm64)
 import { spawn, spawnSync } from "node:child_process";
@@ -26,7 +28,8 @@ import { createValidator } from "../schemas/validate.ts";
 import { allowedEnvKeys } from "../session/env.ts";
 import type { Script } from "../session/stub-model.ts";
 import { listContainers, reapRunnerContainers, runArgs, runnerEnv, runnerUser, SDK_ENV, type RunnerSetup } from "./container.ts";
-import { ensureTaskNetwork, gatewayAddress, removeTaskNetwork } from "./network.ts";
+import { ensureTaskNetwork, gatewayAddress, networkName, proxyName, removeTaskNetwork } from "./network.ts";
+import { startTaskRunner } from "./live.ts";
 import { buildWorld, destroyWorld, own, runCase, stubLog, type World } from "./suite.ts";
 import { startGateway, writeTokenFile, type UsageEntry } from "../gateway/gateway.ts";
 import { stubHandler } from "../session/stub-model.ts";
@@ -271,6 +274,32 @@ describe("runner conformance (P2-01)", () => {
       upstream.close();
       removeTaskNetwork(GATEWAY_TASK);
     }
+  }, 300_000);
+
+  it("sets a task up for live sessions: its own network, a proxy whose route reaches the gateway, nothing left after", async () => {
+    const taskId = "T-9003";
+    const home = factoryHome({ FACTORY_HOME: w.homeRoot });
+    const keyFile = join(root, "anthropic-live.key");
+    writeFileSync(keyFile, "sk-ant-conformance-key\n", { mode: 0o600 });
+    const address = gatewayAddress();
+    const gw = await startGateway({ prices: release.config.prices, keyFile, hosts: [address.bind], halted: () => null, onUsage: () => undefined, log: () => undefined });
+    // The proxy runs as the runner's user and writes its log in the task's run directory.
+    const egress = join(home.runs, taskId, "egress");
+    mkdirSync(egress, { recursive: true, mode: 0o700 });
+    own(join(home.runs, taskId));
+    const tr = startTaskRunner({ home, releaseRoot: REPO_ROOT, taskId, gateway: { host: address.reach, port: Number(new URL(gw.urls[0] ?? "").port) } });
+    try {
+      const setup = tr.setup("/tmp/token");
+      expect(setup).toMatchObject({ network: networkName(taskId), tokenFile: "/tmp/token", noProxy: [proxyName(taskId)] });
+      // From the task's network, the gateway answers through the proxy's route.
+      const probe = spawnSync(ENGINE, ["run", "--rm", "--network", setup.network, "--user", runnerUser(), setup.image, "node", "-e", `fetch(${JSON.stringify(`${setup.baseUrl ?? ""}/api/hello`)}).then((r) => console.log("HELLO", r.status), (e) => console.log("FAILED", String(e)))`], { encoding: "utf8" });
+      expect(probe.stdout).toContain("HELLO 200");
+      expect(readFileSync(join(egress, "proxy.ndjson"), "utf8")).toMatch(/"route":"gateway".*"path":"\/api\/hello","status":200/);
+    } finally {
+      tr.stop();
+      await gw.close();
+    }
+    expect(spawnSync(ENGINE, ["network", "inspect", networkName(taskId)], { stdio: "ignore" }).status).not.toBe(0);
   }, 300_000);
 
   it("leaves no runner container behind a killed run once reaping runs", async () => {

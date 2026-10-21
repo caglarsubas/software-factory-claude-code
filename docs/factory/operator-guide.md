@@ -164,7 +164,7 @@ Every run takes its task's lease first (P2-03), and everything it writes carries
 
 ### Serve
 
-`factoryctl serve` schedules tasks and is the single writer while it runs. Until P2-05's governance wiring turns on live runner sessions, it runs replayed sessions only and refuses to start without `--replay`: unattended live sessions belong in the runner, behind the credential gateway, under GitHub governance.
+`factoryctl serve` schedules tasks and is the single writer while it runs. From `v0.17.0` it runs live sessions, unattended, and every one of them in the runner container (see [Runner container](#runner-container)): it builds the runner image before it starts, and its workers refuse live sessions anywhere else. With `--replay DIR` it runs replayed sessions instead.
 
 - **Scheduling:** up to `concurrency.max_tasks` tasks at once (`config/factory.yaml`, or `--max-tasks`). Each runs as a worker process holding the task's lease. Two tasks on one target whose spec scopes overlap never run together; a task without a spec yet overlaps everything on its target.
 - **Kill safety:** killing `serve` leaves its workers running under their leases. The next `serve` leaves them alone, and takes over only the tasks whose holder is dead or hung.
@@ -510,7 +510,7 @@ What the container gets:
 - **Network:** an internal network whose only exit is the task's egress proxy. The proxy allows HTTPS to the package registries and refuses your machine, private addresses and everything else. It logs each request to `$FACTORY_HOME/runs/<task>/egress/proxy.ndjson`.
 - **Files:** its worktree, task and session directories at their host paths. Nothing under `$FACTORY_HOME/secrets` and no Docker socket is ever mounted.
 
-A runner session reaches the model through one fixed route on its egress proxy (`http://<proxy>:3129`) to the credential gateway on the host. The real API key never enters a container: the runner holds only its session's token, mounted read-only and denied to every tool and to the sandbox. The runner suite checks this route, and a session stopped at its hard cap, against a stub model. Live runner sessions turn on with P2-05's governance wiring; until then `run` keeps sessions on the host.
+A runner session reaches the model through one fixed route on its egress proxy (`http://<proxy>:3129`) to the credential gateway on the host. The real API key never enters a container: the runner holds only its session's token, mounted read-only and denied to every tool and to the sandbox. The runner suite checks this route, and a session stopped at its hard cap, against a stub model. From `v0.17.0` live runner sessions are on: `serve` runs every live session in the runner, and `factoryctl run T-… --runner container` (or `resume`) does the same for an attended run; `run` without it keeps sessions on the host. A runner session exports its telemetry through the same route: the gateway relays OTLP to the run's collector. The task's network and proxy go when the run ends, and `reap` removes those a dead run left.
 
 Check the image and its controls on your machine at each release (it needs Docker):
 

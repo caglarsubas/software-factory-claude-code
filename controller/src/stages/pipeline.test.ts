@@ -1707,6 +1707,62 @@ describe("the credential gateway (P2-02)", () => {
     }
   });
 
+  it("runs each live session in the runner with its own gateway token, and answers the build's preflight on the host", async () => {
+    const id = newTask();
+    writeFileSync(join(world.home.secrets, "anthropic.key"), "sk-ant-real\n", { mode: 0o600 });
+    const gateway = await startGateway({ prices: release.config.prices, keyFile: join(world.home.secrets, "anthropic.key"), upstream: upstreamUrl, hosts: ["127.0.0.1"], halted: () => null, onUsage: ledger(world.store), log: () => undefined });
+    const tokenFiles: string[] = [];
+    const container = {
+      setup: (tokenFile: string) => {
+        tokenFiles.push(tokenFile);
+        return { image: "sf-runner:test", network: "sf-task-test", proxyUrl: "http://sf-egress-test:3128", seccomp: "/dev/null", tokenFile, baseUrl: "http://sf-egress-test:8443", noProxy: ["sf-egress-test"] };
+      },
+    };
+    const seen: { label: string; proxy: string | undefined; base: string | undefined; helper: unknown }[] = [];
+    let answer: unknown = null;
+    const inner = replayRunner(transcripts(id));
+    const runner: SessionRunner = {
+      kind: "sdk",
+      async run(req) {
+        seen.push({ label: req.label, proxy: req.options.env?.["HTTPS_PROXY"], base: req.options.env?.["ANTHROPIC_BASE_URL"], helper: (req.options.settings as { apiKeyHelper?: unknown }).apiKeyHelper });
+        if (req.label === "build") {
+          // The runner's Stop hook asks through the spool; factoryctl answers from the host.
+          const guard = JSON.parse(readFileSync(req.options.env?.["FACTORY_GUARD_CONFIG"] ?? "", "utf8")) as { preflight?: { broker?: { requests: string; results: string } } };
+          const spool = guard.preflight?.broker;
+          if (spool === undefined) throw new Error("the build has no broker");
+          writeFileSync(join(spool.requests, "stop-hook-0001.json"), "{}");
+          const deadline = Date.now() + 60_000;
+          while (!existsSync(join(spool.results, "stop-hook-0001.json")) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+          answer = JSON.parse(readFileSync(join(spool.results, "stop-hook-0001.json"), "utf8"));
+        }
+        return inner.run(req);
+      },
+    };
+    try {
+      expect(await run(id, deps(runner, { gateway, container }))).not.toBe("FAILED");
+      // Every session in the runner: the proxy, the gateway route, and no key helper; a token file of its own, gone when it ended.
+      expect(seen.length).toBeGreaterThanOrEqual(7);
+      for (const s of seen) expect(s, s.label).toMatchObject({ proxy: "http://sf-egress-test:3128", base: "http://sf-egress-test:8443", helper: undefined });
+      expect(new Set(tokenFiles).size).toBe(seen.length);
+      expect(readdirSync(world.home.tokens)).toEqual([]);
+      expect(answer).toMatchObject({ schema_version: 1, status: expect.stringMatching(/^(pass|fail)$/) as unknown });
+      const sessions = world.store.events(id).filter((e) => e.type === "stage_started" && e.payload["runner"] === "sdk");
+      expect(sessions).toHaveLength(seen.length);
+      for (const e of sessions) {
+        expect(e.payload["in_container"]).toBe(true);
+        expect(allowedEnvKeys(e.payload["env_keys"])).toBe(true);
+      }
+    } finally {
+      await gateway.close();
+    }
+  }, 120_000);
+
+  it("never starts a runner session without the gateway", async () => {
+    const id = newTask();
+    const container = { setup: (tokenFile: string) => ({ image: "i", network: "n", proxyUrl: "http://p:1", seccomp: "/dev/null", tokenFile }) };
+    await expect(run(id, deps(replayRunner(transcripts(id)), { container }))).rejects.toThrow("triage: a runner session needs the credential gateway");
+  });
+
   it("charges a session killed mid-stage what the gateway metered, not its cap", () => {
     const id = newTask();
     const factoryctl = { kind: "factoryctl" as const, id: "factoryctl" };

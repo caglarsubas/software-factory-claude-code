@@ -3,8 +3,8 @@
 // its workers; a new serve leaves the live workers to finish under their leases, takes the dead
 // worker's task over at a new epoch and finishes it. Every task then has one branch update and
 // one PR, no step committed twice, and no write from a stale epoch on the record. While serve
-// runs, the CLI is its client and nothing else drives a task; without replayed sessions serve
-// refuses to start (unattended live sessions wait for the runner under governance, P2-05).
+// runs, the CLI is its client and nothing else drives a task. Live, serve's workers run every
+// session in the runner (P2-01), with gateway tokens (P2-02); a worker refuses live sessions anywhere else.
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
@@ -61,9 +61,9 @@ afterAll(async () => {
 
 const env = (): NodeJS.ProcessEnv => ({ PATH: process.env["PATH"] ?? "", HOME: scratch, FACTORY_HOME: home, FACTORY_GITHUB_TOKEN: "test-token", FACTORY_GITHUB_API_URL: api.url });
 
-function cli(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+function cli(args: string[], extra: NodeJS.ProcessEnv = {}): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", CLI, ...args], { env: env(), stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", CLI, ...args], { env: { ...env(), ...extra }, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
@@ -109,10 +109,15 @@ const held = (task: string): number | null => (existsSync(join(replay, task, "he
 const events = (task: string): FactoryEvent[] => read((s) => s.events(task));
 
 describe("factoryctl serve (P2-03)", () => {
-  it("refuses live sessions until they run in the runner under governance", async () => {
-    const r = await cli(["serve"]);
+  it("runs unattended live sessions only in the runner", async () => {
+    // A worker without replayed sessions refuses to run them anywhere but the runner.
+    const w = await cli(["worker", "T-0001"]);
+    expect(w.code).not.toBe(0);
+    expect(w.stderr).toContain("a worker's live sessions run in the runner: --runner container");
+    // Live serve builds the runner image before it starts; without a container engine it does not start.
+    const r = await cli(["serve"], { FACTORY_CONTAINER_ENGINE: "false" });
     expect(r.code).not.toBe(0);
-    expect(r.stderr).toContain("governance wiring (P2-05)");
+    expect(r.stderr).toContain("serve runs live sessions in the runner, whose image could not be built");
   });
 
   it("runs three tasks at once, survives a SIGKILL of serve and of a worker, and duplicates nothing", async () => {
