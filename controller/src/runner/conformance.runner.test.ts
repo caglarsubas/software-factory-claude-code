@@ -291,8 +291,9 @@ describe("runner conformance (P2-01)", () => {
     try {
       const setup = tr.setup("/tmp/token");
       expect(setup).toMatchObject({ network: networkName(taskId), tokenFile: "/tmp/token", noProxy: [proxyName(taskId)] });
-      // From the task's network, the gateway answers through the proxy's route.
-      const probe = spawnSync(ENGINE, ["run", "--rm", "--network", setup.network, "--user", runnerUser(), setup.image, "node", "-e", `fetch(${JSON.stringify(`${setup.baseUrl ?? ""}/api/hello`)}).then((r) => console.log("HELLO", r.status), (e) => console.log("FAILED", String(e)))`], { encoding: "utf8" });
+      // From the task's network, the gateway answers through the proxy's route (once the proxy listens).
+      const fetchHello = `const go = (n) => fetch(${JSON.stringify(`${setup.baseUrl ?? ""}/api/hello`)}).then((r) => console.log("HELLO", r.status), (e) => (n > 0 ? new Promise((r) => setTimeout(r, 1000)).then(() => go(n - 1)) : console.log("FAILED", String(e), String(e.cause)))); go(20);`;
+      const probe = spawnSync(ENGINE, ["run", "--rm", "--network", setup.network, "--user", runnerUser(), setup.image, "node", "-e", fetchHello], { encoding: "utf8" });
       expect(probe.stdout).toContain("HELLO 200");
       expect(readFileSync(join(egress, "proxy.ndjson"), "utf8")).toMatch(/"route":"gateway".*"path":"\/api\/hello","status":200/);
     } finally {
