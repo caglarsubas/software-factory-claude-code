@@ -22,18 +22,11 @@ A new Claude Code session picks up the factory's development from here. Read thi
 
 ## Waiting on the operator
 
-1. **Tag and install the untagged releases.** Each tag goes on its PR's merge commit:
+Every release up to `v0.18.0` is tagged, and `v0.18.0` is installed and pinned (STATUS's Factory release row). Each later release is tagged on its PR's merge commit, then installed with `factoryctl release install`, `release use` and `factoryctl doctor`, and recorded in that row.
 
-   | Release | Merge commit |
-   |---|---|
-   | `v0.14.0` | `4e14606` (#55) |
-   | `v0.15.0` | `5a95bc1` (#56) |
-   | `v0.16.0` | `7cc2620` (#57) |
-   | `v0.17.0` | `a574e4d` (#58) |
-
-   Then `factoryctl release install v0.17.0`, `release use v0.17.0` and `factoryctl doctor`. Record each tag and install in STATUS's Factory release row as earlier releases are recorded.
-2. **One live task in the runner.** This bills the operator's account. Run one `ts-mini` R0 task with `factoryctl run T-… --runner container --attach`, then check `$FACTORY_HOME/runs/T-…/egress/proxy.ndjson` for its requests on the gateway route. Once the pin move is installed, run one again on the new pin, before the G2 sample.
-3. **T-0020** is admitted from an issue and still `RECEIVED`: run it or cancel it.
+1. **One live task in the runner.** This bills the operator's account. Run one `ts-mini` R0 task with `factoryctl run T-… --runner container --attach`, then check `$FACTORY_HOME/runs/T-…/egress/proxy.ndjson` for its requests on the gateway route. Once the pin move is installed, run one again on the new pin, before the G2 sample.
+2. **T-0020** is admitted from an issue and still `RECEIVED`: run it or cancel it.
+3. **One attended host run** (`factoryctl run T-… --attach`, without `--runner container`) is the first check, on macOS, of `v0.18.0`'s sandbox rule that keeps a session's commands out of its config directory.
 4. **Before the G2 sample:** reset both fixture mirrors to the frozen release. `v0.15.0` changed both fixture bases. Use `node scripts/mirror-fixture.ts NAME --footprint --factory-ref TAG --push --reset --rulesets`.
 
 ## What comes next
