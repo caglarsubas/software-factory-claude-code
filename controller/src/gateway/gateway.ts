@@ -330,11 +330,12 @@ export function ledger(store: EventStore): (e: UsageEntry) => void {
 }
 
 /** The gateway a live factoryctl run starts for its sessions: on loopback, metering to the store, refusing while halted. */
-export function startRunGateway(o: { home: Home; store: EventStore; prices: Prices; keyFile: string; otel?: string; log: (line: string) => void }): Promise<Gateway> {
+export function startRunGateway(o: { home: Home; store: EventStore; prices: Prices; keyFile: string; hosts?: string[]; otel?: string; log: (line: string) => void }): Promise<Gateway> {
   return startGateway({
     prices: o.prices,
     keyFile: o.keyFile,
-    hosts: ["127.0.0.1"],
+    // Loopback for host sessions; with the runner, also the address its proxy reaches (runner/network.ts).
+    hosts: o.hosts ?? ["127.0.0.1"],
     ...(o.otel === undefined ? {} : { otel: o.otel }),
     halted: () => {
       const h = readHalt(o.home);

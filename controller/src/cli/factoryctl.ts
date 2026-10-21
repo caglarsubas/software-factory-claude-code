@@ -4,8 +4,9 @@
 //
 //   factoryctl task create --profile FILE --title TEXT --body-file FILE [--untrusted] [--remote URL]
 //   factoryctl intake PROFILE.yaml...         admit the targets' labelled issues as tasks (P2-04)
-//   factoryctl run T-0001 [--attach] [--replay DIR]     drive a task until it needs a human or ends
-//   factoryctl resume T-0001 [--attach] [--replay DIR]  the same, after a stop, a pause, a halt or a crash
+//   factoryctl run T-0001 [--attach] [--replay DIR] [--runner host|container]  drive a task until it needs a human or ends
+//   factoryctl resume T-0001 [--attach] [--replay DIR] [--runner host|container]  the same, after a stop, a pause, a halt or a crash
+//   factoryctl serve [--replay DIR] [--max-tasks N] [--port N]  schedule tasks unattended, every live session in the runner
 //   factoryctl pause T-0001 [--reason TEXT]  stop the task at its next step boundary, until resume
 //   factoryctl takeover T-0001               open its build session yourself; the result goes back through the gates
 //   factoryctl status [T-0001]
@@ -38,6 +39,8 @@ import { haltNow, killSwitchDrill, restoreDrill, serveKillDrill, type Activity }
 import { initReplica, keepReplica, replicaStatus, restore, syncReplica } from "../durable/replica.ts";
 import { startRunGateway, type Gateway } from "../gateway/gateway.ts";
 import { reapRunnerContainers } from "../runner/container.ts";
+import { ensureRunnerImage } from "../runner/image.ts";
+import { runnerGatewayAddress, startTaskRunner, type TaskRunner } from "../runner/live.ts";
 import { keepLease, leaseState, takeLease } from "../sched/lease.ts";
 import { callServe } from "../serve/client.ts";
 import { DEFAULT_PORT, liveServe, startServe, tokenPath } from "../serve/serve.ts";
@@ -188,6 +191,8 @@ interface DriveOptions {
   /** `resume` lifts a pause; `run` refuses a paused task. */
   resume: boolean;
   attach: boolean;
+  /** Live sessions in the runner container (P2-01) rather than on the host; serve's workers always. */
+  container?: boolean;
 }
 
 async function drive(home: Home, store: EventStore, taskId: string, o: DriveOptions): Promise<void> {
@@ -280,6 +285,8 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
   const replica = keepReplica(home, log);
   // Live sessions call the credential gateway (P2-02), never the API with the key.
   let gateway: Gateway | null = null;
+  // In the runner (P2-01), on the task's network, whose proxy has one route to the gateway.
+  let taskRunner: TaskRunner | null = null;
   // Live sessions export telemetry to the run's own collector (P2-08), unless the operator named another or turned it off.
   let collector: Collector | null = null;
   try {
@@ -288,7 +295,13 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
         collector = await startCollector({ dir: otelDir(home.root), retentionDays: release.config.retention_days.otel, log });
         telemetry = { endpoint: collector.url, protocol: "http/json" };
       }
-      gateway = await startRunGateway({ home, store, prices: release.config.prices, keyFile: keyFile(home), ...(collector === null ? {} : { otel: collector.url }), log });
+      const address = o.container === true ? runnerGatewayAddress() : null;
+      gateway = await startRunGateway({ home, store, prices: release.config.prices, keyFile: keyFile(home), hosts: [...new Set(["127.0.0.1", ...(address === null ? [] : [address.bind])])], ...(telemetry === null ? {} : { otel: telemetry.endpoint }), log });
+      if (address !== null) {
+        const url = gateway.urls.find((u) => new URL(u).hostname === address.bind) ?? gateway.urls[0] ?? "";
+        taskRunner = startTaskRunner({ home, releaseRoot: release.root, taskId, gateway: { host: address.reach, port: Number(new URL(url).port) } });
+        log(`${taskId}: live sessions run in the runner container`);
+      }
     }
     const state = await runTask({
       home, store, validator, release, taskId, abort,
@@ -311,6 +324,7 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
         appId: app?.appId ?? null,
         keyFile: keyFile(home),
         gateway,
+        container: taskRunner,
         ...(process.env["FACTORY_GATES_FETCH_NETWORK"] === undefined ? {} : { gatesFetchNetwork: process.env["FACTORY_GATES_FETCH_NETWORK"] }),
         ...(process.env["FACTORY_GATES_CA_FILE"] === undefined ? {} : { gatesCaFile: process.env["FACTORY_GATES_CA_FILE"] }),
         log,
@@ -327,6 +341,7 @@ async function drive(home: Home, store: EventStore, taskId: string, o: DriveOpti
     if (state === "FAILED") process.exitCode = 1;
   } finally {
     if (keepToken !== null) clearInterval(keepToken);
+    taskRunner?.stop();
     await gateway?.close();
     await collector?.close();
     replica.stop();
@@ -414,6 +429,7 @@ async function main(): Promise<void> {
       weeks: { type: "string" },
       "app-id": { type: "string" },
       "installation-id": { type: "string" },
+      runner: { type: "string" },
     },
   });
   const home = factoryHome();
@@ -621,9 +637,16 @@ async function main(): Promise<void> {
     switch (command) {
       case "serve": {
         const replay = values.replay;
-        if (replay === undefined) fail("serve runs live sessions only in the runner, under the governance wiring (P2-05); until then, run tasks with: factoryctl run T-…");
         const validator = createValidator();
         const release = loadRelease(validator);
+        // Live serve: every session in the runner, so its image is built now rather than by the first worker.
+        if (replay === undefined) {
+          try {
+            ensureRunnerImage(release.root);
+          } catch (e) {
+            fail(`serve runs live sessions in the runner, whose image could not be built: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
         const max = Number(values["max-tasks"] ?? String(release.config.concurrency.max_tasks));
         const port = Number(values.port ?? String(DEFAULT_PORT));
         if (!Number.isInteger(max) || max < 1) fail("--max-tasks takes a positive integer");
@@ -634,7 +657,7 @@ async function main(): Promise<void> {
         carryCanary(home);
         let s;
         try {
-          s = await startServe({ home, store, cli: fileURLToPath(import.meta.url), maxTasks: max, host: values.host ?? "127.0.0.1", port, replay: resolve(replay), log });
+          s = await startServe({ home, store, cli: fileURLToPath(import.meta.url), maxTasks: max, host: values.host ?? "127.0.0.1", port, ...(replay === undefined ? {} : { replay: resolve(replay) }), log });
         } catch (e) {
           fail(e instanceof Error ? e.message : String(e));
         }
@@ -680,7 +703,9 @@ async function main(): Promise<void> {
         return;
       }
       case "worker":
-        await drive(home, store, taskArg(positionals, 1, store), { replay: values.replay, resume: true, attach: false, worker: true });
+        // A worker runs unattended: its live sessions only ever in the runner.
+        if (values.replay === undefined && values.runner !== "container") fail("a worker's live sessions run in the runner: --runner container");
+        await drive(home, store, taskArg(positionals, 1, store), { replay: values.replay, resume: true, attach: false, worker: true, container: values.runner === "container" });
         return;
       case "drain":
         await viaServe("/v1/drain");
@@ -712,7 +737,8 @@ async function main(): Promise<void> {
           await viaServe(`/v1/tasks/${taskArg(positionals, 1, store)}/resume`);
           return;
         }
-        await drive(home, store, taskArg(positionals, 1, store), { replay: values.replay, resume: command === "resume", attach: values.attach === true });
+        if (values.runner !== undefined && values.runner !== "host" && values.runner !== "container") fail("--runner is host or container");
+        await drive(home, store, taskArg(positionals, 1, store), { replay: values.replay, resume: command === "resume", attach: values.attach === true, container: values.runner === "container" });
         return;
       case "pause": {
         if (positionals[1] === undefined) {

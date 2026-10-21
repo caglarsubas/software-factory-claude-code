@@ -103,8 +103,8 @@ export interface ServeOptions {
   maxTasks: number;
   host: string;
   port: number;
-  /** Replayed sessions: each task's transcripts in `<replay>/<task>/`. Required until P2-05. */
-  replay: string;
+  /** Replayed sessions: each task's transcripts in `<replay>/<task>/`. Absent: live sessions, each in the runner container. */
+  replay?: string;
   log: (line: string) => void;
 }
 
@@ -161,7 +161,9 @@ export async function startServe(o: ServeOptions): Promise<Serve> {
 
   function startWorker(t: TaskView): void {
     const logFile = openSync(join(runDir(home, t.id), "worker.log"), "a", 0o600);
-    const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", o.cli, "worker", t.id, "--replay", join(o.replay, t.id)], { detached: true, stdio: ["ignore", logFile, logFile], env: process.env });
+    // Unattended live sessions run only in the runner (P2-01), with gateway tokens (P2-02) under the governance wiring (P2-05).
+    const sessions = o.replay === undefined ? ["--runner", "container"] : ["--replay", join(o.replay, t.id)];
+    const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", o.cli, "worker", t.id, ...sessions], { detached: true, stdio: ["ignore", logFile, logFile], env: process.env });
     closeSync(logFile);
     const pid = child.pid;
     if (pid === undefined) {

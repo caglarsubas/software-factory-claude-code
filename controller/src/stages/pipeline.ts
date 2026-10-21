@@ -34,6 +34,8 @@ import type { Validator } from "../schemas/validate.ts";
 import { prepareSession, type StageSpec } from "../session/options.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionRunner, StageOutcome } from "../session/runner.ts";
+import { runPreflight, startBroker } from "../runner/broker.ts";
+import type { RunnerSetup } from "../runner/container.ts";
 import { takeMergeLease } from "../sched/lease.ts";
 import { StaleEpochError, type EventStore, type FactoryEvent, type MergeLease, type State } from "../store/events.ts";
 import { canMove, currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
@@ -71,6 +73,12 @@ export interface Deps {
    * for the task's remaining hard budget, and the gateway meters what it uses. Absent for replay.
    */
   gateway?: Gateway | null;
+  /**
+   * The runner container (P2-01) live sessions run in, once the gateway is on: each session gets
+   * the task's network and proxy with its own gateway token, and the build's preflight runs on the
+   * host through the broker. Absent or null: sessions run on the host.
+   */
+  container?: { setup: (tokenFile: string) => RunnerSetup } | null;
   gatesFetchNetwork?: string;
   gatesCaFile?: string;
   log: (line: string) => void;
@@ -382,17 +390,28 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     const outcome = await (async () => {
       try {
         const gateway = gw === null || token === null ? {} : { gateway: { baseUrl: gw.urls[0] ?? "", tokenFile: token.path } };
-        const prepared = prepareSession({ home, taskId, release, validator, keyFile: deps.keyFile, abort, ...telemetry, ...gateway }, { ...spec, budgetUsd: cap });
+        // A runner session reaches the model only through the gateway: without one it does not start.
+        const ct = deps.container ?? null;
+        if (ct !== null && token === null) throw new Error(`${spec.label}: a runner session needs the credential gateway`);
+        const container = ct === null || token === null ? {} : { runner: ct.setup(token.path) };
+        const prepared = prepareSession({ home, taskId, release, validator, keyFile: deps.keyFile, abort, ...telemetry, ...gateway, ...container }, { ...spec, budgetUsd: cap });
         // The runner kind and the env's names (never values) are the evidence for G0-1 and G0-3; a session that never reports is charged what the gateway metered, or without one its cap (D4).
-        emit("stage_started", { stage: spec.stage, label: spec.label, agent: spec.agent, runner: deps.runner.kind, env_keys: Object.keys(prepared.env).sort(), cap_usd: cap, tier, round, ...(grant === null ? {} : { gateway_session: grant.id, limit_usd: Math.round(limit * 1e4) / 1e4 }) });
+        emit("stage_started", { stage: spec.stage, label: spec.label, agent: spec.agent, runner: deps.runner.kind, env_keys: Object.keys(prepared.env).sort(), cap_usd: cap, tier, round, ...(grant === null ? {} : { gateway_session: grant.id, limit_usd: Math.round(limit * 1e4) / 1e4 }), ...(ct === null ? {} : { in_container: true }) });
         deps.log(`${taskId}: ${spec.label} (cap ${usd(cap)}${grant === null ? "" : `, hard limit ${usd(limit)}`})`);
         const transcript = join(dir, "transcripts", `${spec.label}.ndjson`);
         rmSync(transcript, { force: true });
         const observe = deps.observe;
-        return await deps.runner.run({
-          label: spec.label, prompt: spec.prompt, options: prepared.options, transcript, denials: prepared.denials,
-          ...(observe === undefined ? {} : { observe: (m: SDKMessage) => { observe(spec.label, m); } }),
-        });
+        // The runner's Stop hook asks for the preflight; factoryctl runs it here, on the host, as a host session's hook would.
+        const b = prepared.broker;
+        const broker = b === undefined ? undefined : startBroker(b.spool, () => runPreflight(b.argv, b.cwd, b.timeout_ms));
+        try {
+          return await deps.runner.run({
+            label: spec.label, prompt: spec.prompt, options: prepared.options, transcript, denials: prepared.denials,
+            ...(observe === undefined ? {} : { observe: (m: SDKMessage) => { observe(spec.label, m); } }),
+          });
+        } finally {
+          await broker?.stop();
+        }
       } finally {
         if (grant !== null) gw?.revoke(grant.id);
         token?.remove();

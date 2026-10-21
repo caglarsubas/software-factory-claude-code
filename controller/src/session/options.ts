@@ -182,6 +182,8 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
     env.HTTPS_PROXY = runner.proxyUrl;
     env.NO_PROXY = (runner.noProxy ?? []).join(",");
     if (runner.baseUrl !== undefined) env.ANTHROPIC_BASE_URL = runner.baseUrl;
+    // The collector is on the host's loopback, out of the runner's reach: the gateway relays OTLP to it (P2-08).
+    if (runner.baseUrl !== undefined && env.OTEL_EXPORTER_OTLP_ENDPOINT !== undefined) env.OTEL_EXPORTER_OTLP_ENDPOINT = runner.baseUrl;
   }
   const denials: Denial[] = [];
   const agent = agentDefinition(release, spec.agent, extraTools);
