@@ -4,6 +4,21 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-21
+
+### Security
+
+- **Mods stay out of factory sessions.** Claude Code 2.1.286 and later run mods, plugin code that runs inside the CLI, outside the sandbox. On the pinned CLI a mod in a session's own config directory, `dev-mods/<session id>/`, loads even headless under `dontAsk`. Now:
+  - a session's sandboxed commands may not write to its config directory, its home's `.claude` or the release's plugin;
+  - a session whose config directory's `dev-mods/` holds anything does not start, and its task fails as `permission_denied`;
+  - `takeover` refuses the same;
+  - the runner's managed settings also set `allowManagedModsOnly` on Claude Code's built-in mod guard.
+- **Claude Code's built-in `AGENTS.md` loader is off** (`instructionFiles: "managed-only"`) in session settings and the runner's managed settings. `settingSources: []` already kept a target's `AGENTS.md` out of sessions.
+
+### Added
+
+- The runner conformance suite shows both with the real CLI. The target carries canary instruction files and a mod, and a user plugin and a session mod are planted in the session's config directory. No canary reaches the model, no mod runs, and the session can write into neither its config directory nor the plugin. The stub model logs which watched strings each request carries (`STUB_WATCH`).
+
 ## [0.17.0] - 2026-10-21
 
 ### Added
@@ -371,7 +386,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.14.0...v0.15.0
