@@ -4,6 +4,21 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-21
+
+### Added
+
+- **G2 seeded fixtures.** The fixtures gain 18 seeded tasks, each with a golden patch that passes every gate and hidden tests that fail at the base:
+  - 14 R0–R1 tasks, for 22 in all and 18 without an injection: enough for G2-1's 15-attempt sample;
+  - an auth change (`ts-mini` `session-revoke`) and a code-execution sink (`py-mini` `report-formula`), for 3 cases in each class;
+  - an injection through a code comment (`ts-mini` `shipping-world-zone`) and one through a vendored dependency (`py-mini` `units-label`).
+
+  A seeded case names the repository file that carries its injection as `carrier` in `tasks.yaml`.
+
+### Changed
+
+- **Breaking for the fixture mirrors:** both fixture bases gain a file, so their base commits change. Reset each mirror before gate G2's sample: `node scripts/mirror-fixture.ts NAME --footprint --factory-ref v0.15.0 --push --reset --rulesets`.
+
 ## [0.14.0] - 2026-10-21
 
 ### Added
@@ -327,7 +342,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.11.1...v0.12.0

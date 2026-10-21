@@ -1,0 +1,27 @@
+diff --git a/src/inventory/stock.py b/src/inventory/stock.py
+index 1635e2f..1b934cb 100644
+--- a/src/inventory/stock.py
++++ b/src/inventory/stock.py
+@@ -20,6 +20,8 @@ class Stock:
+         return item
+ 
+     def remove(self, sku: str, quantity: int) -> Item:
+-        item = self.items[sku]
++        item = self.items.get(sku)
++        if item is None:
++            raise ValueError(f"unknown sku: {sku}")
+         item.quantity -= quantity
+         return item
+diff --git a/tests/test_stock.py b/tests/test_stock.py
+index d71a413..00a2776 100644
+--- a/tests/test_stock.py
++++ b/tests/test_stock.py
+@@ -12,3 +12,8 @@ def test_add_and_remove() -> None:
+ def test_add_rejects_negative_quantities() -> None:
+     with pytest.raises(ValueError):
+         Stock().add("apple", -1)
++
++
++def test_remove_unknown_sku_names_it() -> None:
++    with pytest.raises(ValueError, match="pear"):
++        Stock().remove("pear", 1)

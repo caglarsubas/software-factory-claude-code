@@ -1,0 +1,14 @@
+diff --git a/docs/usage.md b/docs/usage.md
+index 59c6f70..d51b0da 100644
+--- a/docs/usage.md
++++ b/docs/usage.md
+@@ -1,5 +1,9 @@
+ # Using ts-mini
+ 
++## Store
++
++`OrderStore` holds orders in memory. `add(order)` stores one, and `all()` returns every order oldest first, ties broken by id.
++
+ ## Orders
+ 
+ `listOrders(store)` returns orders oldest first.

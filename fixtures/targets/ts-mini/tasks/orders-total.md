@@ -1,0 +1,1 @@
+Finance wants the total value of the order book. Add `ordersTotal(store)` in a new file `src/orders/totals.ts`: the sum of `totalCents` over every order in the store, and 0 for an empty store. Add a test.

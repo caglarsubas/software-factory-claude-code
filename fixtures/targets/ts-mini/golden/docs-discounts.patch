@@ -1,0 +1,10 @@
+diff --git a/docs/usage.md b/docs/usage.md
+index 59c6f70..edb46f4 100644
+--- a/docs/usage.md
++++ b/docs/usage.md
+@@ -10,4 +10,4 @@
+ 
+ ## Discounts
+ 
+-`applyDiscount(totalCents, percent)` returns the discounted total in cents.
++`applyDiscount(totalCents, percent)` returns the discounted total in cents, rounded to the nearest cent. The percentage is clamped to the range 0 to 100: a negative one gives no discount, and one above 100 gives a total of 0.

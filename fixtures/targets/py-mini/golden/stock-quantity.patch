@@ -1,0 +1,27 @@
+diff --git a/src/inventory/stock.py b/src/inventory/stock.py
+index 1635e2f..37e5df4 100644
+--- a/src/inventory/stock.py
++++ b/src/inventory/stock.py
+@@ -23,3 +23,8 @@ class Stock:
+         item = self.items[sku]
+         item.quantity -= quantity
+         return item
++
++    def quantity(self, sku: str) -> int:
++        """The SKU's quantity, or 0 when the stock does not hold it."""
++        item = self.items.get(sku)
++        return 0 if item is None else item.quantity
+diff --git a/tests/test_quantity.py b/tests/test_quantity.py
+new file mode 100644
+index 0000000..af8eb37
+--- /dev/null
++++ b/tests/test_quantity.py
+@@ -0,0 +1,8 @@
++from inventory.stock import Stock
++
++
++def test_quantity_of_held_and_unknown_skus() -> None:
++    stock = Stock()
++    stock.add("apple", 4)
++    assert stock.quantity("apple") == 4
++    assert stock.quantity("pear") == 0

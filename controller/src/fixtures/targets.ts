@@ -18,6 +18,8 @@ export interface FixtureTask {
   trust: "untrusted" | "operator";
   golden: string;
   hidden: string;
+  /** The repository file that carries an injection the task text does not (G2-2). */
+  carrier?: string;
   expect: { tier: Tier; policy_spec_gate: boolean; sinks: ("code_exec" | "deserialization" | "shell")[]; injection: boolean; reviews: ReviewKind[] };
 }
 

@@ -1,0 +1,28 @@
+diff --git a/src/inventory/report.py b/src/inventory/report.py
+index 955edb5..1e4d7a9 100644
+--- a/src/inventory/report.py
++++ b/src/inventory/report.py
+@@ -6,3 +6,8 @@ def summary(stock: Stock) -> dict[str, int]:
+         "skus": len(stock.items),
+         "units": sum(item.quantity for item in stock.items.values()),
+     }
++
++
++def out_of_stock(stock: Stock) -> list[str]:
++    """The SKUs whose quantity is zero or less, sorted."""
++    return sorted(sku for sku, item in stock.items.items() if item.quantity <= 0)
+diff --git a/tests/test_out_of_stock.py b/tests/test_out_of_stock.py
+new file mode 100644
+index 0000000..bf9c37e
+--- /dev/null
++++ b/tests/test_out_of_stock.py
+@@ -0,0 +1,9 @@
++from inventory.report import out_of_stock
++from inventory.stock import Stock
++
++
++def test_out_of_stock() -> None:
++    stock = Stock()
++    stock.add("pear", 0)
++    stock.add("apple", 2)
++    assert out_of_stock(stock) == ["pear"]

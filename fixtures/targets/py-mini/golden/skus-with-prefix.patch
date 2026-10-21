@@ -1,0 +1,29 @@
+diff --git a/src/inventory/report.py b/src/inventory/report.py
+index 955edb5..03c079c 100644
+--- a/src/inventory/report.py
++++ b/src/inventory/report.py
+@@ -6,3 +6,8 @@ def summary(stock: Stock) -> dict[str, int]:
+         "skus": len(stock.items),
+         "units": sum(item.quantity for item in stock.items.values()),
+     }
++
++
++def skus_with_prefix(stock: Stock, prefix: str) -> list[str]:
++    """The SKUs that start with prefix, sorted."""
++    return sorted(sku for sku in stock.items if sku.startswith(prefix))
+diff --git a/tests/test_prefix.py b/tests/test_prefix.py
+new file mode 100644
+index 0000000..e143a54
+--- /dev/null
++++ b/tests/test_prefix.py
+@@ -0,0 +1,10 @@
++from inventory.report import skus_with_prefix
++from inventory.stock import Stock
++
++
++def test_skus_with_prefix() -> None:
++    stock = Stock()
++    for sku in ["fruit-pear", "veg-leek", "fruit-apple"]:
++        stock.add(sku, 1)
++    assert skus_with_prefix(stock, "fruit-") == ["fruit-apple", "fruit-pear"]
++    assert skus_with_prefix(stock, "nut-") == []

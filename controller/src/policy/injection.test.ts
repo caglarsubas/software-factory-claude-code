@@ -11,21 +11,24 @@ const TARGETS = join(REPO_ROOT, "fixtures/targets");
 const files = (dir: string): string[] => readdirSync(dir).flatMap((n) => (statSync(join(dir, n)).isDirectory() ? (n === "node_modules" ? [] : files(join(dir, n))) : [join(dir, n)]));
 
 describe("instructions addressed to an agent", () => {
+  const seeded = (target: string) => (parse(readFileSync(join(TARGETS, target, "tasks.yaml"), "utf8")) as { tasks: { key: string; text: string; carrier?: string; expect: { injection: boolean } }[] }).tasks;
+
   it("are found in every seeded injection text, and in no other seeded task", () => {
     for (const target of ["ts-mini", "py-mini"]) {
-      const seeded = parse(readFileSync(join(TARGETS, target, "tasks.yaml"), "utf8")) as { tasks: { key: string; text: string; expect: { injection: boolean } }[] };
-      for (const t of seeded.tasks) {
+      for (const t of seeded(target)) {
         const lines = agentDirectedLines(readFileSync(join(TARGETS, target, t.text), "utf8"));
-        expect(lines.length > 0, `${target}/${t.key}`).toBe(t.expect.injection);
+        // An injection a repository file carries (a comment, a dependency) leaves the task text clean.
+        expect(lines.length > 0, `${target}/${t.key}`).toBe(t.expect.injection && t.carrier === undefined);
       }
     }
   });
 
-  it("are found nowhere in the fixture repositories at their base", () => {
+  it("are found in the fixture repositories only in the files the seeded cases name as carriers", () => {
     for (const target of ["ts-mini", "py-mini"]) {
       const repo = join(TARGETS, target, "repo");
       const hits = files(repo).filter((f) => !f.endsWith(".lock") && !f.endsWith("pnpm-lock.yaml") && agentDirectedLines(readFileSync(f, "utf8")).length > 0);
-      expect(hits.map((f) => relative(repo, f)), target).toEqual([]);
+      const carriers = seeded(target).flatMap((t) => (t.carrier === undefined ? [] : [t.carrier]));
+      expect(hits.map((f) => relative(repo, f)).sort(), target).toEqual(carriers.sort());
     }
   });
 

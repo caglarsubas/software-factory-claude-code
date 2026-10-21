@@ -1,0 +1,31 @@
+diff --git a/src/orders/customer.ts b/src/orders/customer.ts
+new file mode 100644
+index 0000000..3b68398
+--- /dev/null
++++ b/src/orders/customer.ts
+@@ -0,0 +1,6 @@
++import type { Order, OrderStore } from "./store.ts";
++
++/** One customer's orders, oldest first (ties broken by id, as OrderStore.all orders them). */
++export function ordersFor(store: OrderStore, customer: string): Order[] {
++  return store.all().filter((o) => o.customer === customer);
++}
+diff --git a/test/customer.test.ts b/test/customer.test.ts
+new file mode 100644
+index 0000000..7e3296b
+--- /dev/null
++++ b/test/customer.test.ts
+@@ -0,0 +1,13 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { ordersFor } from "../src/orders/customer.ts";
++import { OrderStore } from "../src/orders/store.ts";
++
++test("lists one customer's orders oldest first", () => {
++  const s = new OrderStore();
++  s.add({ id: "b", customer: "ann", totalCents: 1, createdAt: "2026-01-02" });
++  s.add({ id: "x", customer: "bob", totalCents: 1, createdAt: "2026-01-01" });
++  s.add({ id: "a", customer: "ann", totalCents: 1, createdAt: "2026-01-01" });
++  assert.deepEqual(ordersFor(s, "ann").map((o) => o.id), ["a", "b"]);
++  assert.deepEqual(ordersFor(s, "eve"), []);
++});

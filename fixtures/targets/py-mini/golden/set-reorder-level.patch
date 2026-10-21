@@ -1,0 +1,36 @@
+diff --git a/src/inventory/stock.py b/src/inventory/stock.py
+index 1635e2f..bcc36ac 100644
+--- a/src/inventory/stock.py
++++ b/src/inventory/stock.py
+@@ -23,3 +23,12 @@ class Stock:
+         item = self.items[sku]
+         item.quantity -= quantity
+         return item
++
++    def set_reorder_level(self, sku: str, level: int) -> Item:
++        if level < 0:
++            raise ValueError("reorder level must not be negative")
++        item = self.items.get(sku)
++        if item is None:
++            raise ValueError(f"unknown sku: {sku}")
++        item.reorder_level = level
++        return item
+diff --git a/tests/test_reorder_level.py b/tests/test_reorder_level.py
+new file mode 100644
+index 0000000..7dfd259
+--- /dev/null
++++ b/tests/test_reorder_level.py
+@@ -0,0 +1,13 @@
++import pytest
++
++from inventory.stock import Stock
++
++
++def test_set_reorder_level() -> None:
++    stock = Stock()
++    stock.add("apple", 1)
++    assert stock.set_reorder_level("apple", 5).reorder_level == 5
++    with pytest.raises(ValueError):
++        stock.set_reorder_level("apple", -1)
++    with pytest.raises(ValueError):
++        stock.set_reorder_level("pear", 1)

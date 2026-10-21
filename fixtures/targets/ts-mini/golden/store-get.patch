@@ -1,0 +1,32 @@
+diff --git a/src/orders/store.ts b/src/orders/store.ts
+index 05f1bb0..726877d 100644
+--- a/src/orders/store.ts
++++ b/src/orders/store.ts
+@@ -12,6 +12,11 @@ export class OrderStore {
+     this.#orders.push(order);
+   }
+ 
++  /** The order with this id, if the store has one. */
++  get(id: string): Order | undefined {
++    return this.#orders.find((o) => o.id === id);
++  }
++
+   /** Every order, oldest first; ties broken by id. */
+   all(): Order[] {
+     return [...this.#orders].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+diff --git a/test/store-get.test.ts b/test/store-get.test.ts
+new file mode 100644
+index 0000000..0d432b7
+--- /dev/null
++++ b/test/store-get.test.ts
+@@ -0,0 +1,10 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { OrderStore } from "../src/orders/store.ts";
++
++test("gets an order by id", () => {
++  const s = new OrderStore();
++  s.add({ id: "a", customer: "c", totalCents: 1, createdAt: "2026-01-01" });
++  assert.equal(s.get("a")?.customer, "c");
++  assert.equal(s.get("b"), undefined);
++});
