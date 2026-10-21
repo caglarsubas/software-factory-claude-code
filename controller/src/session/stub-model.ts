@@ -6,10 +6,14 @@
 // get a short text answer. Any other route is refused and logged, so a call the suite did not
 // expect shows up as a failure rather than passing silently.
 //
+// Every logged request also names which watched strings appear anywhere in its body, so a
+// suite can show that text planted in a target (an instruction file, say) never reached a model.
+//
 // Dependency-free: it runs inside a runner container as `node stub-model.ts`, configured by env:
 //   STUB_SCRIPT  path of a JSON file: { "<case>": [Turn, ...] }, read on every request
 //   STUB_LOG     NDJSON log of every request, with the tool results the CLI sent back
 //   STUB_PORT    listen port (default 8080)
+//   STUB_WATCH   a JSON array of strings to look for in every request body (default none)
 import { appendFileSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
@@ -100,7 +104,7 @@ function answer(res: ServerResponse, req: Request, turn: Turn, id: string): void
   res.end();
 }
 
-export function stubHandler(script: () => Script, log: (e: Record<string, unknown>) => void): (req: IncomingMessage, res: ServerResponse) => void {
+export function stubHandler(script: () => Script, log: (e: Record<string, unknown>) => void, watch: readonly string[] = []): (req: IncomingMessage, res: ServerResponse) => void {
   let n = 0;
   return (req, res) => {
     let body = "";
@@ -125,13 +129,14 @@ export function stubHandler(script: () => Script, log: (e: Record<string, unknow
         res.writeHead(400).end();
         return;
       }
+      const seen = watch.filter((w) => body.includes(w));
       if (path === "/v1/messages/count_tokens") {
-        log({ route: path });
+        log({ route: path, seen });
         res.writeHead(200, { "content-type": "application/json" }).end('{"input_tokens":10}');
         return;
       }
       const next = nextTurn(script(), parsed);
-      log({ route: path, model: parsed.model ?? null, case: next.case, index: next.index, turn: next.turn, tool_results: toolResults(parsed.messages ?? []), last_user_text: lastUserText(parsed.messages ?? []), auth: req.headers["x-api-key"] === undefined ? "none" : "x-api-key" });
+      log({ route: path, model: parsed.model ?? null, case: next.case, index: next.index, turn: next.turn, tool_results: toolResults(parsed.messages ?? []), last_user_text: lastUserText(parsed.messages ?? []), seen, auth: req.headers["x-api-key"] === undefined ? "none" : "x-api-key" });
       answer(res, parsed, next.turn, `msg_${String(++n)}`);
     });
   };
@@ -145,5 +150,6 @@ if (import.meta.main) {
     if (file === undefined || file === "") process.stdout.write(line);
     else appendFileSync(file, line);
   };
-  createServer(stubHandler(script, log)).listen(Number(process.env["STUB_PORT"] ?? "8080"), "0.0.0.0");
+  const watch = JSON.parse(process.env["STUB_WATCH"] ?? "[]") as string[];
+  createServer(stubHandler(script, log, watch)).listen(Number(process.env["STUB_PORT"] ?? "8080"), "0.0.0.0");
 }

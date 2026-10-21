@@ -4,7 +4,7 @@
 // release, the in-process guard, a sandbox that must be available, and structured output for
 // every judgment stage. With a runner setup (P2-01) the CLI runs in a runner container instead
 // of on the host; everything else here stays on the host.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentDefinition, Options, SandboxSettings, Settings } from "@anthropic-ai/claude-agent-sdk";
@@ -25,6 +25,33 @@ import { guardHook, type Denial } from "./guard.ts";
 export type SessionStage = "triage" | "spec" | "build" | "review" | "refute" | "approve" | "summarize";
 
 export const REGISTRIES = ["registry.npmjs.org", "pypi.org", "files.pythonhosted.org"];
+
+/**
+ * Claude Code's built-in AGENTS.md loader (a mod, 2.1.277 and later) reads instruction files from
+ * the managed CLAUDE.md only. A target's CLAUDE.md reaches the agents as data in the prompt, and
+ * nothing else of the target's instructions loads; `settingSources: []` already keeps project
+ * memory off, and this keeps the loader off it should that ever change. Shared with the runner's
+ * managed settings.
+ */
+export const INSTRUCTION_FILES = { "cc-plugin-agents-md@builtin": { options: { instructionFiles: "managed-only" } } } as const;
+
+/** prepareSession's refusal of a config directory holding mods; the pipeline files it under permission_denied. */
+export class ForeignModsError extends Error {}
+
+/**
+ * Mods (Claude Code 2.1.286 and later) in a session's config directory: Claude Code loads
+ * `dev-mods/<session id>/` as plugins and runs them outside the sandbox, even under dontAsk
+ * (probed on 2.1.286), and a resumed session or a takeover keeps its id. The factory never writes
+ * one, so anything there is foreign: the session refuses to start, and so does a takeover.
+ */
+export function foreignMods(configDir: string): string[] {
+  const dir = join(configDir, "dev-mods");
+  try {
+    return readdirSync(dir, { recursive: true, encoding: "utf8" }).map((f) => join(dir, f)).sort();
+  } catch {
+    return [];
+  }
+}
 
 /** The SDK's channel for structured output: under outputFormat json_schema the session ends its turn by calling this tool, so a judgment stage must have it listed, pre-approved and allowed by the guard. It only carries the answer. */
 export const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
@@ -118,6 +145,7 @@ export function sessionSettings(inputs: SessionInputs, release: Release): Settin
   return {
     ...key,
     permissions: { defaultMode: "dontAsk", disableBypassPermissionsMode: "disable", deny },
+    pluginConfigs: INSTRUCTION_FILES,
     disableWorkflows: true,
     workflowKeywordTriggerEnabled: false,
     cleanupPeriodDays: release.config.retention_days.transcripts,
@@ -125,12 +153,16 @@ export function sessionSettings(inputs: SessionInputs, release: Release): Settin
 }
 
 export function sessionSandbox(inputs: SessionInputs): SandboxSettings {
+  // Nothing a session runs may write where Claude Code loads plugins and mods from: its config
+  // directory (dev-mods), its home's .claude, or the release's plugin (2.1.299 fixed sandboxed
+  // writes into a --plugin-dir; the release is also read-only on disk).
+  const dir = sessionDir(inputs.home, inputs.taskId);
   return {
     enabled: true,
     failIfUnavailable: true,
     allowUnsandboxedCommands: false,
     network: { allowedDomains: REGISTRIES },
-    filesystem: { denyWrite: [".claude/**"], denyRead: secretPaths(inputs.home) },
+    filesystem: { denyWrite: [".claude/**", join(dir, "claude"), join(dir, "home", ".claude"), inputs.release.pluginDir], denyRead: secretPaths(inputs.home) },
   };
 }
 
@@ -151,6 +183,8 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
   const configDir = join(dir, "claude");
   const tmpDir = join(dir, "tmp");
   for (const d of [home, configDir, tmpDir]) mkdirSync(d, { recursive: true, mode: 0o700 });
+  const mods = foreignMods(configDir);
+  if (mods.length > 0) throw new ForeignModsError(`${spec.label}: the session's config directory holds mods the factory did not write; inspect and remove them before the task goes on: ${mods.join(", ")}`);
 
   // The agents' rubrics (`${CLAUDE_PLUGIN_ROOT}/rubrics/*.md`) are part of the release: every session may read them.
   const rubrics = join(release.pluginDir, "rubrics");

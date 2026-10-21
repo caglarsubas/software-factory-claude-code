@@ -5,7 +5,7 @@
 // fake GitHub API. The container gates run end to end in gates.int.test.ts.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -17,7 +17,7 @@ import type { GatesResult } from "../../../gates/src/run.ts";
 import { ledger, startGateway } from "../gateway/gateway.ts";
 import { memoryGitHub, type MemoryGitHub } from "../github/testing.ts";
 import { clearHalt, setHalt } from "../halt.ts";
-import { ensureHome, factoryHome, runDir, worktreeDir, type Home } from "../home.ts";
+import { ensureHome, factoryHome, runDir, sessionDir, worktreeDir, type Home } from "../home.ts";
 import { REPO_ROOT } from "../policy/load.ts";
 import { loadRelease } from "../release.ts";
 import { createValidator } from "../schemas/validate.ts";
@@ -262,7 +262,10 @@ describe("a task through every stage, replayed", () => {
       expect(o.agents?.[agent]?.prompt, req.label).not.toContain("${CLAUDE_PLUGIN_ROOT}");
       expect(o.hooks?.PreToolUse?.length, req.label).toBe(1);
       expect(o.sandbox, req.label).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false });
-      const settings = o.settings as { permissions: { disableBypassPermissionsMode: string }; disableWorkflows: boolean; apiKeyHelper: string };
+      // Nothing a session runs may write where Claude Code loads plugins and mods from.
+      expect(o.sandbox?.filesystem?.denyWrite, req.label).toEqual(expect.arrayContaining([o.env?.["CLAUDE_CONFIG_DIR"], release.pluginDir]));
+      const settings = o.settings as { permissions: { disableBypassPermissionsMode: string }; disableWorkflows: boolean; apiKeyHelper: string; pluginConfigs: unknown };
+      expect(settings.pluginConfigs, req.label).toEqual({ "cc-plugin-agents-md@builtin": { options: { instructionFiles: "managed-only" } } });
       expect(settings.permissions.disableBypassPermissionsMode, req.label).toBe("disable");
       expect(settings.disableWorkflows, req.label).toBe(true);
       expect(settings.apiKeyHelper, req.label).toContain(world.home.secrets);
@@ -1493,6 +1496,16 @@ describe("resume, gates and cancellation", () => {
       expect(world.store.events(id).find((e) => e.type === "stage_failed")?.payload["category"]).toBe(category);
       expect(remoteBranch(id)).toBe("");
     }
+  });
+
+  it("fails a task whose sessions' config directory holds a mod the factory did not write (Claude Code 2.1.286 and later)", async () => {
+    const id = newTask();
+    const mod = join(sessionDir(world.home, id), "claude", "dev-mods", "5f0c2a8e-7d4b-4c1a-9e3f-0a1b2c3d4e5f", "m", "hooks");
+    mkdirSync(mod, { recursive: true });
+    writeFileSync(join(mod, "register.js"), "export function register() {}\n");
+    expect(await run(id, deps(replayRunner(transcripts(id))))).toBe("FAILED");
+    expect(failure(id)).toMatchObject({ stage: "triage", category: "permission_denied", reason: expect.stringContaining("holds mods the factory did not write") as unknown });
+    expect(world.store.events(id).some((e) => e.type === "stage_started")).toBe(false);
   });
 
   it("records each session's duration, runner and round on stage_completed (P1-07)", async () => {
