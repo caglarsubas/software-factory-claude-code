@@ -31,7 +31,7 @@ import { scanInjection, suspect, type InjectionScan } from "../policy/injection.
 import { loadRiskPolicy } from "../policy/load.ts";
 import type { BudgetTier, Release } from "../release.ts";
 import type { Validator } from "../schemas/validate.ts";
-import { prepareSession, type StageSpec } from "../session/options.ts";
+import { ForeignModsError, prepareSession, type StageSpec } from "../session/options.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { SessionRunner, StageOutcome } from "../session/runner.ts";
 import { runPreflight, startBroker } from "../runner/broker.ts";
@@ -394,7 +394,14 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
         const ct = deps.container ?? null;
         if (ct !== null && token === null) throw new Error(`${spec.label}: a runner session needs the credential gateway`);
         const container = ct === null || token === null ? {} : { runner: ct.setup(token.path) };
-        const prepared = prepareSession({ home, taskId, release, validator, keyFile: deps.keyFile, abort, ...telemetry, ...gateway, ...container }, { ...spec, budgetUsd: cap });
+        const prepared = (() => {
+          try {
+            return prepareSession({ home, taskId, release, validator, keyFile: deps.keyFile, abort, ...telemetry, ...gateway, ...container }, { ...spec, budgetUsd: cap });
+          } catch (e) {
+            if (e instanceof ForeignModsError) fail(spec.stage, "permission_denied", e.message);
+            throw e;
+          }
+        })();
         // The runner kind and the env's names (never values) are the evidence for G0-1 and G0-3; a session that never reports is charged what the gateway metered, or without one its cap (D4).
         emit("stage_started", { stage: spec.stage, label: spec.label, agent: spec.agent, runner: deps.runner.kind, env_keys: Object.keys(prepared.env).sort(), cap_usd: cap, tier, round, ...(grant === null ? {} : { gateway_session: grant.id, limit_usd: Math.round(limit * 1e4) / 1e4 }), ...(ct === null ? {} : { in_container: true }) });
         deps.log(`${taskId}: ${spec.label} (cap ${usd(cap)}${grant === null ? "" : `, hard limit ${usd(limit)}`})`);

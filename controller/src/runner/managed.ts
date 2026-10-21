@@ -4,13 +4,15 @@
 // union of what any stage may use, plus every deny; each stage still narrows its own session
 // through `tools`, `disallowedTools` (honoured under managed-only rules) and the in-process
 // guard. With allowManagedHooksOnly the plugin's hooks.json does not run: the four factory hooks
-// are managed hooks here, copied into the image from the release.
+// are managed hooks here, copied into the image from the release. It also keeps every mod a user
+// installed or a session wrote from loading (Claude Code 2.1.286 and later), and so does the
+// built-in mod guard's allowManagedModsOnly, which reads its options from managed settings only.
 //
 // Paths here are paths inside the runner, never the operator's: the per-session token is
 // mounted at TOKEN_PATH and nothing under $FACTORY_HOME/secrets is mounted at all.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { REGISTRIES, STRUCTURED_OUTPUT_TOOL } from "../session/options.ts";
+import { INSTRUCTION_FILES, REGISTRIES, STRUCTURED_OUTPUT_TOOL } from "../session/options.ts";
 import type { Release } from "../release.ts";
 
 /** Where the image installs its managed settings (the Linux managed-settings path). */
@@ -90,6 +92,7 @@ export function managedSettings(release: Release): Record<string, unknown> {
     allowManagedHooksOnly: true,
     allowManagedMcpServersOnly: true,
     allowedMcpServers: [],
+    pluginConfigs: { ...INSTRUCTION_FILES, "cc-plugin-sec-default@builtin": { options: { allowManagedModsOnly: true } } },
     availableModels: availableModels(release),
     availableModelsMatch: "exact",
     disableWorkflows: true,

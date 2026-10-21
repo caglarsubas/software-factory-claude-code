@@ -9,7 +9,7 @@ import { sessionDir, type Home } from "../home.ts";
 import type { Release } from "../release.ts";
 import type { Validator } from "../schemas/validate.ts";
 import { sessionEnv } from "./env.ts";
-import { sessionSandbox, sessionSettings } from "./options.ts";
+import { foreignMods, sessionSandbox, sessionSettings } from "./options.ts";
 
 export interface TakeoverInputs {
   home: Home;
@@ -42,6 +42,10 @@ export function takeoverLaunch(i: TakeoverInputs): TakeoverLaunch {
   const { release } = i;
   const dir = sessionDir(i.home, i.taskId);
   for (const d of ["home", "claude", "tmp"]) mkdirSync(join(dir, d), { recursive: true, mode: 0o700 });
+  // A takeover resumes the build session, with its id and config directory, where Claude Code
+  // would load a mod that session left in dev-mods (options.ts, foreignMods).
+  const mods = foreignMods(join(dir, "claude"));
+  if (mods.length > 0) throw new Error(`takeover: the session's config directory holds mods the factory did not write; inspect and remove them first: ${mods.join(", ")}`);
   mkdirSync(i.taskDir, { recursive: true, mode: 0o700 });
   const tools = release.tools.agents["builder"];
   if (tools === undefined) throw new Error("policies/tools.yaml has no entry for builder");

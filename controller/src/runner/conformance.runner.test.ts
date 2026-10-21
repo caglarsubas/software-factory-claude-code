@@ -23,14 +23,14 @@ import { ENGINE } from "../../../gates/src/container.ts";
 import { REPO_ROOT } from "../policy/load.ts";
 import { loadRelease } from "../release.ts";
 import { clearHalt, setHalt } from "../halt.ts";
-import { factoryHome } from "../home.ts";
+import { factoryHome, sessionDir } from "../home.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { allowedEnvKeys } from "../session/env.ts";
 import type { Script } from "../session/stub-model.ts";
 import { listContainers, reapRunnerContainers, runArgs, runnerEnv, runnerUser, SDK_ENV, type RunnerSetup } from "./container.ts";
 import { ensureTaskNetwork, gatewayAddress, networkName, proxyName, removeTaskNetwork } from "./network.ts";
 import { startTaskRunner } from "./live.ts";
-import { buildWorld, destroyWorld, own, runCase, stubLog, type World } from "./suite.ts";
+import { buildWorld, CANARIES, destroyWorld, MOD_PROBE, own, plantMod, runCase, stubLog, type World } from "./suite.ts";
 import { startGateway, writeTokenFile, type UsageEntry } from "../gateway/gateway.ts";
 import { stubHandler } from "../session/stub-model.ts";
 import { self } from "../proc.ts";
@@ -47,6 +47,10 @@ const sh = (command: string): { tool: string; input: Record<string, unknown> } =
 const done = { text: "done" };
 
 let w: World;
+/** The suite's session config directory (prepareSession's), where a user's own plugins and mods would live. */
+const configDir = (): string => join(sessionDir(factoryHome({ FACTORY_HOME: w.homeRoot }), TASK), "claude");
+/** A fixed id for the instructions case, so a mod planted for "that session" is planted where it would load. */
+const MOD_SESSION = "5f0c2a8e-7d4b-4c1a-9e3f-0a1b2c3d4e5f";
 
 const script = (): Script => ({
   "write-guarded": [{ tool: "Write", input: { file_path: join(w.worktree, "secret/leak.txt"), content: "x" } }, sh("test -e secret/leak.txt && echo EXISTS || echo ABSENT"), done],
@@ -63,6 +67,13 @@ const script = (): Script => ({
     "NODE_USE_ENV_PROXY=1 node -e \"fetch('https://example.com/').then(r=>console.log('EXAMPLE',r.status),()=>console.log('EXAMPLE-BLOCKED'))\"",
     "NODE_USE_ENV_PROXY=1 node -e \"fetch('https://registry.npmjs.org/-/ping').then(r=>console.log('REGISTRY',r.status),e=>console.log('REGISTRY-FAILED',String(e.cause?.code ?? e)))\"",
   ].join("; ")), done],
+  "instructions": [
+    { tool: "Read", input: { file_path: join(w.worktree, "pkg/a.ts") } },
+    { tool: "Read", input: { file_path: join(w.worktree, "lib/b.ts") } },
+    sh(MOD_PROBE),
+    sh(`touch '${join(w.pluginDir, "hooks/sf-written")}' 2>/dev/null && echo PLUGIN-WRITABLE || echo PLUGIN-DENIED; mkdir '${join(configDir(), "skills")}/sf-written' 2>/dev/null && echo CONFIG-WRITABLE || echo CONFIG-DENIED`),
+    done,
+  ],
   "broker-fail": [{ text: "first stop" }, { text: "second stop" }],
   "broker-pass": [{ text: "first stop" }, { text: "should not be asked" }],
   "sleep": [sh("sleep 120"), done],
@@ -207,6 +218,33 @@ describe("runner conformance (P2-01)", () => {
     expect(r.stdout).toContain("direct-host closed");
     for (const k of ["proxy-host", "proxy-private", "proxy-port", "proxy-unlisted"]) expect(r.stdout).toContain(`${k} HTTP/1.1 403 Forbidden`);
   }, 120_000);
+
+  it("loads nothing of the target's and no mod: no instruction file reaches the model, no planted mod runs", async () => {
+    const r = await runCase(w, "instructions", {
+      tweak: (p) => {
+        // A user's own plugin, and a mod "this session" wrote, planted after prepareSession checked
+        // the config directory, where Claude Code 2.1.286 loads them on the host.
+        const cfg = p.env.CLAUDE_CONFIG_DIR;
+        plantMod(join(cfg, "skills/user-mod"), "user-mod", "SF-MOD-USER");
+        plantMod(join(cfg, "dev-mods", MOD_SESSION, "dev-mod"), "dev-mod", "SF-MOD-DEV");
+        own(cfg);
+        p.options.sessionId = MOD_SESSION;
+      },
+    }, validator);
+    expect(r.outcome.ok, r.outcome.errors.join("; ")).toBe(true);
+    // No request, the session's own or a side call, carried the target's instruction files.
+    const log = readFileSync(w.stubLog, "utf8").split("\n").filter((l) => l !== "").map((l) => JSON.parse(l) as { seen?: string[] });
+    expect(log.flatMap((e) => e.seen ?? []), `watched ${CANARIES.join(", ")}`).toEqual([]);
+    // No planted mod ran: the probe command ran as it was, and every plugin is the release's or built in.
+    const [, , probe] = results("instructions");
+    expect(text(probe)).toContain("sf-mod-probe");
+    expect(text(probe)).not.toContain("SF-MOD");
+    const init = messages(r.transcript).find((m) => m.type === "system" && m.subtype === "init") as { plugins?: { name: string; path: string }[] } | undefined;
+    for (const plugin of init?.plugins ?? []) expect([w.pluginDir, "builtin"], plugin.name).toContain(plugin.path);
+    // The session can write into neither the release's plugin nor its own config directory.
+    expect(existsSync(join(w.pluginDir, "hooks/sf-written"))).toBe(false);
+    expect(existsSync(join(configDir(), "skills/sf-written"))).toBe(false);
+  }, 300_000);
 
   it("brokers the build's preflight to the host: a failure keeps the builder going, a pass lets it stop", async () => {
     const failed = await runCase(w, "broker-fail", { preflight: ["sh", "-c", "echo gates failed; exit 1"] }, validator);

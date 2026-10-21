@@ -39,6 +39,8 @@ describe("generated runner files", () => {
     for (const d of ["WebFetch", "WebSearch", "Read(//proc/*/environ)", "Read(//run/factory/**)", ...release.tools.forbidden.map((f) => f.pattern)]) expect(m.permissions.deny).toContain(d);
     for (const k of ["allowManagedPermissionRulesOnly", "allowManagedHooksOnly", "allowManagedMcpServersOnly", "disableWorkflows"]) expect(m[k]).toBe(true);
     expect(m["workflowKeywordTriggerEnabled"]).toBe(false);
+    // No mod a user installed or a session wrote loads, and no instruction file but the managed CLAUDE.md.
+    expect(m["pluginConfigs"]).toEqual({ "cc-plugin-agents-md@builtin": { options: { instructionFiles: "managed-only" } }, "cc-plugin-sec-default@builtin": { options: { allowManagedModsOnly: true } } });
     expect(m.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, enableWeakerNestedSandbox: false });
     expect(m["apiKeyHelper"]).toBe(`cat ${TOKEN_PATH}`);
     // Every hooks.json hook, pointed at the image's copy; nothing from the operator's machine.

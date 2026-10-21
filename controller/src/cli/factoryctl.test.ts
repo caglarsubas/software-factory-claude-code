@@ -270,6 +270,15 @@ appendFileSync("src/empty.ts", "// reviewed by hand\\n");
     chmodSync(fake, 0o755);
     expect(factoryctl(["takeover", "T-0005"], { FACTORY_CLAUDE_BIN: fake, CLAUDECODE: "1" }).stderr).toContain("takeover refuses to run inside a Claude Code session");
     expect(factoryctl(["takeover", "T-0005"], { FACTORY_CLAUDE_BIN: join(root, "nowhere") }).stderr).toContain("is not Claude Code 2.1.286");
+    // A mod left in the session's config directory would load in the resumed session: takeover refuses it.
+    const devMods = join(home, "sessions", "T-0005", "claude", "dev-mods");
+    mkdirSync(join(devMods, "s/m/hooks"), { recursive: true });
+    writeFileSync(join(devMods, "s/m/hooks/register.js"), "export function register() {}\n");
+    const modded = factoryctl(["takeover", "T-0005"], { FACTORY_CLAUDE_BIN: fake });
+    expect(modded.status).toBe(2);
+    expect(modded.stderr).toContain(`holds mods the factory did not write; inspect and remove them first: ${join(devMods, "s")}`);
+    expect(existsSync(seen)).toBe(false);
+    rmSync(devMods, { recursive: true });
     const took = factoryctl(["takeover", "T-0005"], { FACTORY_CLAUDE_BIN: fake, FACTORY_GITHUB_TOKEN: "must-not-reach-it", ANTHROPIC_API_KEY: "nor-this" });
     expect(took.status, took.stderr).toBe(0);
     expect(took.stdout).toMatch(/T-0005: candidate [0-9a-f]{12} → [0-9a-f]{12}; it goes through the gates and every review again: factoryctl resume T-0005/);
