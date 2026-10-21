@@ -4,6 +4,18 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-21
+
+### Added
+
+- **`/software-factory:factory-review`, the plugin's workflow (P2-14), for interactive use only.** In a person's own Claude Code session it reviews their change against a base ref, or by default against the upstream branch:
+  - a scope step writes the diff, capped as the factory caps it, into the git directory;
+  - the plugin's own code and security reviewers review it, joined by the dependency and migration reviewers when a changed path matches the policy's globs;
+  - the plugin's refuter tests every blocking finding.
+
+  It returns the findings and how many still block. It never changes the working tree, pushes, posts or approves, and it spends tokens on the person's own login. Factory sessions keep workflows off.
+- The script is plain JavaScript, as the workflow runtime needs. `controller/src/plugin/workflow.ts` generates it from the factory's review and refutation schemas, reviewer table, `policies/risk.yaml` routing and diff cap, and a test fails when the committed file differs. A unit test runs it against stand-ins. An integration test shows the pinned CLI loading it in a person's session and not in a factory session.
+
 ## [0.18.0] - 2026-10-21
 
 ### Security
@@ -386,7 +398,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.15.0...v0.16.0
