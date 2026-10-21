@@ -159,6 +159,10 @@
             },
             "operation_requested": {
               "const": true
+            },
+            "injection_suspect": {
+              "const": true,
+              "description": "Untrusted input the task's sessions saw addresses instructions to an agent (G2-2)."
             }
           },
           "minProperties": 1,

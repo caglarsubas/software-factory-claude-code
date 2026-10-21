@@ -52,6 +52,8 @@ const defaultCases: Case[] = [
   { name: "a proposed tier cannot lower", facts: facts([file("src/auth/x.ts")], { proposedTier: "R0" }), tier: "R3" },
   { name: "renaming out of a protected area is judged by the old path", facts: facts([file("docs/x.md", 10, "src/auth/x.ts")]), tier: "R3" },
   { name: "shadow graph rule never changes the tier", facts: facts([file("src/a.ts")], { graphHopsToProtected: 1 }), tier: "R1" },
+  { name: "instructions addressed to an agent make R1 R2 with security review", facts: facts([file("src/a.ts")], { injectionSuspect: true }), tier: "R2", reviews: ["security"] },
+  { name: "instructions addressed to an agent make docs R2", facts: facts([file("docs/a.md")], { injectionSuspect: true }), tier: "R2" },
 ];
 
 const selfCases: Case[] = [
@@ -106,6 +108,7 @@ describe("fail upward", () => {
     { sinksAdded: ["shell"] },
     { proposedTier: "R3" },
     { graphHopsToProtected: 1 },
+    { injectionSuspect: true },
   ];
 
   it("adding any risk signal never lowers the tier", () => {

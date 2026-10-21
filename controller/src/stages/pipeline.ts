@@ -10,8 +10,8 @@
 // findings in the next build's prompt; the same finding twice, or a round past the policy's
 // maximum, stops the task. Every step runs inside the task's budget (by tier), the target's
 // monthly cap and the wall clock of active time.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative } from "node:path";
 import { parse, stringify } from "yaml";
 import type { GatesResult, RunOptions as GateRunOptions } from "../../../gates/src/run.ts";
 import { cacheVolumeFor } from "../../../gates/src/run.ts";
@@ -19,7 +19,7 @@ import { activeMs, budgetTier, calibrate, completedRuns, meteredSpend, monthOf, 
 import { policyDigest, writeManifest } from "../bundle/manifest.ts";
 import { storeTree } from "../durable/objects.ts";
 import { writeAtomic } from "../fsutil.ts";
-import { changedFiles, commitAll, createTaskClone, diffPatch, fetchBundle, GitError, head, headBundle, mergeInto, mirrorPath, resetClone, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
+import { changedFiles, commitAll, createTaskClone, diffPatch, fetchBundle, git, GitError, head, headBundle, mergeInto, mirrorPath, resetClone, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
 import type { GitHub } from "../github/client.ts";
 import { writeTokenFile, type Gateway } from "../gateway/gateway.ts";
 import { createOutbox } from "../github/outbox.ts";
@@ -27,6 +27,7 @@ import { mirrorIssue } from "../intake/mirror.ts";
 import { describeHalt, readHalt } from "../halt.ts";
 import { runDir, worktreeDir, type Home } from "../home.ts";
 import { evaluate, TIERS, type ChangedFile, type Decision, type DiffFacts, type RiskPolicy, type Tier } from "../policy/engine.ts";
+import { scanInjection, suspect, type InjectionScan } from "../policy/injection.ts";
 import { loadRiskPolicy } from "../policy/load.ts";
 import type { BudgetTier, Release } from "../release.ts";
 import type { Validator } from "../schemas/validate.ts";
@@ -651,8 +652,42 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
       .map((e) => ({ gate: "spec", decision: "approved", by: e.actor.id, at: e.ts, reason: typeof e.payload["reason"] === "string" ? e.payload["reason"] : "" }));
   };
 
+  /** The target files the task's sessions read, from their transcripts: what untrusted repository content they saw (G2-2). */
+  const filesRead = (): string[] => {
+    const transcripts = join(dir, "transcripts");
+    if (!existsSync(transcripts)) return [];
+    const paths: string[] = [];
+    for (const name of readdirSync(transcripts)) {
+      for (const line of readFileSync(join(transcripts, name), "utf8").split("\n")) {
+        if (!line.includes('"tool_use"')) continue;
+        try {
+          const m = JSON.parse(line) as { type?: string; message?: { content?: { type?: string; input?: { file_path?: unknown } }[] } };
+          if (m.type !== "assistant") continue;
+          for (const b of m.message?.content ?? []) {
+            const file = b.type === "tool_use" ? b.input?.file_path : undefined;
+            if (typeof file !== "string") continue;
+            const rel = relative(worktree, file);
+            if (rel !== "" && !rel.startsWith("..") && !isAbsolute(rel)) paths.push(rel);
+          }
+        } catch {
+          // A line cut short by a crash: nothing to read from it.
+        }
+      }
+    }
+    return paths;
+  };
+  /** The injection scan of round n: the task's text, and the files its sessions read or its candidate changed, at the candidate. */
+  const injectionOf = (n: number): InjectionScan => {
+    const cand = candidate(n);
+    const changed = changedFiles(worktree, checkoutInfo().base_commit, cand).map((f) => f.path);
+    return scanInjection(text.body, [...filesRead(), ...changed], (path) => {
+      const content = git(worktree, ["show", `${cand}:${path}`], { allowFail: true });
+      return content === "" ? null : content;
+    });
+  };
+
   /** Round n's facts for the policy engine: the candidate's diff and its gate signals, all committed. */
-  const diffFacts = (n: number): DiffFacts => {
+  const diffFacts = (n: number, injection: InjectionScan = injectionOf(n)): DiffFacts => {
     const g = readJson(roundPath("gates.json", n)) as GatesResult;
     const t = readJson("triage.json") as Triage;
     const s = parse(readFileSync(join(dir, "spec.yaml"), "utf8")) as Spec;
@@ -664,6 +699,7 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
       operationRequested: s.operation_requested === true,
       graphHopsToProtected: null,
       proposedTier: t.proposed_tier,
+      injectionSuspect: suspect(injection),
     };
   };
   const reviewerCache = new Map<string, Reviewer[]>();
@@ -758,8 +794,9 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
 
   // The policy engine, not a model, decides the tier: a deterministic step of its own.
   const policy = (n: number) => (): Promise<Output[]> => {
-    const decision = evaluate(diffFacts(n), risk);
-    return Promise.resolve([out("policy.json", decision, null)]);
+    const injection = injectionOf(n);
+    const decision = evaluate(diffFacts(n, injection), risk);
+    return Promise.resolve([out("policy.json", decision, null), out("injection.json", injection, null)]);
   };
 
   const approve = (n: number) => async (): Promise<Output[]> => {
@@ -841,11 +878,16 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     const approver = readJson("verdict.json") as { decision: string };
     return {
       schema_version: 1, task_id: taskId, repo: task.target.repo, head_sha: headSha, base_commit: base, tier: decision.tier,
-      decision: approver.decision === "approve" ? "approve" : "needs_human", reviews: decision.reviews, spec_digest: specDigest(dir),
+      // A denied tool call passes the verdict to a human as well, so policy-check holds it too.
+      decision: approver.decision === "approve" && deniedCalls() === 0 ? "approve" : "needs_human", reviews: decision.reviews, spec_digest: specDigest(dir),
       artifacts: [...latest].sort(([a], [b]) => a.localeCompare(b)).map(([path, digest]) => ({ path, digest })),
       factory: { version: release.info?.tag ?? `v${release.version}-dev`, ...(release.info === null ? {} : { commit: release.info.sha }), policy: policyDigest(risk) },
     };
   };
+
+  /** Every tool call denied in any of the task's sessions. */
+  const deniedCalls = (): number =>
+    store.events(taskId).filter((e) => e.type === "stage_completed").reduce((sum, e) => sum + (Array.isArray(e.payload["denied"]) ? e.payload["denied"].length : 0), 0);
 
   const publishExit = (): void => {
     const p = readJson("publish.json") as { pr_url: string | null; pr_number: number | null; verdict_check_url?: string | null };
@@ -854,6 +896,13 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     // The approvals ladder of the current phase (ROADMAP §4): from P2, an approved R0–R1 candidate whose
     // verdict the App posted merges itself once the target's required checks pass (P2-05b).
     const ladder = release.approvals.phases[release.approvals.current_phase];
+    // Any tool call the guard or the stage's tool list denied is an out-of-policy attempt (ROADMAP §8): never merged without a person.
+    const denied = deniedCalls();
+    if (denied > 0) {
+      moveTo("NEEDS_HUMAN", { gate: "merge", tier: decision.tier, pr_url: p.pr_url, reason: `${String(denied)} tool call(s) were denied during the task: possible injection` });
+      endReason = "waiting: merge gate";
+      throw new Stop();
+    }
     if (ladder[decision.tier] === "auto_merge" && approver.decision === "approve" && p.pr_number !== null && typeof p.verdict_check_url === "string") {
       moveTo("AUTO_APPROVED", { gate: "checks", tier: decision.tier, pr_url: p.pr_url });
       endReason = "waiting: required checks";
@@ -1038,6 +1087,7 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     const after = evaluate({
       files: changedFiles(worktree, baseNow, mergedHead), sinksAdded: g.signals.sink_added, secretMaterial: g.signals.secret_material,
       classificationUncertain: t.uncertain, operationRequested: sp.operation_requested === true, graphHopsToProtected: null, proposedTier: t.proposed_tier,
+      injectionSuspect: has("injection.json") && suspect(readJson("injection.json") as InjectionScan),
     }, risk);
     const policyOut = out(driftPath("policy.json", k), after, null);
     if (TIERS.indexOf(after.tier) > TIERS.indexOf(decision.tier)) return human(`the policy now puts the change at ${after.tier}, above the approved ${decision.tier}`, [gatesOut, policyOut], after.tier);

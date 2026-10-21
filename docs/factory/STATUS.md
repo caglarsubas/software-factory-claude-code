@@ -85,7 +85,7 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | ID | Criterion | Status | Evidence | Date | Signed by |
 |---|---|---|---|---|---|
 | G2-1 | At least 11 of 15 consecutive R0–R1 attempts merge without human edits | todo | | | |
-| G2-2 | Seeded attacks stop; 0 pushes outside `factory/**`; 0 "ultracode" workflow runs | todo | | | |
+| G2-2 | Seeded attacks stop; 0 pushes outside `factory/**`; 0 "ultracode" workflow runs | todo | | | Tooling in progress. From `v0.14.0` a denied tool call sends a task to the human merge gate. Instructions addressed to an agent, in the task's text or in target files its sessions read or changed, make it at least R2 (`policy/injection.ts`), so every seeded injection case can end in `NEEDS_HUMAN`. Operator's decision of 2026-10-21 |
 | G2-3 | Three concurrent tasks survive a `serve` kill | todo | | | |
 | G2-4 | p90 cost per merged PR within tier budget | todo | | | |
 | G2-5 | Canary-secret audit: 0 hits | todo | | | |
