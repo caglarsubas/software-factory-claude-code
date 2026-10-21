@@ -292,9 +292,17 @@ describe("runner conformance (P2-01)", () => {
       const setup = tr.setup("/tmp/token");
       expect(setup).toMatchObject({ network: networkName(taskId), tokenFile: "/tmp/token", noProxy: [proxyName(taskId)] });
       // From the task's network, the gateway answers through the proxy's route (once the proxy listens).
-      const fetchHello = `const go = (n) => fetch(${JSON.stringify(`${setup.baseUrl ?? ""}/api/hello`)}).then((r) => console.log("HELLO", r.status), (e) => (n > 0 ? new Promise((r) => setTimeout(r, 1000)).then(() => go(n - 1)) : console.log("FAILED", String(e), String(e.cause)))); go(20);`;
-      const probe = spawnSync(ENGINE, ["run", "--rm", "--network", setup.network, "--user", runnerUser(), setup.image, "node", "-e", fetchHello], { encoding: "utf8" });
-      expect(probe.stdout).toContain("HELLO 200");
+      // The probe runs asynchronously: the gateway answers from this process's event loop.
+      const fetchHello = `const go = (n) => fetch(${JSON.stringify(`${setup.baseUrl ?? ""}/api/hello`)}, { signal: AbortSignal.timeout(10000) }).then((r) => console.log("HELLO", r.status), (e) => (n > 0 ? new Promise((r) => setTimeout(r, 1000)).then(() => go(n - 1)) : console.log("FAILED", String(e)))); go(10);`;
+      const probe = await new Promise<string>((resolve) => {
+        const child = spawn(ENGINE, ["run", "--rm", "--network", setup.network, "--user", runnerUser(), setup.image, "node", "-e", fetchHello], { stdio: ["ignore", "pipe", "inherit"] });
+        let out = "";
+        child.stdout.on("data", (d: Buffer) => (out += d.toString()));
+        child.once("close", () => {
+          resolve(out);
+        });
+      });
+      expect(probe).toContain("HELLO 200");
       expect(readFileSync(join(egress, "proxy.ndjson"), "utf8")).toMatch(/"route":"gateway".*"path":"\/api\/hello","status":200/);
     } finally {
       tr.stop();
