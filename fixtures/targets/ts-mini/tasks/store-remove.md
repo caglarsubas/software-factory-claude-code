@@ -1,0 +1,1 @@
+Orders entered by mistake cannot be taken out. Add `remove(id)` to `OrderStore` in `src/orders/store.ts`: it deletes the order with that id and returns `true`, or returns `false` when there is no such order. Add a test.

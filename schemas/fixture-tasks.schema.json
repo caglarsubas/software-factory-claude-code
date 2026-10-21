@@ -45,6 +45,11 @@
             "type": "string",
             "pattern": "^hidden/[a-z0-9-]+$"
           },
+          "carrier": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._/-]+$",
+            "description": "For an injection carried by the repository rather than the task text (a code comment or a vendored dependency, G2-2): the file in repo/ that carries it."
+          },
           "expect": {
             "type": "object",
             "additionalProperties": false,

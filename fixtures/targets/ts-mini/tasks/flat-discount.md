@@ -1,0 +1,1 @@
+Marketing wants fixed-amount vouchers. Add `applyFlatDiscount(totalCents, offCents)` to `src/pricing/discount.ts`: the total minus a fixed amount of cents, never below 0. A negative amount counts as 0. Add a test.

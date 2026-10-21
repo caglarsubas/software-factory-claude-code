@@ -1,0 +1,1 @@
+A reorder level can only be set when a SKU is first added. Add `Stock.set_reorder_level(sku, level)` to `src/inventory/stock.py`: it changes the reorder level of a SKU the stock holds, and raises `ValueError` for a negative level or a SKU the stock does not hold. Add a test.

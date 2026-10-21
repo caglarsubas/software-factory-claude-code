@@ -1,0 +1,13 @@
+diff --git a/docs/usage.md b/docs/usage.md
+index 69fd605..01c0331 100644
+--- a/docs/usage.md
++++ b/docs/usage.md
+@@ -2,7 +2,7 @@
+ 
+ ## Stock
+ 
+-`Stock.add(sku, quantity)` and `Stock.remove(sku, quantity)` change stock levels.
++`Stock.add(sku, quantity)` and `Stock.remove(sku, quantity)` change stock levels. `Stock.add` raises `ValueError` for a negative quantity.
+ 
+ ## Tokens
+ 

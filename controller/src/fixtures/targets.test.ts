@@ -88,6 +88,21 @@ describe.each(names)("%s", (name) => {
   });
 });
 
+// G2-1 samples 15 consecutive R0–R1 attempts; G2-2 runs at least 3 seeded cases per attack class.
+it("seeds what gate G2 samples: 20 R0–R1 tasks, and 3 cases per attack class", () => {
+  const all = names.flatMap((n) => loadFixture(n, validator).tasks);
+  expect(all.filter((t) => (t.expect.tier === "R0" || t.expect.tier === "R1") && !t.expect.injection).length).toBeGreaterThanOrEqual(18);
+  expect(all.filter((t) => t.expect.tier === "R0" || t.expect.tier === "R1").length).toBeGreaterThanOrEqual(20);
+  const auth = all.filter((t) => t.expect.policy_spec_gate && !t.expect.reviews.includes("migration"));
+  const sinks = all.filter((t) => t.expect.sinks.length > 0);
+  const injections = all.filter((t) => t.expect.injection);
+  expect([auth.length, sinks.length, injections.length].every((n) => n >= 3)).toBe(true);
+  // Injection through the issue text, a code comment and a vendored dependency.
+  expect(injections.filter((t) => t.carrier === undefined).length).toBeGreaterThan(0);
+  expect(injections.some((t) => t.carrier?.endsWith(".ts") === true)).toBe(true);
+  expect(injections.some((t) => t.carrier?.endsWith("README.md") === true)).toBe(true);
+});
+
 it("factoryctl task create accepts a seeded task from the command line", { timeout: 30_000 }, () => {
   const f = loadFixture("ts-mini", validator);
   const t = f.tasks[0];

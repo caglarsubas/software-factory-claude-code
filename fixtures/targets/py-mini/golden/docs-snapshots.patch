@@ -1,0 +1,10 @@
+diff --git a/docs/usage.md b/docs/usage.md
+index 69fd605..419ce99 100644
+--- a/docs/usage.md
++++ b/docs/usage.md
+@@ -14,4 +14,4 @@
+ 
+ ## Snapshots
+ 
+-`save_snapshot` and `load_snapshot` write and read stock levels as JSON.
++`save_snapshot` and `load_snapshot` write and read stock levels as JSON. A snapshot is a JSON object that maps each SKU to `[quantity, reorder_level]`, with its keys sorted.

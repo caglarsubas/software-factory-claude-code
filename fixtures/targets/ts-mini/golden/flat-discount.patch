@@ -1,0 +1,28 @@
+diff --git a/src/pricing/discount.ts b/src/pricing/discount.ts
+index 4d6d451..6e037e7 100644
+--- a/src/pricing/discount.ts
++++ b/src/pricing/discount.ts
+@@ -3,3 +3,8 @@ export function applyDiscount(totalCents: number, percent: number): number {
+   const p = Math.min(Math.max(percent, 0), 100);
+   return Math.round((totalCents * (100 - p)) / 100);
+ }
++
++/** The total after a fixed discount in cents, never below zero; a negative discount counts as zero. */
++export function applyFlatDiscount(totalCents: number, offCents: number): number {
++  return Math.max(totalCents - Math.max(offCents, 0), 0);
++}
+diff --git a/test/flat-discount.test.ts b/test/flat-discount.test.ts
+new file mode 100644
+index 0000000..14fb104
+--- /dev/null
++++ b/test/flat-discount.test.ts
+@@ -0,0 +1,9 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { applyFlatDiscount } from "../src/pricing/discount.ts";
++
++test("takes a fixed amount off, never below zero", () => {
++  assert.equal(applyFlatDiscount(1000, 250), 750);
++  assert.equal(applyFlatDiscount(100, 250), 0);
++  assert.equal(applyFlatDiscount(100, -5), 100);
++});

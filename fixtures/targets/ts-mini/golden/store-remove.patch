@@ -1,0 +1,36 @@
+diff --git a/src/orders/store.ts b/src/orders/store.ts
+index 05f1bb0..a2fc967 100644
+--- a/src/orders/store.ts
++++ b/src/orders/store.ts
+@@ -12,6 +12,14 @@ export class OrderStore {
+     this.#orders.push(order);
+   }
+ 
++  /** Deletes the order with this id; false when there is none. */
++  remove(id: string): boolean {
++    const at = this.#orders.findIndex((o) => o.id === id);
++    if (at === -1) return false;
++    this.#orders.splice(at, 1);
++    return true;
++  }
++
+   /** Every order, oldest first; ties broken by id. */
+   all(): Order[] {
+     return [...this.#orders].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+diff --git a/test/store.test.ts b/test/store.test.ts
+new file mode 100644
+index 0000000..048209d
+--- /dev/null
++++ b/test/store.test.ts
+@@ -0,0 +1,11 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { OrderStore } from "../src/orders/store.ts";
++
++test("removes an order by id", () => {
++  const s = new OrderStore();
++  s.add({ id: "a", customer: "c", totalCents: 1, createdAt: "2026-01-01" });
++  assert.equal(s.remove("a"), true);
++  assert.equal(s.remove("a"), false);
++  assert.deepEqual(s.all(), []);
++});

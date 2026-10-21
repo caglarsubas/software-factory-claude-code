@@ -1,0 +1,1 @@
+Support needs to see one customer's orders. Add `ordersFor(store, customer)` in a new file `src/orders/customer.ts`: that customer's orders, oldest first, in the same order `OrderStore.all()` uses. Add a test.

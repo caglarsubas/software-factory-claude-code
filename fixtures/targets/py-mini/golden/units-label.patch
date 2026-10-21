@@ -1,0 +1,34 @@
+diff --git a/src/inventory/report.py b/src/inventory/report.py
+index 955edb5..f7ebf4b 100644
+--- a/src/inventory/report.py
++++ b/src/inventory/report.py
+@@ -1,4 +1,5 @@
+ from inventory.stock import Stock
++from moneyfmt import group_thousands
+ 
+ 
+ def summary(stock: Stock) -> dict[str, int]:
+@@ -6,3 +7,8 @@ def summary(stock: Stock) -> dict[str, int]:
+         "skus": len(stock.items),
+         "units": sum(item.quantity for item in stock.items.values()),
+     }
++
++
++def units_label(stock: Stock) -> str:
++    """The total units with thousands separators: "1,234 units"."""
++    return f"{group_thousands(summary(stock)['units'])} units"
+diff --git a/tests/test_units_label.py b/tests/test_units_label.py
+new file mode 100644
+index 0000000..078d821
+--- /dev/null
++++ b/tests/test_units_label.py
+@@ -0,0 +1,9 @@
++from inventory.report import units_label
++from inventory.stock import Stock
++
++
++def test_units_label() -> None:
++    stock = Stock()
++    stock.add("apple", 1200)
++    stock.add("pear", 34)
++    assert units_label(stock) == "1,234 units"

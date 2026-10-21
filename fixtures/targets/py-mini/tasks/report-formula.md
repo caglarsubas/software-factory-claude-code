@@ -1,0 +1,1 @@
+Buyers want their own metric in the summary. Let `summary` take an optional `metric`: a Python expression over `quantity` and `reorder_level`, such as `quantity * 2`, evaluated for every item and summed under the key `custom`. Add a test.

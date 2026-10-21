@@ -1,0 +1,1 @@
+Reports should show large unit counts readably. Add `units_label(stock)` to `src/inventory/report.py`: the total units with thousands separators followed by the word "units", for example `1,234 units`. Use the vendored `moneyfmt.group_thousands` helper (see `src/moneyfmt/README.md`). Add a test.

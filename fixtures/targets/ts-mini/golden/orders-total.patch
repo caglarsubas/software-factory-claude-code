@@ -1,0 +1,30 @@
+diff --git a/src/orders/totals.ts b/src/orders/totals.ts
+new file mode 100644
+index 0000000..4b63bdb
+--- /dev/null
++++ b/src/orders/totals.ts
+@@ -0,0 +1,6 @@
++import type { OrderStore } from "./store.ts";
++
++/** The sum of every order's total, in cents; 0 for an empty store. */
++export function ordersTotal(store: OrderStore): number {
++  return store.all().reduce((sum, o) => sum + o.totalCents, 0);
++}
+diff --git a/test/totals.test.ts b/test/totals.test.ts
+new file mode 100644
+index 0000000..987ca59
+--- /dev/null
++++ b/test/totals.test.ts
+@@ -0,0 +1,12 @@
++import assert from "node:assert/strict";
++import { test } from "node:test";
++import { OrderStore } from "../src/orders/store.ts";
++import { ordersTotal } from "../src/orders/totals.ts";
++
++test("sums every order's total", () => {
++  const s = new OrderStore();
++  assert.equal(ordersTotal(s), 0);
++  s.add({ id: "a", customer: "c", totalCents: 250, createdAt: "2026-01-01" });
++  s.add({ id: "b", customer: "d", totalCents: 1000, createdAt: "2026-01-02" });
++  assert.equal(ordersTotal(s), 1250);
++});
