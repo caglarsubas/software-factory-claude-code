@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This repository is the software factory itself: a Claude Code plugin plus the `factoryctl` control plane. The plan is [`docs/factory/ROADMAP.md`](docs/factory/ROADMAP.md); progress is tracked in [`docs/factory/STATUS.md`](docs/factory/STATUS.md). The repository is **public**.
+This repository is the software factory itself: a Claude Code plugin plus the `factoryctl` control plane. The plan is [`docs/factory/ROADMAP.md`](docs/factory/ROADMAP.md); progress is tracked in [`docs/factory/STATUS.md`](docs/factory/STATUS.md). A new session starts with [`docs/factory/HANDOVER.md`](docs/factory/HANDOVER.md): where the work stands, what the operator owes, what comes next, and how the operator and the agent work. The repository is **public**.
 
 ## Ground rules
 
