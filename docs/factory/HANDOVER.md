@@ -23,7 +23,7 @@ A new Claude Code session picks up the factory's development from here. Read thi
 
 ## Waiting on the operator
 
-Every release up to `v0.18.0` is tagged, and `v0.18.0` is installed and pinned (STATUS's Factory release row). Each later release is tagged on its PR's merge commit, then installed with `factoryctl release install`, `release use` and `factoryctl doctor`, and recorded in that row.
+Every release up to `v0.19.0` is tagged, and `v0.19.0` is installed and pinned (STATUS's Factory release row). Each later release is tagged on its PR's merge commit, then installed with `factoryctl release install`, `release use` and `factoryctl doctor`, and recorded in that row.
 
 1. **One live task in the runner.** This bills the operator's account. Run one `ts-mini` R0 task with `factoryctl run T-… --runner container --attach`, then check `$FACTORY_HOME/runs/T-…/egress/proxy.ndjson` for its requests on the gateway route. Once the pin move is installed, run one again on the new pin, before the G2 sample.
 2. **T-0020** is admitted from an issue and still `RECEIVED`: run it or cancel it.
