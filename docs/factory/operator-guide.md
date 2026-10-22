@@ -500,6 +500,15 @@ factoryctl drill restore
 
 It records the restore time (RTO, limit 1 hour), how far the replica was behind (RPO, limit 1 minute), and any file not restored intact, under `$FACTORY_HOME/drills/`.
 
+**Purging by record.** From `v0.20.0` ([ADR 0003](adr/0003-onboarding-retention-and-purge.md)), the factory deletes what it recorded in one way only: a purge, which `offboard` and `prune` will run. A purge:
+
+- writes a tombstone for each task first, deleting its events in the same transaction;
+- deletes the objects only those tasks referenced, their directories and their OTel lines;
+- compacts the store, so nothing deleted stays in its file;
+- has the replica complete the same purge from its own record.
+
+A purge that stops part-way leaves its journal in `$FACTORY_HOME/purges/` and resumes from it. A restore never brings a purged task back, and the restore drill fails if one does. `v0.20.0` migrates `factory.db` and the replica to store schema 4, and an older `factoryctl` refuses them afterwards: install it only when you will not roll back.
+
 ## Runner container
 
 From `v0.4.0` (P2-01) a session's Claude Code can run in a runner container instead of on your machine. `factoryctl` and the Agent SDK stay on the host, with the in-process guard and every credential.
@@ -603,5 +612,6 @@ G2 closes Phase 2, on the frozen system. `factoryctl gate G2` checks its six aut
 | `tokens/` | each live session's gateway token while it runs; never readable by a session |
 | `objects/` | the write-once object store: artifacts, task files and run evidence by digest; never readable by a session |
 | `replica.json`, `drills/` | where the replica is, and the drill records |
+| `purges/` | the journal of a purge that has not finished; it resumes from there |
 | `gates/<gate>/` | gate snapshots and evidence |
 | `HALT`, `halt.log` | the kill switch and its audit trail |

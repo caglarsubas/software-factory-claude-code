@@ -18,7 +18,13 @@ A new Claude Code session picks up the factory's development from here. Read thi
   - The operator decided to move the pin before the freeze.
 - **`v0.18.0` (#61):** keeps mods out of sessions' config directories and turns the `AGENTS.md` loader off.
 - **P2-14 (`v0.19.0`, #63):** the plugin's `factory-review` workflow, for interactive use only.
-- **Parallel items:** P2-10, P2-11 and P2-13 are todo. P2-12 stays stopped until a written egress policy exists (Appendix A).
+- **Parallel items:** P2-10 and P2-13 are todo. P2-12 stays stopped until a written egress policy exists (Appendix A).
+- **P2-11 (in progress, 2026-10-22):** four PRs from `claude/epic-cannon-akxfwy-p2-11`, each a release. They follow [ADR 0003](adr/0003-onboarding-retention-and-purge.md), the operator's decisions of 2026-10-22: purge by record with tombstones, and the App added and removed by hand, verified by factoryctl.
+  - PR 1: deleting by record (store schema 4, purge journals, the replica).
+  - PR 2: retention per profile, `prune`, and old-bundle migration tests.
+  - PR 3: `onboard`.
+  - PR 4: `offboard` and the round-trip test (the done-when).
+- **The pin move** to 2.1.306 / 0.3.306 is built on `claude/epic-cannon-akxfwy` and opens on Oct 28, when pnpm's age gate accepts it. P2-11's first PR claims `v0.20.0`; whichever of the two merges second takes the next version and merges `main` first.
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
 
 ## Waiting on the operator
