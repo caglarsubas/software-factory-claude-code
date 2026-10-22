@@ -64,7 +64,7 @@ Every release up to `v0.19.0` is tagged, and `v0.19.0` is installed and pinned (
 
 - **The operator** is the repository owner. They:
   - merge every PR, tag every release and run every live task;
-  - run the operator-only commands, which refuse inside Claude Code: `release install` and `use`, `approve`, `unhalt`, `reject`, `takeover`, `replica init`, `restore`, and `drill kill-switch` and `serve-kill`.
+  - run the operator-only commands, which refuse inside Claude Code: `release install` and `use`, `approve`, `unhalt`, `reject`, `takeover`, `replica init`, `restore`, `prune`, and `drill kill-switch` and `serve-kill`.
 - **Commands for the operator:** step by step. Their shell is zsh, where `#` starts no comment, so a command block carries no inline comments. Never ask them to paste or echo a token.
 - **One PR at a time, from the session's branch:**
   1. Commit and push, open the PR, then push a STATUS commit with the PR's number. The cancelled CI run on the superseded commit is expected.
