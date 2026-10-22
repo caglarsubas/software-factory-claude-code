@@ -12,6 +12,10 @@ import { describeHalt, readHalt } from "./halt.ts";
 import type { Home } from "./home.ts";
 import type { Release } from "./release.ts";
 import { checkReleaseFiles } from "./release/install.ts";
+import { footprintRulesets } from "./governance/footprint.ts";
+import { appAccess, installationSettings } from "./target/github.ts";
+import { listTargets, profileDigest } from "./target/registry.ts";
+import type { Validator } from "./schemas/validate.ts";
 import { managedSettingsJson } from "./runner/managed.ts";
 import { createValidator } from "./schemas/validate.ts";
 import { EventStore } from "./store/events.ts";
@@ -178,6 +182,55 @@ export async function rulesetCheck(o: { repo: string; expected: Ruleset; token: 
   } catch (e) {
     return { name, status: "warn", detail: `could not reach GitHub: ${e instanceof Error ? e.message : String(e)}` };
   }
+}
+
+/**
+ * Each onboarded target (P2-11): where its onboarding stands, its profile against the one the
+ * operator confirmed, and once it is active, its footprint rulesets and the App's access to it.
+ * `factoryctl onboard OWNER/NAME` takes a target further, or repairs what drifted.
+ */
+export async function targetChecks(o: { home: Home; validator: Validator; token: string | null; api: string; env?: NodeJS.ProcessEnv; fetchFn?: typeof fetch }): Promise<Check[]> {
+  let targets;
+  try {
+    targets = listTargets(o.home, o.validator);
+  } catch (e) {
+    return [{ name: "targets", status: "fail", detail: e instanceof Error ? e.message : String(e) }];
+  }
+  let app: AppConfig | null = null;
+  try {
+    app = appConfig(o.home, o.env ?? process.env);
+  } catch {
+    // appCheck reports it.
+  }
+  const checks: Check[] = [];
+  for (const t of targets) {
+    const name = `target ${t.repo}`;
+    const again = `factoryctl onboard ${t.repo}`;
+    if (t.state !== "active") {
+      checks.push({ name, status: "warn", detail: `${t.state}${t.pr === undefined ? "" : ` (${t.pr.url})`}: ${again} takes it further` });
+      continue;
+    }
+    let digest: string;
+    try {
+      digest = profileDigest(o.home, t.repo);
+    } catch (e) {
+      checks.push({ name, status: "fail", detail: `its profile is unreadable: ${e instanceof Error ? e.message : String(e)}` });
+      continue;
+    }
+    const drift = t.confirmed?.profile_digest !== digest;
+    checks.push({ name, status: drift ? "warn" : "ok", detail: drift ? `its profile changed since it was confirmed, so task create and intake refuse it: ${again} --update proposes the change` : `active on ${t.confirmed?.release.tag ?? "?"} since ${t.active?.at ?? "?"}` });
+    const fetchFn = o.fetchFn === undefined ? {} : { fetchFn: o.fetchFn };
+    if (o.token !== null) for (const r of footprintRulesets()) checks.push(await rulesetCheck({ repo: t.repo, expected: r, token: o.token, api: o.api, hint: again, ...fetchFn }));
+    if (app !== null) {
+      try {
+        const access = await appAccess({ app, api: o.api, repo: t.repo, ...fetchFn });
+        checks.push({ name: `${name} app`, status: access.installed ? "ok" : "fail", detail: access.installed ? access.detail : `${access.detail}: add it at ${installationSettings(app)}, then ${again}` });
+      } catch (e) {
+        checks.push({ name: `${name} app`, status: "warn", detail: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  }
+  return checks;
 }
 
 /**

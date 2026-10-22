@@ -13,7 +13,7 @@ import { REPO_ROOT } from "../policy/load.ts";
 import { commitArtifacts } from "../stages/commit.ts";
 import { EventStore } from "../store/events.ts";
 import { hasObject, listObjects, objectPath, putObject, readObject, readTree, storeTree } from "./objects.ts";
-import { initReplica, readReplicaState, replicaStatus, restore, syncReplica } from "./replica.ts";
+import { copyTargets, initReplica, readReplicaState, replicaStatus, restore, syncReplica } from "./replica.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "durable-"));
 afterAll(() => {
@@ -171,6 +171,33 @@ describe("the replica", () => {
     } finally {
       store.close();
     }
+  });
+});
+
+describe("the private store", () => {
+  it("is copied as it changes, never pruned because the home lacks a file, and comes back on a restore", async () => {
+    const home = newHome();
+    const dir = join(scratch, `replica-${String(n)}`);
+    initReplica(home, dir, "op");
+    EventStore.open(home.db).close();
+    const t = join(home.targets, "example__app");
+    mkdirSync(t, { recursive: true });
+    writeFileSync(join(t, "target.json"), '{"state":"drafted"}\n');
+    writeFileSync(join(t, "profile.yaml"), "schema_version: 1\n");
+    writeFileSync(join(t, "target.json.tmp-123"), "torn");
+    syncReplica(home);
+    const copy = join(dir, "targets/example__app");
+    expect(readFileSync(join(copy, "target.json"), "utf8")).toBe('{"state":"drafted"}\n');
+    expect(existsSync(join(copy, "target.json.tmp-123"))).toBe(false);
+    expect(copyTargets(home.targets, join(dir, "targets"))).toBe(0);
+    writeFileSync(join(t, "target.json"), '{"state":"active"}\n');
+    rmSync(join(t, "profile.yaml"));
+    syncReplica(home);
+    expect(readFileSync(join(copy, "target.json"), "utf8")).toBe('{"state":"active"}\n');
+    expect(existsSync(join(copy, "profile.yaml"))).toBe(true);
+    const target = factoryHome({ FACTORY_HOME: join(scratch, "restored-targets") });
+    await restore(dir, target);
+    expect(readFileSync(join(target.targets, "example__app/target.json"), "utf8")).toBe('{"state":"active"}\n');
   });
 });
 

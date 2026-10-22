@@ -19,10 +19,14 @@
 // it, then their events. Nothing is ever deleted from the replica because the home lacks it: a
 // home that lost files to a disk fault must not take the backup down with it. A restore finishes
 // any purge the replica had not completed.
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+//
+// The private store (`targets/`, ADR 0003) is small and rewritten in place: each sync copies the
+// files whose bytes changed, and a restore brings them back. Only an offboarding purge deletes a
+// target's directory from the replica.
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { backup, DatabaseSync } from "node:sqlite";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { writeAtomic } from "../fsutil.ts";
+import { TMP, writeAtomic } from "../fsutil.ts";
 import { ensureHome, runDir, type Home } from "../home.ts";
 import { EventStore, type FactoryEvent } from "../store/events.ts";
 import { deleteObject, hasObject, listObjects, objectPath, readObject, readTree } from "./objects.ts";
@@ -200,6 +204,7 @@ function copyInto(home: Home, dir: string, dbPath: string, store: EventStore, no
     have.add(digest);
     objects++;
   }
+  copyTargets(home.targets, join(dir, "targets"));
   const state: ReplicaState = { schema_version: 1, source: home.root, last_id: lastId, events: total, objects: have.size, synced_at: now.toISOString() };
   writeAtomic(join(dir, REPLICA_MARKER), `${JSON.stringify(state, null, 2)}\n`);
   return { events, objects, last_id: lastId, synced_at: state.synced_at, purged: applied.tasks };
@@ -210,6 +215,25 @@ function copyObject(from: string, to: string, digest: string): void {
   const path = objectPath(to, digest);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeAtomic(path, content);
+}
+
+/** Copies each file of the private store whose bytes differ: `<slug>/<file>`, nothing deeper, no temporary files. */
+export function copyTargets(from: string, to: string): number {
+  if (!existsSync(from)) return 0;
+  let copied = 0;
+  for (const slug of readdirSync(from, { withFileTypes: true })) {
+    if (!slug.isDirectory()) continue;
+    for (const file of readdirSync(join(from, slug.name), { withFileTypes: true })) {
+      if (!file.isFile() || TMP.test(file.name)) continue;
+      const content = readFileSync(join(from, slug.name, file.name));
+      const dest = join(to, slug.name, file.name);
+      if (existsSync(dest) && readFileSync(dest).equals(content)) continue;
+      mkdirSync(join(to, slug.name), { recursive: true, mode: 0o700 });
+      writeAtomic(dest, content);
+      copied++;
+    }
+  }
+  return copied;
 }
 
 /** Syncs now and then every `ms` while the process lives; a failed sync is logged and retried. */
@@ -336,6 +360,7 @@ export async function restore(from: string, home: Home): Promise<RestoreResult> 
         files++;
       }
     }
+    copyTargets(join(from, "targets"), home.targets);
     return { tasks: ids.length, events, objects, files, missing, last_id: state.last_id, synced_at: state.synced_at };
   } finally {
     store.close();
