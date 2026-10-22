@@ -1,0 +1,10 @@
+diff --git a/src/cart.ts b/src/cart.ts
+index 2dffd91..42760e1 100644
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -7,3 +7,5 @@ export interface Line {
+ export function totalCents(lines: readonly Line[]): number {
+   return lines.reduce((sum, line) => sum + line.unitCents * line.quantity, 0);
+ }
++
++export const isEmpty = (lines: readonly Line[]): boolean => lines.length === 0;

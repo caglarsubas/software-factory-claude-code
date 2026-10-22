@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0001",
+  "reviewer": "security-reviewer",
+  "model": "claude-sonnet-5-5",
+  "candidate_commit": "5eef30a9fe4fd4f8120458719c3cafcb5621b0b0",
+  "findings": [],
+  "summary": "Meets AC-1."
+}

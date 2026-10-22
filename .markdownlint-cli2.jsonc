@@ -1,6 +1,7 @@
 {
   // Rules live in .markdownlint.jsonc so nested directories can extend them.
   "globs": ["**/*.md"],
-  // Eval cases are prompts carrying raw diffs and data, not documentation.
-  "ignores": ["**/node_modules/**", "plugin/evals/**", "plugin/evals-holdout/**"]
+  // Eval cases are prompts carrying raw diffs and data, not documentation; the old homes are
+  // what earlier releases wrote, kept byte for byte.
+  "ignores": ["**/node_modules/**", "plugin/evals/**", "plugin/evals-holdout/**", "controller/src/store/testdata/**"]
 }

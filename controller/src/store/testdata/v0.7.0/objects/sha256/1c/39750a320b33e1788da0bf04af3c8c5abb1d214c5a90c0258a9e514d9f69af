@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0001",
+  "candidate_commit": "5eef30a9fe4fd4f8120458719c3cafcb5621b0b0",
+  "passed": true,
+  "gates": [
+    {
+      "name": "test",
+      "status": "pass",
+      "duration_ms": 1,
+      "summary": "replayed"
+    }
+  ],
+  "signals": {
+    "sink_added": [],
+    "secret_material": false
+  }
+}
