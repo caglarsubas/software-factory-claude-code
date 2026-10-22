@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { putObject } from "../durable/objects.ts";
+import { hasObject, putObject, readObject } from "../durable/objects.ts";
 import { writeAtomic } from "../fsutil.ts";
 import { githubRemote } from "../git/repo.ts";
 import { runDir, type Home } from "../home.ts";
@@ -23,6 +23,8 @@ export interface Profile {
   budgets: { monthly_usd: number };
   /** GitHub intake (P2-04): who may admit an issue by labelling it. */
   intake?: { label: string; maintainers: string[] };
+  /** How long the factory keeps this target's evidence, never longer than the config's (ADR 0003). */
+  retention_days: { bundles: number; transcripts: number; otel: number };
 }
 
 /** An issue admitted by its label (P2-04): where it came from and the label event that admitted it. */
@@ -101,4 +103,24 @@ export function createTask(home: Home, store: EventStore, validator: Validator, 
 
 export function readTask(home: Home, id: string): Task {
   return JSON.parse(readFileSync(join(runDir(home, id), "task.json"), "utf8")) as Task;
+}
+
+/**
+ * A task's task.json from its run directory, or else from the object its task_created event
+ * names (P2-07): a run directory lost to a disk fault still leaves the record. Null when neither
+ * holds it.
+ */
+export function taskRecord(home: Home, store: EventStore, id: string): Task | null {
+  try {
+    return readTask(home, id);
+  } catch {
+    const created = store.events(id).find((e) => e.type === "task_created");
+    const digest = ((created?.payload["files"] ?? {}) as Record<string, string>)["task.json"];
+    if (digest === undefined || !hasObject(home.objects, digest)) return null;
+    try {
+      return JSON.parse(readObject(home.objects, digest).toString("utf8")) as Task;
+    } catch {
+      return null;
+    }
+  }
 }

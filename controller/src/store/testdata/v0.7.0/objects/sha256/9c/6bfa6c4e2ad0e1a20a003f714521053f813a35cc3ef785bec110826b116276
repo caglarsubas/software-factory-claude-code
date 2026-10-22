@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0001",
+  "created_at": "2026-10-22T04:32:25.011Z",
+  "reviewed_base_commit": "9fc434d6ad78599a99ebc1dd246dcfe40b32fb2b",
+  "candidate_commit": "5eef30a9fe4fd4f8120458719c3cafcb5621b0b0",
+  "artifacts": [
+    {
+      "path": "build.json",
+      "digest": "sha256:3d41fdaf88a5d90aa072dae9eaa8af1cd6d9d4e50764cf6bc61b39cc9442ff12"
+    },
+    {
+      "path": "candidate.bundle",
+      "digest": "sha256:cc4ed4cee40f38d0d2517dd8ce6dba52968aaf682c5214a648975e064b1e04ff"
+    },
+    {
+      "path": "checkout.json",
+      "digest": "sha256:0c30859003ee044e5ed283bcb435aec7e2dc9341cc83a50588136950806464d0"
+    },
+    {
+      "path": "gates.json",
+      "digest": "sha256:1c39750a320b33e1788da0bf04af3c8c5abb1d214c5a90c0258a9e514d9f69af"
+    },
+    {
+      "path": "policy.json",
+      "digest": "sha256:3ffcf7792e403e4e4acf078c3d3ce3e50ebbb23d354d8728d398f453feba3339"
+    },
+    {
+      "path": "publish.json",
+      "digest": "sha256:fee536ee7dab78fb4b3735a323f1de5794ddb0479fe08a1c0644c7d0ecbc53ab"
+    },
+    {
+      "path": "review-code.json",
+      "digest": "sha256:f05ed5d4bfb1ef2adaade621aced540d72ff33fd1563c0bca6969979dcb35acd"
+    },
+    {
+      "path": "review-security.json",
+      "digest": "sha256:d05ffea51254e0c16c2260222dc37187d666a06ece52f4b1abb7e864ec60bf74"
+    },
+    {
+      "path": "spec.md",
+      "digest": "sha256:f509de66f11844071d4a2c36a086502cf6d645a930dd005692750b098047314c"
+    },
+    {
+      "path": "spec.yaml",
+      "digest": "sha256:437c184cb41b0cf89244a42e642f3fcf3c966a04f27a759b90d97af8f217ed0e"
+    },
+    {
+      "path": "summary.json",
+      "digest": "sha256:2b1ed5431da59633ed63b62897ab4db1ca633acd11c8ab55670bd44c662a0828"
+    },
+    {
+      "path": "task.json",
+      "digest": "sha256:478bb3fe6f835abbe743353de29233b26c4f8ff902927dc27c7d5709b0d5972f"
+    },
+    {
+      "path": "task.md",
+      "digest": "sha256:d4b21894aa38e92d367994865b0b6fa0131130270aa8cdb768d42f6695b8af49"
+    },
+    {
+      "path": "triage.json",
+      "digest": "sha256:fd7de2307e33c1f7a258a0b82fb8cb752d499eaae919c97e81096cff4a680b44"
+    },
+    {
+      "path": "verdict.json",
+      "digest": "sha256:b56d17a378709cece083a121ea4ec775790197f11e10bf2ffd7fc5cefabb3ecf"
+    }
+  ],
+  "versions": {
+    "factory": "v0.7.0-dev",
+    "plugin": "0.7.0",
+    "policy": "sha256:884f3c3f75d8d58cecfa3a58a3f961b3a68fa1c89a33464adc014de03e2eaf55",
+    "claude_code": "2.1.286",
+    "agent_sdk": "0.3.286"
+  },
+  "models": [
+    {
+      "stage": "triage",
+      "alias": "haiku",
+      "model_id": "claude-haiku-5-5"
+    },
+    {
+      "stage": "spec",
+      "alias": "opus",
+      "model_id": "claude-opus-5-5"
+    },
+    {
+      "stage": "build",
+      "alias": "sonnet",
+      "model_id": "claude-sonnet-5-5"
+    },
+    {
+      "stage": "review",
+      "alias": "sonnet",
+      "model_id": "claude-sonnet-5-5"
+    },
+    {
+      "stage": "approve",
+      "alias": "opus",
+      "model_id": "claude-opus-5-5"
+    },
+    {
+      "stage": "summarize",
+      "alias": "haiku",
+      "model_id": "claude-haiku-5-5"
+    }
+  ],
+  "costs": [
+    {
+      "stage": "triage",
+      "usd": 0.05,
+      "input_tokens": 1200,
+      "output_tokens": 300
+    },
+    {
+      "stage": "spec",
+      "usd": 0.05,
+      "input_tokens": 1200,
+      "output_tokens": 300
+    },
+    {
+      "stage": "build",
+      "usd": 0.4,
+      "input_tokens": 1200,
+      "output_tokens": 300
+    },
+    {
+      "stage": "review",
+      "usd": 0.1,
+      "input_tokens": 2400,
+      "output_tokens": 600
+    },
+    {
+      "stage": "approve",
+      "usd": 0.05,
+      "input_tokens": 1200,
+      "output_tokens": 300
+    },
+    {
+      "stage": "summarize",
+      "usd": 0.05,
+      "input_tokens": 1200,
+      "output_tokens": 300
+    }
+  ]
+}

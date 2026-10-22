@@ -4,6 +4,29 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-22
+
+### Added
+
+- **Retention per profile (P2-11, second part).** A finished task keeps its evidence for the shorter of its profile's and the config's `retention_days`, counted from its last activity ([ADR 0003](docs/factory/adr/0003-onboarding-retention-and-purge.md)).
+  - Transcripts expire into the run's transcripts and session directory.
+  - A bundle expires into everything but `task.json`, with the worktree, the session directory and the eval captures. The task's events stay.
+  - A task's telemetry expires from the OTel files.
+
+  Each expiry is an `evidence_expired` event recorded before anything goes. Objects only expired evidence names are deleted, in the home and, from its own record, in the replica, and a restore leaves expired files out. A task that has not finished is never pruned.
+- **`factoryctl prune [--dry-run]`.** It shows and applies what is due, and finishes a purge that stopped part-way. It is operator-only, and runs only while the factory is idle.
+- **`doctor`** warns when tasks are past retention and when a purge stopped part-way.
+- **Schema migrations tested on old bundles.** `controller/src/store/testdata/` holds homes that v0.1.2 and v0.7.0 wrote with their own `factoryctl` (`generate.ts` rebuilds them). `old-homes.test.ts` checks that each one:
+  - migrates to store schema 4 with every event kept and still append-only;
+  - keeps every artifact valid at the schema version it declares;
+  - is read by `status`, `report` and `prune --dry-run`;
+  - can be pruned, purged, replicated and restored.
+
+### Changed
+
+- `status` reads a task's record from the object store when its run directory is gone, and marks a task whose bundle expired.
+- The refusal for a task started on v0.1.x says to cancel it and create a new task: v0.1.x cannot open the store since `v0.20.0`.
+
 ## [0.20.0] - 2026-10-22
 
 ### Changed
@@ -420,7 +443,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.17.0...v0.18.0

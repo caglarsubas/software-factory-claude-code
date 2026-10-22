@@ -105,7 +105,7 @@ export function activity(home: Home): Activity {
   return { writers, sessions, runners: listContainers().length, gates: gates.status === 0 ? gates.stdout.split("\n").filter((l) => l !== "").length : 0 };
 }
 
-const idle = (a: Activity): boolean => a.writers + a.sessions + a.runners + a.gates === 0;
+export const idle = (a: Activity): boolean => a.writers + a.sessions + a.runners + a.gates === 0;
 
 const drillsDir = (home: Home): string => join(home.root, "drills");
 

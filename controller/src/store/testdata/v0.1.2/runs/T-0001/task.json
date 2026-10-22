@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "id": "T-0001",
+  "created_at": "2026-10-22T04:32:20.032Z",
+  "target": {
+    "repo": "example/ts-mini",
+    "profile": "/tmp/sf-old-homes/v0.1.2/profile.yaml",
+    "base_branch": "main"
+  },
+  "source": {
+    "kind": "manual",
+    "admitted_by": "operator",
+    "snapshot_digest": "sha256:d4b21894aa38e92d367994865b0b6fa0131130270aa8cdb768d42f6695b8af49"
+  },
+  "text_trust": "operator",
+  "title": "Stopped at the spec gate",
+  "priority": "normal"
+}

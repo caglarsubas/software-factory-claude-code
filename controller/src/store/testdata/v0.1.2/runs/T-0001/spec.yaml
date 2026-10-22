@@ -1,0 +1,18 @@
+schema_version: 1
+id: T-0001
+objective: Report whether a cart is empty
+scope:
+  include:
+    - src/
+  exclude: []
+acceptance_criteria:
+  - id: AC-1
+    statement: isEmpty returns true only for an empty cart
+    verification: node --test
+invariants: []
+risk_signals: []
+required_evidence:
+  - unit_tests
+human_gate:
+  required: true
+  reason: a person decides

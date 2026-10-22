@@ -21,6 +21,7 @@
 //   factoryctl release install TAG [--source DIR] | use TAG|SHA | status
 //   factoryctl gate G0|G1|G2 --begin [--checkout DIR]... | gate G0|G1|G2 [--repo OWNER/NAME]
 //   factoryctl drill kill-switch | restore | serve-kill
+//   factoryctl prune [--dry-run]             expire finished tasks' evidence past retention; finish a stopped purge (ADR 0003)
 //   factoryctl doctor
 //
 // FACTORY_HOME holds run state (default ~/.factory); FACTORY_RELEASE overrides the release the
@@ -35,7 +36,10 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { parse } from "yaml";
 import { engineHost, PROXY_ENV, removeTaskContainers } from "../../../gates/src/container.ts";
-import { haltNow, killSwitchDrill, restoreDrill, serveKillDrill, type Activity } from "../durable/drill.ts";
+import { activity, haltNow, idle, killSwitchDrill, restoreDrill, serveKillDrill, type Activity } from "../durable/drill.ts";
+import { pendingJournals, runJournal } from "../durable/purge.ts";
+import { expiredScopes } from "../durable/refs.ts";
+import { planRetention, profilePolicy, prune } from "../durable/retention.ts";
 import { initReplica, keepReplica, replicaStatus, restore, syncReplica } from "../durable/replica.ts";
 import { startRunGateway, type Gateway } from "../gateway/gateway.ts";
 import { reapRunnerContainers } from "../runner/container.ts";
@@ -79,7 +83,7 @@ import { runTask } from "../stages/pipeline.ts";
 import { REVIEWERS } from "../stages/reviewers.ts";
 import { EventStore, LeaseHeldError, type FactoryEvent } from "../store/events.ts";
 import { currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
-import { createTask, loadProfile, readTask } from "../task/task.ts";
+import { createTask, loadProfile, readTask, taskRecord } from "../task/task.ts";
 import { pollIntake } from "../intake/intake.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { describeMessage } from "../session/attach.ts";
@@ -430,6 +434,7 @@ async function main(): Promise<void> {
       "app-id": { type: "string" },
       "installation-id": { type: "string" },
       runner: { type: "string" },
+      "dry-run": { type: "boolean" },
     },
   });
   const home = factoryHome();
@@ -629,7 +634,7 @@ async function main(): Promise<void> {
     if (r.status !== 200) fail(r.body.message ?? r.body.error ?? `serve answered ${String(r.status)}`);
     out(r.body.message ?? "done");
   };
-  const exclusive = ["run", "takeover", "reject"];
+  const exclusive = ["run", "takeover", "reject", "prune"];
   if (served !== null && command !== undefined && exclusive.includes(command)) {
     fail(`serve is running (pid ${String(served.pid)}) and schedules every task; pause or cancel the task through it, or stop it with: factoryctl drain`);
   }
@@ -774,8 +779,37 @@ async function main(): Promise<void> {
           const gate = typeof payload["gate"] === "string" ? ` gate=${payload["gate"]}` : "";
           // A task runs while its lease is held: by an attended run or a serve worker (P2-03).
           const running = leaseState(store.lease(id), Date.now()) === "held" ? " (running)" : isPaused(events) ? " (paused)" : "";
-          out(`${id}  ${currentState(events).padEnd(12)}${gate}${running}  ${readTask(home, id).title}`);
+          const expired = expiredScopes(events).has("bundle") ? " (evidence expired)" : "";
+          out(`${id}  ${currentState(events).padEnd(12)}${gate}${running}${expired}  ${taskRecord(home, store, id)?.title ?? "(no task record)"}`);
         }
+        return;
+      }
+      case "prune": {
+        operatorOnly("prune");
+        const now = activity(home);
+        if (!idle(now)) fail(`prune runs only while the factory is idle; now: ${describeActivity(now)}`);
+        const validator = createValidator();
+        const release = loadRelease(validator);
+        const dryRun = values["dry-run"] === true;
+        // A purge that stopped part-way finishes first (ADR 0003).
+        for (const j of pendingJournals(home)) {
+          if (dryRun) {
+            out(`purge ${j.id} (${j.reason}) stopped part-way: prune finishes it`);
+            continue;
+          }
+          const r = runJournal(home, store, j);
+          out(`purge ${j.id} (${j.reason}) finished: ${String(r.tasks)} task(s), ${String(r.objects)} object(s), ${String(r.paths)} path(s)`);
+        }
+        const plan = planRetention({ store, config: release.config.retention_days, policyFor: profilePolicy(home, store, validator), now: new Date() });
+        for (const x of plan.expire) out(`${x.task_id}  ${x.scope}: ${String(x.age_days)} day(s) since its last activity; kept ${String(x.days)}`);
+        for (const u of plan.unfinished) out(`${u.task_id}  not finished after ${String(u.age_days)} day(s): cancel or resume it; prune leaves it`);
+        if (plan.fallback.length > 0) out(`no readable profile for ${plan.fallback.join(", ")}: the config's retention applies`);
+        if (dryRun) {
+          out(`dry run: ${String(plan.expire.length)} expiry(ies) and ${String(plan.otel.length)} task(s)' telemetry due; nothing changed`);
+          return;
+        }
+        const r = prune({ home, store, plan, by: operator() });
+        out(`pruned: ${String(r.expired.length)} expiry(ies) recorded; ${String(r.objects)} object(s), ${String(r.paths)} path(s) and ${String(r.otel)} telemetry export(s) deleted${r.replica === null ? "" : `; the replica deleted ${String(r.replica)} object(s)`}`);
         return;
       }
       case "cancel": {
@@ -953,7 +987,7 @@ async function main(): Promise<void> {
         return;
       }
       default:
-        fail("usage: factoryctl task create | run | resume | pause | takeover | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor | serve | drain | replica | restore | drill | slo");
+        fail("usage: factoryctl task create | run | resume | pause | takeover | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor | serve | drain | replica | restore | drill | slo | prune");
     }
   } finally {
     store.close();

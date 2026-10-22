@@ -26,7 +26,7 @@ import { writeAtomic } from "../fsutil.ts";
 import { ensureHome, runDir, type Home } from "../home.ts";
 import { EventStore, type FactoryEvent } from "../store/events.ts";
 import { deleteObject, hasObject, listObjects, objectPath, readObject, readTree } from "./objects.ts";
-import { deletionSet } from "./refs.ts";
+import { deletionSet, expiredScopes, expires } from "./refs.ts";
 
 export const REPLICA_MARKER = "REPLICA.json";
 
@@ -275,7 +275,7 @@ export interface RestoreResult {
   synced_at: string | null;
 }
 
-/** What a task's run directory should hold, by path: the latest version of each file the record names. */
+/** What a task's run directory should hold, by path: the latest version of each file the record names and no expiry covers. */
 export function runFiles(events: readonly FactoryEvent[], objects: string): Map<string, string> {
   const files = new Map<string, string>();
   for (const e of events) {
@@ -288,6 +288,8 @@ export function runFiles(events: readonly FactoryEvent[], objects: string): Map<
       for (const a of (e.payload["artifacts"] ?? []) as { path: string; digest: string }[]) files.set(a.path, a.digest);
     }
   }
+  const scopes = expiredScopes(events);
+  for (const path of files.keys()) if (expires(scopes, path)) files.delete(path);
   return files;
 }
 

@@ -5,12 +5,15 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_PERMISSIONS, appConfig, appInfo, appTokens, permissionDiff, readAppKey, type AppConfig } from "./github/app.ts";
+import { pendingJournals } from "./durable/purge.ts";
 import { replicaStatus } from "./durable/replica.ts";
+import { planRetention, profilePolicy } from "./durable/retention.ts";
 import { describeHalt, readHalt } from "./halt.ts";
 import type { Home } from "./home.ts";
 import type { Release } from "./release.ts";
 import { checkReleaseFiles } from "./release/install.ts";
 import { managedSettingsJson } from "./runner/managed.ts";
+import { createValidator } from "./schemas/validate.ts";
 import { EventStore } from "./store/events.ts";
 import { describeAlarm, telemetryConfig, TelemetryError, type ModelAlarm } from "./telemetry.ts";
 
@@ -96,10 +99,16 @@ export function doctor(home: Home, release: Release, keyFile: string, env: NodeJ
     const since = new Date(Date.now() - ALARM_DAYS * 86_400_000).toISOString();
     const store = EventStore.open(home.db);
     const alarms = store.allEvents().filter((e) => e.type === "alarm" && e.ts >= since);
+    // Retention (ADR 0003): what `factoryctl prune` would expire now, and what stays because it has not finished.
+    const plan = planRetention({ store, config: release.config.retention_days, policyFor: profilePolicy(home, store, createValidator()), now: new Date() });
     store.close();
+    const past = plan.expire.length + plan.unfinished.length;
+    add("retention", past === 0, past === 0 ? "nothing past retention" : `${String(plan.expire.length)} finished task(s) past retention: factoryctl prune${plan.unfinished.length === 0 ? "" : `; ${String(plan.unfinished.length)} unfinished, past it: cancel or resume them`}`, "warn");
     const latest = alarms.reduce<(typeof alarms)[number] | undefined>((a, e) => (a === undefined || e.ts > a.ts ? e : a), undefined);
     add("model alarms", latest === undefined, latest === undefined ? `no alias alarm in ${String(ALARM_DAYS)} days` : `${String(alarms.length)} alias alarm(s) in ${String(ALARM_DAYS)} days; latest ${latest.task_id} ${String(latest.payload["label"])}: ${describeAlarm(latest.payload as unknown as ModelAlarm)}`, "warn");
   }
+  const purges = pendingJournals(home);
+  add("purges", purges.length === 0, purges.length === 0 ? "no purge left unfinished" : `${String(purges.length)} purge(s) stopped part-way (${purges.map((j) => j.id).join(", ")}): factoryctl prune finishes them`, "warn");
   // Managed settings (P2-08): the runner's file must be what this release's policies generate, so the image enforces this release.
   try {
     const shipped = readFileSync(join(release.root, "runner/managed-settings.json"), "utf8");

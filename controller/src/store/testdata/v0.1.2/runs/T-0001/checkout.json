@@ -1,0 +1,7 @@
+{
+  "remote": "/tmp/sf-old-homes/v0.1.2/remote.git",
+  "mirror": "/tmp/sf-old-homes/v0.1.2/home/mirrors/example__ts-mini.git",
+  "branch": "factory/T-0001",
+  "base_branch": "main",
+  "base_commit": "1ef45a491721f46a3370b63469521c6446494ca1"
+}

@@ -20,6 +20,7 @@ pnpm factoryctl halt [--reason "…"] # kill switch v0; lift with: unhalt --reas
 pnpm factoryctl release install v0.1.0 | use TAG | status
 pnpm factoryctl gate G0 --begin     # then the fixture dry runs, then: gate G0
 pnpm factoryctl gate G1 --begin     # then a counted task to its merge, then: budgets, gate G1
+pnpm factoryctl prune [--dry-run] # expire finished tasks' evidence past retention (ADR 0003)
 pnpm factoryctl doctor
 ```
 
@@ -27,7 +28,7 @@ In operation, factoryctl runs from an installed release through `$FACTORY_HOME/b
 
 A run goes checkout → triage → spec → rounds of build → gates → review (code and security) → policy → approve → summarize → publish, and stops at `NEEDS_HUMAN`. It stops at the spec gate when the spec or the provisional tier calls for a human. It always stops at the merge gate: in Phase 0 and Phase 1 a human merges every tier.
 
-- **State:** `factory.db` is SQLite with append-only events, guarded by triggers and validated against `schemas/event.schema.json`. A task's state is a fold over its events, and only `factoryctl` writes `state_changed`.
+- **State:** `factory.db` is SQLite with append-only events, guarded by triggers and validated against `schemas/event.schema.json`. Only a purge deletes events, and only a tombstoned task's ([ADR 0003](../docs/factory/adr/0003-onboarding-retention-and-purge.md)). A task's state is a fold over its events, and only `factoryctl` writes `state_changed`.
 - **Artifacts:** each step commits its artifacts into `runs/<id>/` through the commit protocol (`stages/commit.ts`, P1-02):
   1. The files are staged as `<name>.pending`, each written atomically.
   2. One `artifact_committed` event records their digests and the digests of the step's inputs. **The event is the commit point.**

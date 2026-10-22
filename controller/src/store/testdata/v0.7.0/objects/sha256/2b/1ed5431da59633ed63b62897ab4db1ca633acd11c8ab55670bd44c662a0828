@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0001",
+  "pr_body": "Adds `isEmpty`.",
+  "changelog": "Add isEmpty"
+}

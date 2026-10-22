@@ -89,7 +89,7 @@ export function planPurge(home: Home, store: EventStore, taskIds: readonly strin
   const local = new Map(ids.map((id) => [id, walk(runDir(home, id)).map(fileDigest).filter((d) => hasObject(home.objects, d))] as const));
   const owned = deletionSet(ids.map(events), kept.map(events), home.objects, [...local.values()].flat());
   const named = new Set<string>([...local.values()].flat());
-  for (const id of byTask.keys()) for (const d of taskRefs(events(id), home.objects).digests) named.add(d);
+  for (const id of byTask.keys()) for (const d of taskRefs(events(id), home.objects).live) named.add(d);
   const orphans = listObjects(home.objects).filter((d) => !named.has(d) && now.getTime() - statSync(objectPath(home.objects, d)).mtimeMs > ORPHAN_AGE_MS).sort();
   const objects = [...orphans, ...owned];
   const gone = new Set(objects);
@@ -124,7 +124,7 @@ function purgeReplica(home: Home, j: PurgeJournal): void {
   const store = EventStore.open(join(config.path, "factory.db"));
   try {
     const named = new Set<string>();
-    for (const id of store.taskIds()) for (const d of taskRefs(store.events(id), objects).digests) named.add(d);
+    for (const id of store.taskIds()) for (const d of taskRefs(store.events(id), objects).live) named.add(d);
     for (const d of j.objects) if (!named.has(d)) deleteObject(objects, d);
   } finally {
     store.close();
