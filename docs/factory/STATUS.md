@@ -225,6 +225,7 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | 2026-10-22 | P2-11 | P1-08's admission: a green test command, CI present, a protected default branch | every command gate green in the gate image, CI present, a protected default branch (ADR 0003) | P1-08 found that green in CI is not enough, since the gates run in the gate image |
 | 2026-10-22 | P2-11 | side effects through the outbox | onboarding and offboarding PRs with the operator's token on `software-factory/**` branches, through one module that finds before it acts (ADR 0003) | they carry workflow files and need Administration, which the App lacks; they belong to no task an outbox intent could name |
 | 2026-10-22 | P2-11 | offboarding removes the App | the operator removes the repository from the App's installation by hand; `offboard` checks it (ADR 0003) | removing one repository through the API needs a classic token with broad scope; uninstalling the App would remove every target |
+| 2026-10-22 | P2-11 | done when a fixture onboard and offboard round trip works | the round trip runs offline in `pnpm test` (`roundtrip.test.ts`): ts-mini in a local bare remote, a stub GitHub and App, replayed sessions and gates; no live round trip on GitHub | a live one needs a throwaway repository and the operator's Administration token; P3-08 is the first live onboarding |
 
 ### Platform re-verification (ROADMAP §11)
 

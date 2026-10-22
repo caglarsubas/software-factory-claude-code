@@ -161,6 +161,42 @@ Once the target is active:
 
 From a development checkout, name the release the footprint pins with `--factory-ref vX.Y.Z`, adding `--source DIR` when the checkout is elsewhere.
 
+## Offboard a target
+
+From `v0.23.0` `factoryctl offboard` lets a target go. It takes the factory's access away first, then takes the factory's files out of the target, then purges the factory's own data about it, by record ([ADR 0003](adr/0003-onboarding-retention-and-purge.md)). It is operator-only, refuses while `serve` runs, and needs the same `FACTORY_GITHUB_TOKEN` as `onboard`.
+
+Each run takes it one step further and stops where you act. Run the same command again at any point:
+
+```zsh
+factoryctl offboard OWNER/NAME
+```
+
+1. **Stop new work.** It refuses while a task of the target is unfinished: cancel the task or let it finish first. It also refuses while the onboarding PR is still open: close it first. From then on the target is `offboarding`, and `task create` and `intake` refuse it.
+2. **The App.** If the App still reaches the repository, the command prints the installation's settings URL. Open it, go to Repository access → Only select repositories, remove the repository, Save, and run the command again. If the App is suspended or gone, add `--app-unavailable --reason "…"`.
+3. **The rulesets.** It deletes `factory-main` and `factory-branches`. This happens before the PR, because the PR deletes the `gates` workflow that `factory-main` requires.
+4. **The PR.** It opens a PR from `software-factory/offboard` that deletes the footprint and takes the layer out:
+   - the marked blocks in `CODEOWNERS` and `CLAUDE.md`;
+   - the factory's entries in `.claude/settings.json`;
+   - every file onboarding created.
+
+   Merge it on GitHub, then run the command again. It checks that the default branch holds nothing of the factory's. A PR closed without merging is proposed again on the next run.
+5. **The purge.** It needs an idle factory, and a reachable replica if one is set. It deletes the following, in the home and the replica:
+   - every task of the target: its events, kept as tombstones, its objects, and its run, worktree and session directories;
+   - its eval captures and its telemetry;
+   - the mirror and the gate cache volume. The container engine must be running.
+
+   It then recomputes `budgets/calibration.json` from the events that remain, without the target. The target's directory in the private store goes last.
+
+The report gives the counts, the tier budgets before and after, and a scan of the home, the replica and the remaining events for the target's name, its directory name and its tasks' titles. It exits 1 if anything is left. Hits in `gates/` and `drills/` are your own records, and are kept. The release's own files are not scanned. A run after that says the target is not registered.
+
+If the repository is gone or out of reach, run `factoryctl offboard OWNER/NAME --local-only --reason "…"`. It skips the App, the rulesets and the PR, and purges only the factory's own data.
+
+Offboarding does not reach:
+
+- GitHub's own copies: the target's PRs, comments, check runs and `factory/**` branches, and the App's installation logs. Delete branches and the repository yourself if they must go.
+- Backups of `$FACTORY_HOME` or of the replica kept anywhere else.
+- Your gate evidence and drill records, which keep their IDs and aggregates.
+
 ## Run a task
 
 ```bash
@@ -700,6 +736,6 @@ G2 closes Phase 2, on the frozen system. `factoryctl gate G2` checks its six aut
 | `objects/` | the write-once object store: artifacts, task files and run evidence by digest; never readable by a session |
 | `replica.json`, `drills/` | where the replica is, and the drill records |
 | `purges/` | the journal of a purge that has not finished; `factoryctl prune` finishes it |
-| `targets/<owner>__<name>/` | the private store: each onboarded target's `target.json`, `profile.yaml`, `inventory.json` and `journal.ndjson`; the replica copies it |
+| `targets/<owner>__<name>/` | the private store: each onboarded target's `target.json`, `profile.yaml`, `inventory.json` and `journal.ndjson`; the replica copies it, and `offboard` deletes it last |
 | `gates/<gate>/` | gate snapshots and evidence |
 | `HALT`, `halt.log` | the kill switch and its audit trail |
