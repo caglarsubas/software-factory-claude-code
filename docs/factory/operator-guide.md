@@ -79,7 +79,7 @@ A release is a version tag on `main` whose version equals `plugin/.claude-plugin
 
    The `release` workflow then checks the tag against `plugin.json` and the changelog, waits for `ci` to pass on the tagged commit, and publishes the GitHub release with the changelog section as its notes. A tag that does not match fails the workflow, and no release is published.
 3. **Install and pin** it on your machine, as in [Install a release](#install-a-release): `git fetch --tags`, then `pnpm factoryctl release install v0.2.0` from your checkout. `factoryctl doctor` must then show no `fail`.
-4. **Roll back** with `factoryctl release use v0.1.2`: any installed release can be pinned again. Tasks keep the event history they ran on, so check the changelog's **Breaking** notes before you roll back across them.
+4. **Roll back** with `factoryctl release use v0.19.0`: any installed release can be pinned again, except across a store schema change. Since `v0.20.0` (store schema 4), earlier releases refuse the store. Tasks keep the event history they ran on, so check the changelog's **Breaking** notes before you roll back across them.
 
 Tag and pin only from your own terminal: `release install` and `release use` refuse to run inside a Claude Code session.
 
@@ -223,7 +223,7 @@ Every run takes its task's lease first (P2-03), and everything it writes carries
 |---|---|
 | `factoryctl` crashed, was killed, the host rebooted, or you pressed Ctrl-C | `factoryctl resume T-0001`. Every step commits its files through an event, so a crash leaves each step committed or not. The run continues from the first step that is not, a file half-written by the crash is rolled forward or removed, and a transition lost in the crash is repaired. A push or PR the crash interrupted is looked up before anything runs: it is recorded if it happened and made later if not, never twice. Session processes and gate containers the dead run left behind are stopped. |
 | You edited or removed a file in `runs/T-0001/` | Its step runs again on the next `resume`, and so does every step that read it. A spec that changes needs your approval again. |
-| "T-0001 was started by a factoryctl without the commit protocol" | The task began on v0.1.x. Finish it with that release (`factoryctl release use v0.1.2`), or create a new task. |
+| "T-0001 was started by a factoryctl without the commit protocol" | The task began on v0.1.x, and v0.1.x cannot open the store since `v0.20.0`. Cancel it and create a new task. |
 | "T-0001 is running (pid …)" | Another `factoryctl` holds the run lock. A lock whose process has died, or whose pid now belongs to another process, is cleared on the next run; `halt`, `cancel` and `reject` never signal such a pid. |
 | A task `FAILED` | `factoryctl report T-0001` gives its category, one of the ten in [the taxonomy](#failure-taxonomy-and-weekly-review), and the cost of each stage. A failed task is final: fix the cause, then create a new task. |
 | A task should stop for now | `factoryctl pause T-0001`; it holds before its next step until `factoryctl resume T-0001`. |
