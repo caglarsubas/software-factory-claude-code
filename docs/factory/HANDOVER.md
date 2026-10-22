@@ -17,7 +17,8 @@ A new Claude Code session picks up the factory's development from here. Read thi
   - Mods are on by default from the pinned 2.1.286. A probe showed `settingSources: []` keeps a target's `AGENTS.md` out of sessions, and a mod in a session's own `dev-mods/` loading even under `dontAsk`.
   - The operator decided to move the pin before the freeze.
 - **`v0.18.0` (#61):** keeps mods out of sessions' config directories and turns the `AGENTS.md` loader off.
-- **Parallel items:** P2-10, P2-11, P2-13 and P2-14 are todo. P2-12 stays stopped until a written egress policy exists (Appendix A).
+- **P2-14 (`v0.19.0`, #63):** the plugin's `factory-review` workflow, for interactive use only.
+- **Parallel items:** P2-10, P2-11 and P2-13 are todo. P2-12 stays stopped until a written egress policy exists (Appendix A).
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
 
 ## Waiting on the operator
@@ -31,7 +32,7 @@ Every release up to `v0.18.0` is tagged, and `v0.18.0` is installed and pinned (
 
 ## What comes next
 
-1. **The pin move** (a core release of its own), built on or after Oct 27.
+1. **The pin move** (a core release of its own, `v0.20.0`), built on or after Oct 27.
    - **Version:** the newest npm `stable` at or above 2.1.305 that is at least 7 days old (`minimumReleaseAge`), with the SDK whose `claudeCodeVersion` matches. 2.1.304 fails behind the gateway when ToolSearch is outside a session's tools. If `stable` is still 2.1.304 then, use 2.1.305 and log a deviation.
    - **Bump the pin in:** `config/factory.yaml`, `controller/package.json` and the lockfile, `runner/Dockerfile` (URLs and checksums), the CI workflows' `npx` lines, and the `verify-tools` test fixture.
    - **Adapt to:**
@@ -41,7 +42,7 @@ Every release up to `v0.18.0` is tagged, and `v0.18.0` is installed and pinned (
      - structured output on a refusal;
      - tighter Bash checks that become denials under `dontAsk`.
    - **Re-run:** every suite, then the eval suite on the release commit.
-2. **Parallel items** that touch no core file, if time allows before the freeze. P2-14 comes first: dynamic workflows are GA, so it needs no fallback. Then P2-11, P2-13 and P2-10.
+2. **Parallel items** that touch no core file, if time allows before the freeze: P2-11, P2-13 and P2-10.
 3. **The freeze and G2.**
    - Tag the frozen release. The operator then runs the G2 procedure in the operator guide's Gate G2 section:
      - `gate G2 --begin`;

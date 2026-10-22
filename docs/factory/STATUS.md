@@ -78,7 +78,7 @@ Status values: `todo`, `doing`, `review`, `done`, `blocked`, `deferred`. A deliv
 | P2-11 | `onboard` and `offboard` | parallel | todo | | |
 | P2-12 | Advisory second opinion | parallel | todo | | |
 | P2-13 | Code graph in shadow mode | parallel | todo | | |
-| P2-14 | Optional plugin workflow | parallel | todo | | |
+| P2-14 | Optional plugin workflow | parallel | done | #63 | Done, with no fallback: dynamic workflows are GA (the platform log, 2026-10-13 and 2026-10-21). `plugin/workflows/factory-review.js` runs as `/software-factory:factory-review` in a person's own session. A scope step writes the diff, capped at the judges' 400,000 bytes, into the git directory. The plugin's own code and security reviewers review it, joined by the dependency and migration reviewers for the policy's paths, and the plugin's refuter tests every blocking finding. It only reads. `controller/src/plugin/workflow.ts` generates it from the factory's review and refutation schemas, reviewer table, `policies/risk.yaml` and diff cap; `workflow.test.ts` fails on a drifted file and runs it against stand-ins. On the pinned CLI (2.1.286) it loads in a person's session and not in a factory session, with the factory's own settings (`workflow.int.test.ts`) |
 
 ### Gate G2
 
