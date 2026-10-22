@@ -53,6 +53,30 @@ export function foreignMods(configDir: string): string[] {
   }
 }
 
+/** The models a routed stage may run on, by exact ID. */
+function availableModels(release: Release): string[] {
+  const ids = new Set<string>();
+  for (const r of Object.values(release.config.routing)) {
+    for (const alias of [r.model, ...(r.escalate_to === undefined ? [] : [r.escalate_to])]) {
+      const pin = release.config.model_pins[alias];
+      if (pin === undefined) throw new Error(`config/factory.yaml pins no model for ${alias}`);
+      ids.add(pin);
+    }
+  }
+  return [...ids].sort();
+}
+
+/**
+ * A session runs on the models config/factory.yaml pins and on no other. When a safety classifier
+ * flags a request, Claude Code re-runs it on a fallback model by default (Sonnet 5.5's
+ * cybersecurity flags on Sonnet 5), one the factory neither pins nor prices. Either key stops the
+ * switch, and a flagged request ends the session as a refusal on its pinned model (probed on
+ * 2.1.306). Shared with the runner's managed settings.
+ */
+export function modelSettings(release: Release): Pick<Settings, "availableModels" | "availableModelsMatch" | "switchModelsOnFlag"> {
+  return { availableModels: availableModels(release), availableModelsMatch: "exact", switchModelsOnFlag: false };
+}
+
 /** The SDK's channel for structured output: under outputFormat json_schema the session ends its turn by calling this tool, so a judgment stage must have it listed, pre-approved and allowed by the guard. It only carries the answer. */
 export const STRUCTURED_OUTPUT_TOOL = "StructuredOutput";
 
@@ -146,6 +170,7 @@ export function sessionSettings(inputs: SessionInputs, release: Release): Settin
     ...key,
     permissions: { defaultMode: "dontAsk", disableBypassPermissionsMode: "disable", deny },
     pluginConfigs: INSTRUCTION_FILES,
+    ...modelSettings(release),
     disableWorkflows: true,
     workflowKeywordTriggerEnabled: false,
     cleanupPeriodDays: release.config.retention_days.transcripts,

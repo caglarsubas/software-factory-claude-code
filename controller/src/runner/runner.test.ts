@@ -11,7 +11,7 @@ import { runHook } from "../../../plugin/hooks/bypass-cases.ts";
 import { REPO_ROOT } from "../policy/load.ts";
 import { loadRelease } from "../release.ts";
 import { createValidator } from "../schemas/validate.ts";
-import { runnerMounts, type StageSpec } from "../session/options.ts";
+import { modelSettings, runnerMounts, type StageSpec } from "../session/options.ts";
 import { makeSpool, runPreflight, startBroker } from "./broker.ts";
 import { normalizeMounts, RUNNER_HARDENING, runArgs, runnerEnv, runnerUser, type RunnerSetup } from "./container.ts";
 import { GENERATED, generated } from "./generate.ts";
@@ -41,6 +41,8 @@ describe("generated runner files", () => {
     expect(m["workflowKeywordTriggerEnabled"]).toBe(false);
     // No mod a user installed or a session wrote loads, and no instruction file but the managed CLAUDE.md.
     expect(m["pluginConfigs"]).toEqual({ "cc-plugin-agents-md@builtin": { options: { instructionFiles: "managed-only" } }, "cc-plugin-sec-default@builtin": { options: { allowManagedModsOnly: true } } });
+    // Only the pinned models, as in a host session: a request a classifier flags switches to no other.
+    expect(m).toMatchObject(modelSettings(release));
     expect(m.sandbox).toMatchObject({ enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, enableWeakerNestedSandbox: false });
     expect(m["apiKeyHelper"]).toBe(`cat ${TOKEN_PATH}`);
     // Every hooks.json hook, pointed at the image's copy; nothing from the operator's machine.

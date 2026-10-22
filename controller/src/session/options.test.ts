@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { ensureHome, factoryHome, sessionDir } from "../home.ts";
 import { loadRelease } from "../release.ts";
 import { createValidator } from "../schemas/validate.ts";
-import { foreignMods, prepareSession, sessionSandbox, type StageSpec } from "./options.ts";
+import { foreignMods, modelSettings, prepareSession, sessionSandbox, sessionSettings, type StageSpec } from "./options.ts";
 
 const root = mkdtempSync(join(tmpdir(), "session-options-"));
 const home = factoryHome({ FACTORY_HOME: join(root, "home") });
@@ -40,5 +40,16 @@ describe("where Claude Code loads plugins and mods from (Claude Code 2.1.286 and
     writeFileSync(join(mod, "register.js"), "export function register() {}\n");
     expect(foreignMods(configDir)).toContain(join(mod, "register.js"));
     expect(() => prepareSession(inputs, spec)).toThrow(/build: the session's config directory holds mods the factory did not write/);
+  });
+});
+
+describe("the models a session runs on", () => {
+  it("are the pins of the routed stages, by exact ID, and a flagged request switches to no other", () => {
+    const m = modelSettings(release);
+    const pins = Object.values(release.config.model_pins);
+    for (const r of Object.values(release.config.routing)) expect(m.availableModels).toContain(release.config.model_pins[r.model]);
+    expect(m.availableModels?.every((id) => pins.includes(id))).toBe(true);
+    expect(m).toMatchObject({ availableModelsMatch: "exact", switchModelsOnFlag: false });
+    expect(sessionSettings(inputs, release)).toMatchObject(m);
   });
 });
