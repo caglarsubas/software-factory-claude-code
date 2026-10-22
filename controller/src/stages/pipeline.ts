@@ -225,6 +225,11 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
 
 async function runTaskCore(inputs: PipelineInputs): Promise<State> {
   const { home, store, validator, release, deps, taskId } = inputs;
+  // First, before anything a v0.1.x task's run directory or profile may no longer hold.
+  const created = store.events(taskId).find((e) => e.type === "task_created");
+  if (created?.payload["commit_protocol"] !== 1 && store.events(taskId).some((e) => e.type === "stage_started")) {
+    throw new ProtocolError(`${taskId} was started by a factoryctl without the commit protocol (v0.1.x), which cannot open this store since v0.20.0: cancel it (factoryctl cancel ${taskId}) and create a new task`);
+  }
   const task: Task = readTask(home, taskId);
   const profilePath = task.target.profile;
   const profile: Profile = loadProfile(profilePath, validator);
@@ -237,13 +242,9 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     mkdirSync(d, { recursive: true, mode: 0o700 });
     return d;
   };
-  const created = store.events(taskId).find((e) => e.type === "task_created");
   const remote = typeof created?.payload["remote"] === "string" ? created.payload["remote"] : "";
   const protectedGlobs = [...profile.protected_paths.map((p) => p.glob), ...profile.restricted.map((r) => r.glob)];
   const text: TaskText = { title: task.title, body: readFileSync(join(dir, "task.md"), "utf8"), trust: task.text_trust };
-  if (created?.payload["commit_protocol"] !== 1 && store.events(taskId).some((e) => e.type === "stage_started")) {
-    throw new ProtocolError(`${taskId} was started by a factoryctl without the commit protocol (v0.1.x), which cannot open this store since v0.20.0: cancel it (factoryctl cancel ${taskId}) and create a new task`);
-  }
 
   // --- small helpers -------------------------------------------------------------------
   const now = (): Date => deps.now?.() ?? new Date();
