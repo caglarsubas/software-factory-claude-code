@@ -77,7 +77,7 @@ A run goes checkout → triage → spec → rounds of build → gates → review
   - The controller checks the task budget before every step and after every session (`budget_exceeded`). A session that never reports is charged its cap.
   - It also checks the wall clock of active time (`wall_clock`, 90 minutes), counted from run start and end events and a heartbeat, so waits for a human do not count. A timer aborts a session in flight when the clock runs out.
   - It checks the target's monthly cap (`budgets.monthly_usd` in its profile): reaching it pauses the task, which resumes in a new month or under a raised cap.
-- **Older tasks:** a task that a `factoryctl` without the commit protocol (v0.1.x) started is refused; finish it on that release.
+- **Older tasks:** a task that a `factoryctl` without the commit protocol (v0.1.x) started is refused. v0.1.x cannot open the store after v0.20.0's migration, so cancel it and create a new task.
 - **Manifest:** `manifest.json` records:
   - every artifact's digest;
   - the base and candidate commits;

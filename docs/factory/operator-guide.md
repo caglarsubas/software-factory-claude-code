@@ -79,7 +79,7 @@ A release is a version tag on `main` whose version equals `plugin/.claude-plugin
 
    The `release` workflow then checks the tag against `plugin.json` and the changelog, waits for `ci` to pass on the tagged commit, and publishes the GitHub release with the changelog section as its notes. A tag that does not match fails the workflow, and no release is published.
 3. **Install and pin** it on your machine, as in [Install a release](#install-a-release): `git fetch --tags`, then `pnpm factoryctl release install v0.2.0` from your checkout. `factoryctl doctor` must then show no `fail`.
-4. **Roll back** with `factoryctl release use v0.1.2`: any installed release can be pinned again. Tasks keep the event history they ran on, so check the changelog's **Breaking** notes before you roll back across them.
+4. **Roll back** with `factoryctl release use v0.19.0`: any installed release can be pinned again, except across a store schema change. Since `v0.20.0` (store schema 4), earlier releases refuse the store. Tasks keep the event history they ran on, so check the changelog's **Breaking** notes before you roll back across them.
 
 Tag and pin only from your own terminal: `release install` and `release use` refuse to run inside a Claude Code session.
 
@@ -223,7 +223,7 @@ Every run takes its task's lease first (P2-03), and everything it writes carries
 |---|---|
 | `factoryctl` crashed, was killed, the host rebooted, or you pressed Ctrl-C | `factoryctl resume T-0001`. Every step commits its files through an event, so a crash leaves each step committed or not. The run continues from the first step that is not, a file half-written by the crash is rolled forward or removed, and a transition lost in the crash is repaired. A push or PR the crash interrupted is looked up before anything runs: it is recorded if it happened and made later if not, never twice. Session processes and gate containers the dead run left behind are stopped. |
 | You edited or removed a file in `runs/T-0001/` | Its step runs again on the next `resume`, and so does every step that read it. A spec that changes needs your approval again. |
-| "T-0001 was started by a factoryctl without the commit protocol" | The task began on v0.1.x. Finish it with that release (`factoryctl release use v0.1.2`), or create a new task. |
+| "T-0001 was started by a factoryctl without the commit protocol" | The task began on v0.1.x, and v0.1.x cannot open the store since `v0.20.0`. Cancel it and create a new task. |
 | "T-0001 is running (pid …)" | Another `factoryctl` holds the run lock. A lock whose process has died, or whose pid now belongs to another process, is cleared on the next run; `halt`, `cancel` and `reject` never signal such a pid. |
 | A task `FAILED` | `factoryctl report T-0001` gives its category, one of the ten in [the taxonomy](#failure-taxonomy-and-weekly-review), and the cost of each stage. A failed task is final: fix the cause, then create a new task. |
 | A task should stop for now | `factoryctl pause T-0001`; it holds before its next step until `factoryctl resume T-0001`. |
@@ -500,6 +500,15 @@ factoryctl drill restore
 
 It records the restore time (RTO, limit 1 hour), how far the replica was behind (RPO, limit 1 minute), and any file not restored intact, under `$FACTORY_HOME/drills/`.
 
+**Purging by record.** From `v0.20.0` ([ADR 0003](adr/0003-onboarding-retention-and-purge.md)), the factory deletes what it recorded in one way only: a purge, which `offboard` and `prune` will run. A purge:
+
+- writes a tombstone for each task first, deleting its events in the same transaction;
+- deletes the objects only those tasks referenced, their directories and their OTel lines;
+- compacts the store, so nothing deleted stays in its file;
+- has the replica complete the same purge from its own record.
+
+A purge that stops part-way leaves its journal in `$FACTORY_HOME/purges/` and resumes from it. A restore never brings a purged task back, and the restore drill fails if one does. `v0.20.0` migrates `factory.db` and the replica to store schema 4, and an older `factoryctl` refuses them afterwards: install it only when you will not roll back.
+
 ## Runner container
 
 From `v0.4.0` (P2-01) a session's Claude Code can run in a runner container instead of on your machine. `factoryctl` and the Agent SDK stay on the host, with the in-process guard and every credential.
@@ -603,5 +612,6 @@ G2 closes Phase 2, on the frozen system. `factoryctl gate G2` checks its six aut
 | `tokens/` | each live session's gateway token while it runs; never readable by a session |
 | `objects/` | the write-once object store: artifacts, task files and run evidence by digest; never readable by a session |
 | `replica.json`, `drills/` | where the replica is, and the drill records |
+| `purges/` | the journal of a purge that has not finished; it resumes from there |
 | `gates/<gate>/` | gate snapshots and evidence |
 | `HALT`, `halt.log` | the kill switch and its audit trail |

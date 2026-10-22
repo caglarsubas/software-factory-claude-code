@@ -1,6 +1,10 @@
 // The event store: SQLite in WAL mode with append-only events (ROADMAP §2.4, principle 8).
-// Task state is a fold over events; nothing here updates or deletes an event, and triggers make
-// sure nothing else can either.
+// Task state is a fold over events; nothing here updates an event, and triggers make sure
+// nothing else can either. The single exception is a purge (ADR 0003): an operator's offboarding
+// deletes a target's tasks, and a tombstone, itself append-only, records each one first. Only a
+// tombstoned task's events can be deleted, none can be added to it, and its id is never reused.
+// Deleted rows are overwritten (secure_delete) and the file is compacted after a purge, so their
+// content does not survive in free pages or the write-ahead log.
 //
 // Leases and fencing (P2-03): a task's writer holds a lease, and every lease grant raises the
 // task's epoch. An event factoryctl writes for a task carries the epoch its writer was granted,
@@ -57,6 +61,15 @@ export interface MergeLease {
   acquired_at: string;
 }
 
+/** A purged task: what it held, never what it said (ADR 0003). */
+export interface Tombstone {
+  task_id: string;
+  purged_at: string;
+  events: number;
+  files: number;
+  objects: number;
+}
+
 /** Forward-only migrations: each runs once, in order, inside a transaction. */
 const MIGRATIONS: readonly string[] = [
   `CREATE TABLE events (
@@ -82,6 +95,23 @@ const MIGRATIONS: readonly string[] = [
      holder TEXT NOT NULL,
      acquired_at TEXT NOT NULL
    );`,
+  // Deleting by record (ADR 0003): a task's events can be deleted only once its tombstone exists.
+  `CREATE TABLE tombstones (
+     task_id TEXT PRIMARY KEY,
+     purged_at TEXT NOT NULL,
+     events INTEGER NOT NULL,
+     files INTEGER NOT NULL,
+     objects INTEGER NOT NULL
+   );
+   CREATE TRIGGER tombstones_append_only_update BEFORE UPDATE ON tombstones BEGIN SELECT RAISE(ABORT, 'tombstones are append-only'); END;
+   CREATE TRIGGER tombstones_append_only_delete BEFORE DELETE ON tombstones BEGIN SELECT RAISE(ABORT, 'tombstones are append-only'); END;
+   DROP TRIGGER events_append_only_delete;
+   CREATE TRIGGER events_append_only_delete BEFORE DELETE ON events
+     WHEN NOT EXISTS (SELECT 1 FROM tombstones WHERE task_id = OLD.task_id)
+     BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
+   CREATE TRIGGER events_after_tombstone BEFORE INSERT ON events
+     WHEN EXISTS (SELECT 1 FROM tombstones WHERE task_id = NEW.task_id)
+     BEGIN SELECT RAISE(ABORT, 'the task was purged'); END;`,
 ];
 
 export class EventError extends Error {}
@@ -104,7 +134,7 @@ export class EventStore {
   static open(path: string, opts: { validator?: Validator; now?: () => Date } = {}): EventStore {
     const db = new DatabaseSync(path);
     // The busy timeout comes first: switching to WAL takes a lock another process may hold.
-    db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;");
+    db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;");
     // The version is read under the write lock, so two processes opening a new store at once
     // (serve and a worker, or two replica syncs) migrate it once between them.
     db.exec("BEGIN IMMEDIATE");
@@ -129,8 +159,13 @@ export class EventStore {
   /** The epoch this store's writer holds per task, from its own lease grants. */
   readonly #epochs = new Map<string, number>();
 
+  #depth = 0;
+
+  /** One write transaction; a call inside another joins it. */
   #tx<T>(fn: () => T): T {
+    if (this.#depth > 0) return fn();
     this.#db.exec("BEGIN IMMEDIATE");
+    this.#depth++;
     try {
       const r = fn();
       this.#db.exec("COMMIT");
@@ -138,7 +173,14 @@ export class EventStore {
     } catch (e) {
       this.#db.exec("ROLLBACK");
       throw e;
+    } finally {
+      this.#depth--;
     }
+  }
+
+  /** Runs `fn` holding the store's write lock, so what it reads cannot change before it writes. */
+  exclusive<T>(fn: () => T): T {
+    return this.#tx(fn);
   }
 
   /** Inside a transaction: fence, validate and insert one event. */
@@ -152,7 +194,12 @@ export class EventStore {
     const full: FactoryEvent = { schema_version: 1, seq: (last.seq ?? 0) + 1, ts: this.#now().toISOString(), ...event, epoch };
     const check = this.#validator.validate("event.schema.json", full);
     if (!check.valid) throw new EventError(`invalid event: ${check.errors.join("; ")}`);
-    this.#db.prepare("INSERT INTO events (task_id, seq, type, body) VALUES (?, ?, ?, ?)").run(full.task_id, full.seq, full.type, JSON.stringify(full));
+    try {
+      this.#db.prepare("INSERT INTO events (task_id, seq, type, body) VALUES (?, ?, ?, ?)").run(full.task_id, full.seq, full.type, JSON.stringify(full));
+    } catch (e) {
+      if (e instanceof Error && e.message.includes("the task was purged")) throw new EventError(`${event.task_id} was purged; nothing more can be written for it`);
+      throw e;
+    }
     return full;
   }
 
@@ -265,9 +312,45 @@ export class EventStore {
     return rows.map((r) => r.task_id);
   }
 
+  /** The next task id: past every task there is and every task there was, so a purged id is never reused. */
   nextTaskId(): string {
-    const ids = this.taskIds().map((id) => Number(id.slice(2)));
+    const ids = [...this.taskIds(), ...this.tombstones().map((t) => t.task_id)].map((id) => Number(id.slice(2)));
     return `T-${String(Math.max(0, ...ids) + 1).padStart(4, "0")}`;
+  }
+
+  /** Tombstones whose task still has events here: purges this store has not completed. */
+  pendingTombstones(): Tombstone[] {
+    const rows = this.#db.prepare("SELECT task_id, purged_at, events, files, objects FROM tombstones t WHERE EXISTS (SELECT 1 FROM events e WHERE e.task_id = t.task_id) ORDER BY task_id").all() as unknown as Tombstone[];
+    return rows.map((r) => ({ task_id: r.task_id, purged_at: r.purged_at, events: r.events, files: r.files, objects: r.objects }));
+  }
+
+  tombstones(): Tombstone[] {
+    const rows = this.#db.prepare("SELECT task_id, purged_at, events, files, objects FROM tombstones ORDER BY task_id").all() as unknown as Tombstone[];
+    return rows.map((r) => ({ task_id: r.task_id, purged_at: r.purged_at, events: r.events, files: r.files, objects: r.objects }));
+  }
+
+  /**
+   * The only delete path (ADR 0003): records each task's tombstone, then deletes its events and
+   * any lease it holds, in one transaction. A task already tombstoned keeps its first tombstone.
+   * Returns how many events went.
+   */
+  purgeTasks(rows: readonly Tombstone[]): number {
+    return this.#tx(() => {
+      let deleted = 0;
+      for (const t of rows) {
+        this.#db.prepare("INSERT INTO tombstones (task_id, purged_at, events, files, objects) VALUES (?, ?, ?, ?, ?) ON CONFLICT (task_id) DO NOTHING").run(t.task_id, t.purged_at, t.events, t.files, t.objects);
+        deleted += Number(this.#db.prepare("DELETE FROM events WHERE task_id = ?").run(t.task_id).changes);
+        this.#db.prepare("DELETE FROM leases WHERE task_id = ?").run(t.task_id);
+        this.#db.prepare("DELETE FROM merge_leases WHERE task_id = ?").run(t.task_id);
+        this.#epochs.delete(t.task_id);
+      }
+      return deleted;
+    });
+  }
+
+  /** Rewrites the file without its free pages and empties the write-ahead log: what a purge deleted is gone from disk. */
+  compact(): void {
+    this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);");
   }
 
   /** For the append-only test only: run raw SQL against the store. */

@@ -4,6 +4,28 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-22
+
+### Changed
+
+- **Breaking: store schema 4.** `factory.db` and the replica gain a `tombstones` table, the one record a purge writes ([ADR 0003](docs/factory/adr/0003-onboarding-retention-and-purge.md)). Installing this release migrates both on first use, and an older `factoryctl` then refuses the store: there is no rolling back across it.
+- **Events stay append-only except by record.** An event can now be deleted only once its task has a tombstone. Nothing can be added to a tombstoned task, tombstones are themselves append-only, and a purged task's id is never reused. Every other update and delete still aborts.
+- Deleted rows are overwritten (`secure_delete`).
+- The replica's sync starts after the highest row id it has ever copied, which SQLite keeps after a purge deleted those rows, rather than after the highest row it still holds.
+
+### Added
+
+- **Purging by record (P2-11, first part).** A purge is planned in full into a journal under `$FACTORY_HOME/purges/`, then run step by step; a crash anywhere resumes where it stopped. Each purge:
+  - writes the tombstones, deleting the tasks' events in the same transaction;
+  - deletes every object only those tasks referenced, and objects no task names that are over an hour old;
+  - removes their run, worktree and session directories and eval captures;
+  - drops their OTel lines;
+  - compacts the store;
+  - has the replica complete the same purge from its own record.
+
+  A restore completes a purge the replica had recorded and not finished. The restore drill fails if anything purged comes back. Nothing runs a purge yet: `offboard` and `prune` come in the next P2-11 releases.
+- **ADR 0003** records the purge as the single exception to principle 8. It also settles the private store (`$FACTORY_HOME/targets/`), retention (shortest of profile and config), the admission bar, and how onboarding and offboarding PRs are opened.
+
 ## [0.19.0] - 2026-10-21
 
 ### Added
@@ -398,7 +420,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.16.0...v0.17.0

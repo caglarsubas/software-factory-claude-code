@@ -242,7 +242,7 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
   const protectedGlobs = [...profile.protected_paths.map((p) => p.glob), ...profile.restricted.map((r) => r.glob)];
   const text: TaskText = { title: task.title, body: readFileSync(join(dir, "task.md"), "utf8"), trust: task.text_trust };
   if (created?.payload["commit_protocol"] !== 1 && store.events(taskId).some((e) => e.type === "stage_started")) {
-    throw new ProtocolError(`${taskId} was started by a factoryctl without the commit protocol (v0.1.x); finish it on that release (factoryctl release use v0.1.2) or create a new task`);
+    throw new ProtocolError(`${taskId} was started by a factoryctl without the commit protocol (v0.1.x), which cannot open this store since v0.20.0: cancel it (factoryctl cancel ${taskId}) and create a new task`);
   }
 
   // --- small helpers -------------------------------------------------------------------
