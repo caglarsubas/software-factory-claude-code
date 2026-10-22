@@ -16,6 +16,12 @@ export interface MemoryGitHub extends GitHub {
   issues: Map<string, (IntakeIssue & { labels: string[] })[]>;
   /** Every call that changed something, in order. */
   writes: string[];
+  /** Repositories as the operator's token reads them (P2-11): default branch, visibility, protection. */
+  repos: Map<string, { defaultBranch: string; private: boolean; protected: boolean }>;
+  /** Each repository's rulesets, as created through the API, with their ids. */
+  rulesets: Map<string, ({ id: number; name: string } & Record<string, unknown>)[]>;
+  /** The operator's login (GET /user). */
+  login: string;
 }
 
 /** GitHub Actions' own app ID: the required checks are pinned to it. */
@@ -29,12 +35,17 @@ export function memoryGitHub(headOf: (repo: string, branch: string) => string = 
   const writes: string[] = [];
   const actionsRuns: MemoryGitHub["actionsRuns"] = [];
   const issues: MemoryGitHub["issues"] = new Map();
+  const repos: MemoryGitHub["repos"] = new Map();
+  const rulesets: MemoryGitHub["rulesets"] = new Map();
   // An open PR follows its branch, as GitHub's does.
   const view = (p: PullRequestInput & PullRequest): PullRequest => ({ number: p.number, url: p.url, state: p.state, merged: p.merged, headSha: p.state === "open" ? headOf(p.repo, p.head) || p.headSha : p.headSha });
   return {
     prs,
     actionsRuns,
     issues,
+    repos,
+    rulesets,
+    login: "operator",
     issueComments,
     checks,
     writes,
@@ -118,6 +129,8 @@ export interface StubApp {
   minted: { token: string; repositories: string[] | null }[];
   /** The Authorization header of every REST call other than the App's own. */
   calls: { method: string; path: string; authorization: string }[];
+  /** The repositories (names) the installation reaches; a token narrowed to any other is refused with 422. Absent: every repository. */
+  repositories?: Set<string>;
 }
 
 /** Verifies an RS256 App JWT: signature, issuer and expiry. */
@@ -145,6 +158,11 @@ export async function serveGitHub(gh: MemoryGitHub, app?: StubApp): Promise<{ ur
           send(200, { id: app.id, slug: "factory-test", permissions: app.permissions });
         } else if (req.method === "POST" && url.pathname === `/app/installations/${String(app.installationId)}/access_tokens`) {
           const b = await body(req);
+          const wanted = Array.isArray(b["repositories"]) ? (b["repositories"] as string[]) : [];
+          if (app.repositories !== undefined && wanted.some((r) => !app.repositories?.has(r))) {
+            send(422, { message: "There is at least one repository that does not exist or is not accessible to the parent installation." });
+            return;
+          }
           const token = `ghs_test${String(app.minted.length + 1)}`;
           app.minted.push({ token, repositories: Array.isArray(b["repositories"]) ? (b["repositories"] as string[]) : null });
           send(201, { token, expires_at: new Date(Date.now() + 3_600_000).toISOString(), permissions: app.permissions });
@@ -154,10 +172,53 @@ export async function serveGitHub(gh: MemoryGitHub, app?: StubApp): Promise<{ ur
         return;
       }
       app?.calls.push({ method: req.method ?? "", path: url.pathname, authorization: req.headers.authorization ?? "" });
+      if (req.method === "GET" && url.pathname === "/user") {
+        send(200, { login: gh.login });
+        return;
+      }
+      const whole = /^\/repos\/([^/]+\/[^/]+)$/.exec(url.pathname);
+      if (req.method === "GET" && whole !== null) {
+        const r = gh.repos.get(whole[1] ?? "");
+        if (r === undefined) send(404, { message: "Not Found" });
+        else send(200, { full_name: whole[1], default_branch: r.defaultBranch, private: r.private });
+        return;
+      }
       const m = /^\/repos\/([^/]+\/[^/]+)\/(.+)$/.exec(url.pathname);
       const repo = m?.[1] ?? "";
       const resource = m?.[2] ?? "";
-      if (req.method === "GET" && resource === "pulls") {
+      const sets = gh.rulesets.get(repo) ?? [];
+      const rulesetId = /^rulesets\/([0-9]+)$/.exec(resource)?.[1];
+      if (req.method === "GET" && /^branches\/[^/]+$/.test(resource)) {
+        send(200, { name: resource.slice("branches/".length), protected: gh.repos.get(repo)?.protected ?? false });
+      } else if (req.method === "GET" && /^rules\/branches\/[^/]+$/.test(resource)) {
+        send(200, sets.flatMap((r) => (r["rules"] as unknown[] | undefined) ?? []));
+      } else if (req.method === "GET" && resource === "rulesets") {
+        send(200, sets.map((r) => ({ id: r.id, name: r.name })));
+      } else if (rulesetId !== undefined) {
+        const at = sets.findIndex((r) => r.id === Number(rulesetId));
+        if (at === -1) {
+          send(404, { message: "Not Found" });
+        } else if (req.method === "GET") {
+          send(200, sets[at]);
+        } else if (req.method === "PUT") {
+          const b = await body(req);
+          sets[at] = { ...b, id: Number(rulesetId), name: String(b["name"]) };
+          gh.writes.push(`ruleset_replace ${repo} ${String(b["name"])}`);
+          send(200, sets[at]);
+        } else if (req.method === "DELETE") {
+          gh.writes.push(`ruleset_delete ${repo} ${sets[at]?.name ?? ""}`);
+          sets.splice(at, 1);
+          res.writeHead(204).end();
+        } else {
+          send(404, { message: "Not Found" });
+        }
+      } else if (req.method === "POST" && resource === "rulesets") {
+        const b = await body(req);
+        const created = { ...b, id: 1000 + [...gh.rulesets.values()].flat().length + gh.writes.length, name: String(b["name"]) };
+        gh.rulesets.set(repo, [...sets, created]);
+        gh.writes.push(`ruleset_create ${repo} ${created.name}`);
+        send(201, created);
+      } else if (req.method === "GET" && resource === "pulls") {
         const head = (url.searchParams.get("head") ?? "").split(":")[1] ?? "";
         send(200, (await gh.pullRequests(repo, head)).map(rest));
       } else if (req.method === "POST" && resource === "pulls") {
