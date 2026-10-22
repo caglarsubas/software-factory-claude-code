@@ -255,6 +255,10 @@ export async function serveGitHub(gh: MemoryGitHub, app?: StubApp): Promise<{ ur
       send(500, { message: e instanceof Error ? e.message : String(e) });
     });
   });
+  // This process blocks in synchronous git calls for seconds at a time. With a server-side keep-alive
+  // timeout, a timer that expired meanwhile closes a pooled connection before the server reads the
+  // request a client already sent on it (ECONNRESET, "fetch failed"): the client closes idle connections instead.
+  server.keepAliveTimeout = 0;
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   return {
