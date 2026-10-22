@@ -15,14 +15,14 @@ FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a087
 FROM debian:trixie-slim@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f AS base
 
 FROM base AS downloads-amd64
-ADD --checksum=sha256:3e8a076433571db441447a85624fd9ce2a2fd50c326c0e7b456a034be3e443b2 \
-    https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-x64/-/claude-agent-sdk-linux-x64-0.3.286.tgz /dl/claude.tgz
-ENV CLAUDE_SHA256=fe503f65c6289d59c23e5b21ae44f03583f997dd33a2cbfc75ab4f96fb8fc73f
+ADD --checksum=sha256:60f6a3b611f06c0561933bdbc66e7288a172bffcd76f02c221ad6f3ac866f440 \
+    https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-x64/-/claude-agent-sdk-linux-x64-0.3.306.tgz /dl/claude.tgz
+ENV CLAUDE_SHA256=520bc6c1f40af466bd03a278b5ae1af1a2938bc7de5b9e5cb15526da20d71cfe
 
 FROM base AS downloads-arm64
-ADD --checksum=sha256:300a7c03cb3eca8cccef6ae8f8a7b1397973b01ebd4aa92279db852c9718fb55 \
-    https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-arm64/-/claude-agent-sdk-linux-arm64-0.3.286.tgz /dl/claude.tgz
-ENV CLAUDE_SHA256=0292fa22ac2fd43e16be9d0e511ddd8347280d6e0ebaca744ef5b27e05d8d0f8
+ADD --checksum=sha256:f788551166758d3ae3b9d7422426ff6eabf59e14aefcd714c4cf4bcda0170a2c \
+    https://registry.npmjs.org/@anthropic-ai/claude-agent-sdk-linux-arm64/-/claude-agent-sdk-linux-arm64-0.3.306.tgz /dl/claude.tgz
+ENV CLAUDE_SHA256=77d257d5e8b8730ec61d5a4992a8eb65550aaf9589f464988aa1a9684338d801
 
 FROM downloads-${TARGETARCH} AS downloads
 RUN tar -xzf /dl/claude.tgz -C /dl && echo "${CLAUDE_SHA256}  /dl/package/claude" | sha256sum -c -

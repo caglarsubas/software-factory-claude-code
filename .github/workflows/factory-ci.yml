@@ -44,8 +44,8 @@ jobs:
       # The version matches config/factory.yaml's claude_code.version (checked by the conformance test).
       - name: Validate plugin and marketplace
         run: |
-          npx --yes @anthropic-ai/claude-code@2.1.286 plugin validate plugin --strict
-          npx --yes @anthropic-ai/claude-code@2.1.286 plugin validate . --strict
+          npx --yes @anthropic-ai/claude-code@2.1.306 plugin validate plugin --strict
+          npx --yes @anthropic-ai/claude-code@2.1.306 plugin validate . --strict
 
   # The gate runner (P0-06): check every pinned download's signature or provenance, build the
   # image, then run the rule tests and the seeded-defect suite through real containers.

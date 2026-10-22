@@ -26,6 +26,7 @@ git(seed, ["add", "-A"]);
 git(seed, ["commit", "-qm", "base"]);
 const remote = join(root, "remote.git");
 git(root, ["clone", "-q", "--bare", seed, remote]);
+const { version: pinned, agent_sdk: sdk } = (parse(readFileSync(join(REPO_ROOT, "config/factory.yaml"), "utf8")) as { claude_code: { version: string; agent_sdk: string } }).claude_code;
 const profile = parse(readFileSync(join(REPO_ROOT, "profiles/template/profile.yaml"), "utf8")) as Record<string, unknown>;
 profile["target"] = { repo: "example/ts-mini", default_branch: "main", visibility: "private" };
 const profilePath = join(root, "profile.yaml");
@@ -263,13 +264,13 @@ describe("factoryctl", { timeout: 30_000 }, () => {
     const fake = join(root, "fake-claude.mjs");
     writeFileSync(fake, `#!/usr/bin/env node
 import { appendFileSync, writeFileSync } from "node:fs";
-if (process.argv.includes("--version")) { process.stdout.write(process.env.FAKE_VERSION ?? "2.1.286 (Claude Code)\\n"); process.exit(0); }
+if (process.argv.includes("--version")) { process.stdout.write(process.env.FAKE_VERSION ?? "${pinned} (Claude Code)\\n"); process.exit(0); }
 writeFileSync(${JSON.stringify(seen)}, JSON.stringify({ args: process.argv.slice(2), env: Object.keys(process.env).sort(), cwd: process.cwd() }));
 appendFileSync("src/empty.ts", "// reviewed by hand\\n");
 `);
     chmodSync(fake, 0o755);
     expect(factoryctl(["takeover", "T-0005"], { FACTORY_CLAUDE_BIN: fake, CLAUDECODE: "1" }).stderr).toContain("takeover refuses to run inside a Claude Code session");
-    expect(factoryctl(["takeover", "T-0005"], { FACTORY_CLAUDE_BIN: join(root, "nowhere") }).stderr).toContain("is not Claude Code 2.1.286");
+    expect(factoryctl(["takeover", "T-0005"], { FACTORY_CLAUDE_BIN: join(root, "nowhere") }).stderr).toContain(`is not Claude Code ${pinned}`);
     // A mod left in the session's config directory would load in the resumed session: takeover refuses it.
     const devMods = join(home, "sessions", "T-0005", "claude", "dev-mods");
     mkdirSync(join(devMods, "s/m/hooks"), { recursive: true });
@@ -307,8 +308,8 @@ appendFileSync("src/empty.ts", "// reviewed by hand\\n");
     const r = factoryctl(["doctor"], { ANTHROPIC_API_KEY: "set" });
     expect(r.status).toBe(1);
     expect(r.stdout).toMatch(/^fail {2}ANTHROPIC_API_KEY unset:/m);
-    expect(r.stdout).toMatch(/^ok {4}agent sdk pin: installed 0\.3\.286, pinned 0\.3\.286$/m);
-    expect(r.stdout).toMatch(/^ok {4}claude code pin:/m);
+    expect(r.stdout).toContain(`\nok    agent sdk pin: installed ${sdk}, pinned ${sdk}\n`);
+    expect(r.stdout).toContain(`\nok    claude code pin: the SDK runs Claude Code ${pinned}, pinned ${pinned}\n`);
     expect(r.stdout).toMatch(/^fail {2}api key file:/m);
     expect(r.stdout).toMatch(/^ok {4}telemetry: each live run's own collector, into /m);
     expect(r.stdout).toMatch(/^ok {4}model alarms: no alias alarm in 30 days$/m);
