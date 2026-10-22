@@ -4,6 +4,7 @@ The factory's control plane (ROADMAP §2). Version 0 (P0-07) runs one task at a 
 
 ```bash
 pnpm factoryctl task create --profile profile.yaml --title "…" --body-file task.md [--untrusted] [--remote URL]
+pnpm factoryctl task create --repo OWNER/NAME --title "…" --body-file task.md   # an onboarded target's confirmed profile and remote
 pnpm factoryctl run T-0001          # until the task needs a human or ends
 pnpm factoryctl resume T-0001       # the same, after a stop, an approval, a halt, a crash, or a merged or closed PR
 pnpm factoryctl run T-0001 --attach # the same, with each session's messages as they arrive
@@ -21,6 +22,8 @@ pnpm factoryctl release install v0.1.0 | use TAG | status
 pnpm factoryctl gate G0 --begin     # then the fixture dry runs, then: gate G0
 pnpm factoryctl gate G1 --begin     # then a counted task to its merge, then: budgets, gate G1
 pnpm factoryctl prune [--dry-run] # expire finished tasks' evidence past retention (ADR 0003)
+pnpm factoryctl onboard OWNER/NAME [--confirm | --update]   # inventory, profile, STOP, footprint PR, rulesets, App (P2-11)
+pnpm factoryctl intake [PROFILE.yaml…]   # labelled issues as tasks; with none, every onboarded target's
 pnpm factoryctl doctor
 ```
 

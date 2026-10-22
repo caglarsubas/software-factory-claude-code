@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/inventory.schema.json",
+  "title": "Inventory",
+  "description": "What onboarding found in a target at one commit (P2-11): its stack, its commands, its CI and the files the footprint touches. The draft profile is made from it.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "repo": {
+      "$ref": "defs.schema.json#/$defs/repo"
+    },
+    "head": {
+      "$ref": "defs.schema.json#/$defs/gitSha"
+    },
+    "default_branch": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "adapters": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "typescript",
+          "python"
+        ]
+      }
+    },
+    "package_manager": {
+      "enum": [
+        "pnpm",
+        "npm",
+        "yarn",
+        "bun",
+        "uv",
+        null
+      ]
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "setup": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "build": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "typecheck": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "lint": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "test": {
+          "$ref": "defs.schema.json#/$defs/text"
+        }
+      }
+    },
+    "ci": {
+      "description": "Workflow files other than the factory's own.",
+      "type": "array",
+      "items": {
+        "$ref": "defs.schema.json#/$defs/text"
+      }
+    },
+    "codeowners": {
+      "description": "The CODEOWNERS file GitHub reads, if there is one.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "notes": {
+      "description": "What the inventory could not decide, for the operator at the STOP.",
+      "type": "array",
+      "items": {
+        "$ref": "defs.schema.json#/$defs/text"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "repo",
+    "head",
+    "default_branch",
+    "adapters",
+    "package_manager",
+    "commands",
+    "ci",
+    "codeowners",
+    "notes"
+  ]
+}

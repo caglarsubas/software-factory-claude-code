@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "repo": "example/app",
+  "head": "1111111111111111111111111111111111111111",
+  "default_branch": "main",
+  "adapters": [],
+  "package_manager": null,
+  "commands": {},
+  "ci": [],
+  "codeowners": null,
+  "notes": [
+    "no package.json or pyproject.toml at the root: the gates support TypeScript and Python"
+  ]
+}

@@ -4,6 +4,21 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-22
+
+### Added
+
+- **`factoryctl onboard OWNER/NAME` (P2-11, third part).** It takes a repository on as a target: inventory, a drafted profile, admission, a STOP for the operator, then the footprint PR, the rulesets and the App's access ([ADR 0003](docs/factory/adr/0003-onboarding-retention-and-purge.md)). It is operator-only.
+  - Each run takes the target one state further (`drafted`, `confirmed`, `proposed`, `merged`, `active`) and stops where a person acts. Every step finds before it acts, so a run can be repeated at any point, after a crash too.
+  - **The inventory** reads the default branch from the mirror without a checkout. It proposes the commands from the lockfile and `package.json` scripts, or from uv and `pyproject.toml`. It reproduces both fixtures' commands exactly, and notes what it cannot decide instead of guessing.
+  - **Admission** needs every command gate green in the gate image, CI of the target's own, and a protected default branch. The profile must be valid and name its approvers.
+  - **`--confirm`** accepts only the profile admission passed on. It builds one deterministic commit of the footprint and the layer: a marked block in `CODEOWNERS` and in `CLAUDE.md`, `.claude/rules/factory-invariants.md`, and the factory's plugin in `.claude/settings.json`, pinned to the release. It merges into the target's files and records what it added, for offboarding. The PR goes from `software-factory/onboard` with the operator's token, not through the task outbox.
+  - **After the merge,** it checks the default branch holds what was proposed and that `gates` passed, applies the rulesets, and checks the App reaches the repository. If the App does not, it prints the installation-settings step.
+  - **`--update`** proposes a profile edit or a release move on `software-factory/update`. A closed update leaves the target on the change it had.
+- **The private store,** `$FACTORY_HOME/targets/<owner>__<name>/`, holds `target.json` (`schemas/target.schema.json`), `profile.yaml`, `inventory.json` (`schemas/inventory.schema.json`) and an audit journal. The replica copies it, and a restore brings it back.
+- **`task create --repo OWNER/NAME`** uses an active target's confirmed profile and remote. **`intake` without profiles** polls every active target with an `intake:` block. Both refuse a profile changed since it was confirmed.
+- **`doctor`** checks every target in the store: its state, its profile against the confirmed one, its rulesets and the App's access.
+
 ## [0.21.0] - 2026-10-22
 
 ### Added
@@ -443,7 +458,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.18.0...v0.19.0

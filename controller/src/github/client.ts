@@ -112,13 +112,13 @@ export interface CommitChecks {
 
 export class GitHubError extends Error {}
 
-type Call = (method: string, path: string, body?: unknown) => Promise<unknown>;
+export type Call = (method: string, path: string, body?: unknown) => Promise<unknown>;
 
 /** A token, or where to get a current one: the App's installation tokens expire within the hour. */
 export type TokenSource = string | (() => Promise<string>);
 
 /** A public repository needs no token for reads. */
-function caller(source: TokenSource | null, api: string, fetchFn: typeof fetch): Call {
+export function caller(source: TokenSource | null, api: string, fetchFn: typeof fetch): Call {
   return async (method, path, body) => {
     const token = typeof source === "function" ? await source() : source;
     const res = await fetchFn(`${api}${path}`, {

@@ -83,15 +83,83 @@ A release is a version tag on `main` whose version equals `plugin/.claude-plugin
 
 Tag and pin only from your own terminal: `release install` and `release use` refuse to run inside a Claude Code session.
 
-## Admit a target
+## Onboard a target
 
-A repository becomes a factory target only when it has all three of these:
+From `v0.22.0` (P2-11, [ADR 0003](adr/0003-onboarding-retention-and-purge.md)) `factoryctl onboard` takes a repository on as a target. Admission accepts a repository only when it has all three of these:
 
-1. **A test command that passes inside the gate image.** Passing in the repository's own CI is not enough: the gates run the test command in the gate image, so it must pass there.
-2. **CI.** The repository has its own CI, which runs on every PR.
-3. **A protected default branch.** For this repository, that protection is the ruleset in [`.github/rulesets/main.json`](../../.github/rulesets/main.json), imported under Settings → Rules → Rulesets.
+1. **Every command gate green in the gate image.** Passing in the repository's own CI is not enough: the gates run the profile's commands in the gate image on every task, so they must pass there.
+2. **CI of its own.** A workflow in `.github/workflows`, besides the factory's, that runs on every PR.
+3. **A protected default branch:** branch protection or a ruleset. For this repository, that protection is the ruleset in [`.github/rulesets/main.json`](../../.github/rulesets/main.json), imported under Settings → Rules → Rulesets.
 
-Admitting a target changes nothing on GitHub by itself: agents never push or hold credentials, and `factoryctl` performs every GitHub side effect.
+The profile must also be valid and name its approvers. Admission changes nothing on GitHub: agents never push or hold credentials, and `factoryctl` performs every GitHub side effect.
+
+`onboard` is operator-only: it refuses to run inside Claude Code. It needs two things set up first:
+
+- **The App.** See [GitHub App and verdicts](#github-app-and-verdicts).
+- **Your own `FACTORY_GITHUB_TOKEN`.** A fine-grained token on the target with Contents, Workflows, Pull requests and Administration: write. It needs more than the App's token because the footprint PR carries workflow files, and the rulesets need Administration, which the App never holds.
+
+Each run takes the target one step further, then stops where you act. You can run the same command again at any point, including after a crash.
+
+1. **Take the inventory and run admission.**
+
+   ```zsh
+   factoryctl onboard OWNER/NAME
+   ```
+
+   It does three things:
+   - reads the default branch;
+   - drafts `$FACTORY_HOME/targets/OWNER__NAME/profile.yaml` from what it finds, the first time only;
+   - runs admission: the commands in the gate image, then CI, then protection.
+
+   From then on the profile is yours, and no run writes it again. If something fails, the command exits 1 and names it: fix it in the target or the profile, then run the command again.
+2. **Stop and review the profile.**
+   - Approvers and intake maintainers start as your GitHub login.
+   - Its header lists the files the release already holds at R3, and what the inventory could not decide.
+   - Set `protected_paths`, `restricted`, `invariants`, the budget and retention.
+
+   After an edit, run step 1 again: what you confirm must be what admission passed.
+3. **Confirm.**
+
+   ```zsh
+   factoryctl onboard OWNER/NAME --confirm
+   ```
+
+   It builds one commit of the footprint ([Footprint](#footprint)) and the layer below, pushes it to `software-factory/onboard`, and opens the PR.
+4. **Review and merge the PR on GitHub.** The PR must pass its `gates` check. You opened it, so where the repository requires an approval yours does not count: another maintainer approves it, or you merge as an admin.
+5. **Finish.**
+
+   ```zsh
+   factoryctl onboard OWNER/NAME
+   ```
+
+   It checks that the default branch holds the footprint as proposed and that `gates` passed on it. Then it applies the `factory-main` and `factory-branches` rulesets, and checks that the App reaches the repository.
+
+   If the App does not, the command prints the installation's settings URL. Open it, go to Repository access → Only select repositories, add the repository, Save, and run the command again. The target is then active.
+
+The layer is what onboarding writes for the people and the sessions that work in the target, beside the footprint:
+
+- **A marked block in `CODEOWNERS`.** It goes in `.github/CODEOWNERS` if the repository has no CODEOWNERS file. The approvers own every R3 and Restricted path and the factory's files.
+- **A marked section in `CLAUDE.md`.** It covers the release, `factory/**`, the R3 and Restricted paths, and `spec_dir`.
+- **`.claude/rules/factory-invariants.md`:** the profile's invariants.
+- **The factory's marketplace and plugin in `.claude/settings.json`**, pinned to the release. The plugin's hooks need Node 24.
+
+The layer merges into what the target already has. `target.json` records exactly what it added, so offboarding takes that out and nothing else.
+
+Once the target is active:
+
+- **Tasks.** `factoryctl task create --repo OWNER/NAME --title … --body-file …` uses the confirmed profile and the target's remote.
+- **Intake.** `factoryctl intake` with no profiles polls every active target whose profile has an `intake:` block.
+- **Changing the profile.** Both commands refuse a profile changed since it was confirmed. To change it, or to move the target to a new release by setting `factory_release`, edit the profile and run:
+
+  ```zsh
+  factoryctl onboard OWNER/NAME --update
+  ```
+
+  It proposes the change on `software-factory/update`. After the merge, step 5 finishes it, and until then the target takes no new tasks. A closed update leaves the target as it was.
+- **Checking it again.** `factoryctl onboard OWNER/NAME` applies again a ruleset that drifted, and checks that the App still reaches the repository.
+- **`doctor`** checks every target in the store: its state, its profile, its rulesets and the App's access.
+
+From a development checkout, name the release the footprint pins with `--factory-ref vX.Y.Z`, adding `--source DIR` when the checkout is elsewhere.
 
 ## Run a task
 
@@ -632,5 +700,6 @@ G2 closes Phase 2, on the frozen system. `factoryctl gate G2` checks its six aut
 | `objects/` | the write-once object store: artifacts, task files and run evidence by digest; never readable by a session |
 | `replica.json`, `drills/` | where the replica is, and the drill records |
 | `purges/` | the journal of a purge that has not finished; `factoryctl prune` finishes it |
+| `targets/<owner>__<name>/` | the private store: each onboarded target's `target.json`, `profile.yaml`, `inventory.json` and `journal.ndjson`; the replica copies it |
 | `gates/<gate>/` | gate snapshots and evidence |
 | `HALT`, `halt.log` | the kill switch and its audit trail |
