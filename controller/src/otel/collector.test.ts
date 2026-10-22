@@ -1,6 +1,6 @@
 // The factory's own OTel collector (P2-08): OTLP/HTTP JSON in, one NDJSON line per export in a
 // file per day, kept for the retention; and the gateway's route to it for runner sessions.
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -9,7 +9,7 @@ import { startGateway } from "../gateway/gateway.ts";
 import { loadRelease } from "../release.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { otelPanel } from "../report/slo.ts";
-import { pruneOtel, readOtel, startCollector } from "./collector.ts";
+import { filterOtel, pruneOtel, readOtel, startCollector } from "./collector.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "otel-"));
 afterAll(() => {
@@ -53,6 +53,23 @@ describe("the OTel collector", () => {
     expect(pruneOtel(dir, 30, now)).toBe(1);
     expect(readdirSync(dir).sort()).toEqual(["2026-10-10.ndjson", "notes.txt"]);
     expect(readOtel(dir)).toHaveLength(1);
+  });
+
+  it("drops a purged task's exported resources and keeps every other task's (ADR 0003)", () => {
+    const dir = join(scratch, "filtered");
+    mkdirSync(dir);
+    const both = { resourceLogs: [...(logs("T-0001", []) as { resourceLogs: unknown[] }).resourceLogs, ...(logs("T-0002", []) as { resourceLogs: unknown[] }).resourceLogs] };
+    const line = (body: unknown): string => JSON.stringify({ received_at: "x", signal: "logs", body });
+    writeFileSync(join(dir, "2026-10-21.ndjson"), [line(logs("T-0002", [])), '{"torn":"T-0002'].join("\n"));
+    writeFileSync(join(dir, "2026-10-22.ndjson"), [line(logs("T-0001", [])), line(both), line({ resourceMetrics: [] }), '{"torn":"T-0001'].join("\n") + "\n");
+    const untouched = readFileSync(join(dir, "2026-10-22.ndjson"), "utf8");
+    expect(filterOtel(dir, (t) => t === "T-0003")).toEqual({ removed: 0, files: 0 });
+    expect(readFileSync(join(dir, "2026-10-22.ndjson"), "utf8")).toBe(untouched);
+    expect(filterOtel(dir, (t) => t === "T-0002")).toEqual({ removed: 3, files: 2 });
+    // A day with nothing left goes; the export both tasks shared keeps the other task's resource.
+    expect(readdirSync(dir)).toEqual(["2026-10-22.ndjson"]);
+    expect(otelPanel(readOtel(dir)).map((p) => [p.task, p.exports])).toEqual([["T-0001", 2]]);
+    expect(readFileSync(join(dir, "2026-10-22.ndjson"), "utf8")).toContain('{"torn":"T-0001');
   });
 
   it("is reachable through the gateway, without a token, only when the run has one", async () => {

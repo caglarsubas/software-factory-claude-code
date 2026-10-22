@@ -8,7 +8,8 @@
 // - The restore drill restores the replica, as it stands, into a scratch home and times it
 //   (RTO). It compares the restored store with the live one: the events the replica lacked, and
 //   how long before the live store's newest event the replica's newest was (RPO), and checks
-//   that every file a restored task's record names came back with its digest.
+//   that every file a restored task's record names came back with its digest, and that nothing
+//   of a purged task did (ADR 0003).
 // - The serve-kill drill (G2-3) SIGKILLs a serve that holds at least three live tasks and records
 //   them; the G2 evidence then checks that each finished without a duplicate side effect.
 import { spawnSync } from "node:child_process";
@@ -188,6 +189,10 @@ export async function restoreDrill(home: Home, o: { scratch?: string; keep?: boo
           const file = join(runDir(target, id), path);
           if (!existsSync(file) || fileDigest(file) !== digest) damaged.push(`${id}/${path}`);
         }
+      }
+      // A purge is never undone (ADR 0003): nothing of a purged task may come back.
+      for (const t of live.tombstones()) {
+        if (back.events(t.task_id).length > 0 || existsSync(runDir(target, t.task_id))) damaged.push(`${t.task_id} was purged but came back`);
       }
     } finally {
       live.close();

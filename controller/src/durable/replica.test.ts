@@ -128,15 +128,18 @@ describe("the replica", () => {
     try {
       seedTask(home, store);
       syncReplica(home);
-      // As an earlier release left it: no merge leases (P2-06), at the schema before them.
+      // As an earlier release left it: no merge leases (P2-06) and no tombstones (ADR 0003), at the schema before them.
       const old = new DatabaseSync(join(dir, "factory.db"));
-      old.exec("DROP TABLE merge_leases; UPDATE meta SET value = '2' WHERE key = 'schema_version'");
+      old.exec(`DROP TABLE merge_leases; DROP TABLE tombstones; DROP TRIGGER events_after_tombstone; DROP TRIGGER events_append_only_delete;
+        CREATE TRIGGER events_append_only_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
+        UPDATE meta SET value = '2' WHERE key = 'schema_version'`);
       old.close();
       expect(syncReplica(home)).toMatchObject({ events: 0 });
       const replica = new DatabaseSync(join(dir, "factory.db"), { readOnly: true });
       try {
         expect(replica.prepare("SELECT name FROM sqlite_master WHERE name = 'merge_leases'").get()).toBeDefined();
-        expect(replica.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()).toEqual({ value: "3" });
+        expect(replica.prepare("SELECT name FROM sqlite_master WHERE name = 'tombstones'").get()).toBeDefined();
+        expect(replica.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()).toEqual({ value: "4" });
       } finally {
         replica.close();
       }
