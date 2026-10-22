@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "repo": "example/app",
+  "remote": "https://github.com/example/app.git",
+  "default_branch": "main",
+  "state": "offboarding",
+  "created_at": "2026-10-22T09:00:00.000Z",
+  "updated_at": "2026-10-24T09:00:00.000Z",
+  "offboard": {
+    "at": "2026-10-24T08:00:00.000Z",
+    "by": "op",
+    "app": {
+      "at": "2026-10-24T08:10:00.000Z",
+      "detail": "the App's installation 77 does not reach example/app"
+    },
+    "rulesets": {
+      "at": "2026-10-24T08:10:01.000Z",
+      "removed": [
+        "removed ruleset factory-main (1001) from example/app"
+      ]
+    },
+    "change": {
+      "branch": "software-factory/offboard",
+      "base": "5555555555555555555555555555555555555555",
+      "commit": "6666666666666666666666666666666666666666",
+      "files": [
+        ".factory/policy.yaml",
+        "CLAUDE.md"
+      ]
+    },
+    "pr": {
+      "number": 9,
+      "url": "https://github.com/example/app/pull/9"
+    },
+    "cleaned": {
+      "at": "2026-10-24T08:30:00.000Z",
+      "detail": "https://github.com/example/app/pull/9 merged; main holds nothing of the factory's"
+    },
+    "purge": {
+      "at": "2026-10-24T08:31:00.000Z",
+      "journal": "20261024T083100000Z-0a1b2c3d",
+      "tasks": [
+        "T-0004"
+      ],
+      "titles": [
+        "Add an export"
+      ],
+      "budgets_before": {
+        "R0": 0.5,
+        "R1": 2
+      }
+    }
+  }
+}

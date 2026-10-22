@@ -13,7 +13,7 @@ import { sha256, writeAtomic } from "../fsutil.ts";
 import type { Home } from "../home.ts";
 import type { Validator } from "../schemas/validate.ts";
 
-export type TargetState = "drafted" | "confirmed" | "proposed" | "merged" | "active";
+export type TargetState = "drafted" | "confirmed" | "proposed" | "merged" | "active" | "offboarding";
 
 export interface LayerRecord {
   created: string[];
@@ -67,6 +67,21 @@ export interface TargetRecord {
   confirmed?: Confirmed;
   pr?: { number: number; url: string };
   active?: { at: string; rulesets: string[] };
+  offboard?: Offboard;
+}
+
+/** Offboarding, step by step: each recorded once done. */
+export interface Offboard {
+  at: string;
+  by: string;
+  reason?: string;
+  local_only: boolean;
+  app?: { at: string; detail: string };
+  rulesets?: { at: string; removed: string[] };
+  change?: { branch: string; base: string; commit: string; files: string[] };
+  pr?: { number: number; url: string };
+  cleaned?: { at: string; detail: string };
+  purge?: { at: string; journal: string; tasks: string[]; titles: string[]; budgets_before: Record<string, number> };
 }
 
 export class RegistryError extends Error {}

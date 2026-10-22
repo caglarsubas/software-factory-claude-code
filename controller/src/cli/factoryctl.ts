@@ -5,6 +5,7 @@
 //   factoryctl task create --profile FILE | --repo OWNER/NAME --title TEXT --body-file FILE [--untrusted] [--remote URL]
 //   factoryctl intake [PROFILE.yaml...]       admit the targets' labelled issues as tasks (P2-04); none: every onboarded target's
 //   factoryctl onboard OWNER/NAME [--remote URL] [--confirm | --update] [--factory-ref TAG [--source DIR]]  take a target on (P2-11)
+//   factoryctl offboard OWNER/NAME [--local-only | --app-unavailable] [--reason TEXT]  let a target go and purge its data (P2-11)
 //   factoryctl run T-0001 [--attach] [--replay DIR] [--runner host|container]  drive a task until it needs a human or ends
 //   factoryctl resume T-0001 [--attach] [--replay DIR] [--runner host|container]  the same, after a stop, a pause, a halt or a crash
 //   factoryctl serve [--replay DIR] [--max-tasks N] [--port N]  schedule tasks unattended, every live session in the runner
@@ -38,7 +39,7 @@ import { parseArgs } from "node:util";
 import { parse } from "yaml";
 import { engineHost, PROXY_ENV, removeTaskContainers } from "../../../gates/src/container.ts";
 import { activity, haltNow, idle, killSwitchDrill, restoreDrill, serveKillDrill, type Activity } from "../durable/drill.ts";
-import { pendingJournals, runJournal } from "../durable/purge.ts";
+import { pendingJournals, PurgeError, runJournal } from "../durable/purge.ts";
 import { expiredScopes } from "../durable/refs.ts";
 import { planRetention, profilePolicy, prune } from "../durable/retention.ts";
 import { initReplica, keepReplica, replicaStatus, restore, syncReplica } from "../durable/replica.ts";
@@ -87,6 +88,7 @@ import { currentState, currentStatePayload, isPaused, isTerminal, transition } f
 import { createTask, loadProfile, readTask, taskRecord } from "../task/task.ts";
 import { targetReads } from "../target/github.ts";
 import { LayerError } from "../target/layer.ts";
+import { offboard, OffboardError } from "../target/offboard.ts";
 import { onboard, OnboardError } from "../target/onboard.ts";
 import { activeProfile, listTargets, readTarget, RegistryError } from "../target/registry.ts";
 import { FootprintError } from "../governance/footprint.ts";
@@ -442,6 +444,8 @@ async function main(): Promise<void> {
       runner: { type: "string" },
       "dry-run": { type: "boolean" },
       confirm: { type: "boolean" },
+      "local-only": { type: "boolean" },
+      "app-unavailable": { type: "boolean" },
       update: { type: "boolean" },
       "factory-ref": { type: "string" },
     },
@@ -645,7 +649,7 @@ async function main(): Promise<void> {
     if (r.status !== 200) fail(r.body.message ?? r.body.error ?? `serve answered ${String(r.status)}`);
     out(r.body.message ?? "done");
   };
-  const exclusive = ["run", "takeover", "reject", "prune"];
+  const exclusive = ["run", "takeover", "reject", "prune", "offboard"];
   if (served !== null && command !== undefined && exclusive.includes(command)) {
     fail(`serve is running (pid ${String(served.pid)}) and schedules every task; pause or cancel the task through it, or stop it with: factoryctl drain`);
   }
@@ -763,6 +767,53 @@ async function main(): Promise<void> {
           ...(remote === undefined ? {} : { remote }),
         });
         out(task.id);
+        return;
+      }
+      case "offboard": {
+        operatorOnly("offboard");
+        const repo = positionals[1];
+        if (repo === undefined) fail("usage: factoryctl offboard OWNER/NAME [--local-only | --app-unavailable] [--reason TEXT]");
+        const validator = createValidator();
+        const release = loadRelease(validator);
+        const token = process.env["FACTORY_GITHUB_TOKEN"] ?? null;
+        const api = apiUrl();
+        let app;
+        try {
+          app = appConfig(home);
+        } catch (e) {
+          fail(e instanceof AppConfigError ? e.message : String(e));
+        }
+        // Kill points, for tests only, with nothing leaving the machine.
+        const injection = values.replay === undefined ? {} : readInjection(values.replay);
+        if (values.replay !== undefined && token !== null && !isLoopbackApi(api)) fail("--replay needs a loopback FACTORY_GITHUB_API_URL");
+        const probe = killAt(injection.kill_at);
+        const engine = process.env["FACTORY_CONTAINER_ENGINE"] ?? "docker";
+        try {
+          process.exitCode = await offboard(repo, {
+            localOnly: values["local-only"] === true,
+            appUnavailable: values["app-unavailable"] === true,
+            ...(values.reason === undefined ? {} : { reason: values.reason }),
+          }, {
+            home, store, validator, release, token, api, app,
+            github: token === null ? null : restGitHub(token, api),
+            operator: operator(),
+            now: () => new Date(),
+            busy: () => {
+              const a = activity(home);
+              return idle(a) ? null : describeActivity(a);
+            },
+            engine: (args) => {
+              const r = spawnSync(engine, args, { encoding: "utf8" });
+              return { status: r.status, stderr: r.stderr || (r.error?.message ?? "") };
+            },
+            out,
+            log: (l) => process.stderr.write(`factoryctl: ${l}\n`),
+            ...(probe === undefined ? {} : { probe }),
+          });
+        } catch (e) {
+          if (e instanceof OffboardError || e instanceof RegistryError || e instanceof PurgeError) fail(e.message);
+          throw e;
+        }
         return;
       }
       case "onboard": {
@@ -1064,7 +1115,7 @@ async function main(): Promise<void> {
         return;
       }
       default:
-        fail("usage: factoryctl task create | run | resume | pause | takeover | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor | serve | drain | replica | restore | drill | slo | prune | onboard | intake");
+        fail("usage: factoryctl task create | run | resume | pause | takeover | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor | serve | drain | replica | restore | drill | slo | prune | onboard | offboard | intake");
     }
   } finally {
     store.close();

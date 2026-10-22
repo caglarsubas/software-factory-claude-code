@@ -13,7 +13,7 @@ import { parse } from "yaml";
 import type { GatesResult, RunOptions } from "../../../gates/src/run.ts";
 import { CLI, git } from "../cli/testing.ts";
 import { targetChecks } from "../doctor.ts";
-import { buildTargetRepo, loadFixture } from "../fixtures/targets.ts";
+import { loadFixture } from "../fixtures/targets.ts";
 import { restGitHub } from "../github/client.ts";
 import { memoryGitHub, serveGitHub, type MemoryGitHub, type StubApp } from "../github/testing.ts";
 import { renderFootprint } from "../governance/footprint.ts";
@@ -29,6 +29,7 @@ import { inventory, treeOf } from "./inventory.ts";
 import { renderLayer, type LayerInput } from "./layer.ts";
 import { onboard, OnboardError, type OnboardDeps } from "./onboard.ts";
 import { activeProfile, profileDigest, profileFile, readTarget, RegistryError } from "./registry.ts";
+import { factorySource, targetRemote } from "./testing.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "onboard-"));
 const validator = createValidator();
@@ -53,14 +54,7 @@ afterAll(async () => {
 });
 
 // A factory checkout with the release tag, which --factory-ref resolves in a development checkout.
-const source = join(scratch, "factory-src");
-git(scratch, ["init", "-q", "-b", "main", source]);
-writeFileSync(join(source, "README.md"), "factory\n");
-git(source, ["add", "-A"]);
-git(source, ["commit", "-qm", "release"]);
-git(source, ["tag", TAG]);
-git(source, ["remote", "add", "origin", "https://github.com/example/factory.git"]);
-const factorySha = git(source, ["rev-parse", "HEAD"]);
+const { dir: source, sha: factorySha } = factorySource(join(scratch, "factory-src"), TAG);
 
 interface World {
   root: string;
@@ -75,24 +69,13 @@ interface World {
 /** ts-mini with CI of its own, in a bare remote that logs every branch update; a protected main on the stub. */
 function world(name: string): World {
   const root = mkdtempSync(join(scratch, `${name}-`));
-  const seed = join(root, "seed");
-  buildTargetRepo(loadFixture("ts-mini", validator), seed);
-  mkdirSync(join(seed, ".github/workflows"), { recursive: true });
-  writeFileSync(join(seed, ".github/workflows/ci.yml"), "on: pull_request\njobs: {}\n");
-  git(seed, ["add", "-A"]);
-  git(seed, ["commit", "-qm", "ci"]);
-  const remote = join(root, "remote.git");
-  git(root, ["clone", "-q", "--bare", seed, remote]);
-  const log = join(root, "pushes.log");
-  writeFileSync(log, "");
-  writeFileSync(join(remote, "hooks/post-receive"), `#!/bin/sh\nwhile read old new ref; do echo "$ref $new" >> '${log}'; done\n`);
-  spawnSync("chmod", ["755", join(remote, "hooks/post-receive")]);
+  const { remote, base, pushes } = targetRemote(root, validator);
   const repo = `example/${name}`;
   remotes.set(repo, remote);
   gh.repos.set(repo, { defaultBranch: "main", private: false, protected: true });
   const home = factoryHome({ FACTORY_HOME: join(root, "home") });
   ensureHome(home);
-  return { root, repo, name, remote, base: git(remote, ["rev-parse", "refs/heads/main"]), home, pushes: () => readFileSync(log, "utf8").split("\n").filter((l) => l !== "") };
+  return { root, repo, name, remote, base, home, pushes };
 }
 
 const gateRuns: RunOptions[] = [];
