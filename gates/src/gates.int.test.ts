@@ -10,7 +10,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { createValidator } from "../../controller/src/schemas/validate.ts";
 import { ENGINE, HARDENING } from "./container.ts";
 import type { Sink } from "./findings.ts";
-import { ensureImage, GATES_DIR } from "./image.ts";
+import { ensureImage, GATES_DIR, graphifyTool } from "./image.ts";
 import type { GateProfile } from "./plan.ts";
 import { runGates, type GatesResult } from "./run.ts";
 
@@ -59,6 +59,8 @@ interface Case {
   failing: string[];
   sinks?: Sink[];
   secret?: boolean;
+  /** The file dependencies the candidate's code graph must hold, as [dependent, dependency]. */
+  graph?: string[][];
 }
 
 function git(cwd: string, args: string[]): string {
@@ -67,7 +69,7 @@ function git(cwd: string, args: string[]): string {
   return r.stdout.trim();
 }
 
-async function run(fixture: "ts" | "py", c: Case): Promise<GatesResult> {
+async function run(fixture: "ts" | "py", c: Case): Promise<GatesResult & { graphFile: string }> {
   const repo = mkdtempSync(join(work, `${fixture}-`));
   cpSync(join(GATES_DIR, "fixtures", fixture), repo, { recursive: true });
   git(repo, ["init", "-q", "-b", "main"]);
@@ -81,7 +83,8 @@ async function run(fixture: "ts" | "py", c: Case): Promise<GatesResult> {
   }
   git(repo, ["add", "-A"]);
   git(repo, ["commit", "-qm", c.name]);
-  return runGates({
+  const graphFile = `${repo}.graph.json`;
+  const result = await runGates({
     worktree: repo,
     base,
     taskId: "T-0001",
@@ -91,10 +94,12 @@ async function run(fixture: "ts" | "py", c: Case): Promise<GatesResult> {
     osvVolume,
     fetchNetwork,
     ...(caFile === undefined ? {} : { caFile }),
+    graphOut: graphFile,
   });
+  return { ...result, graphFile };
 }
 
-function check(result: GatesResult, c: Case): void {
+function check({ graphFile, ...result }: GatesResult & { graphFile: string }, c: Case): void {
   const validation = validator.validate("gates.schema.json", result);
   expect(validation.errors).toEqual([]);
   const notPassing = result.gates.filter((g) => g.status !== "pass").map((g) => g.name).sort();
@@ -104,6 +109,18 @@ function check(result: GatesResult, c: Case): void {
   expect(result.passed).toBe(c.failing.length === 0);
   expect(result.signals.sink_added).toEqual(c.sinks ?? []);
   expect(result.signals.secret_material).toBe(c.secret ?? false);
+  // The code graph (P2-13) is built for every candidate, offline, whatever the gates found.
+  expect(result.graph).toMatchObject({ status: "built", tool: graphifyTool(), commit: result.candidate_commit });
+  expect(result.graph?.nodes).toBeGreaterThan(0);
+  if (c.graph !== undefined) expect(fileEdges(graphFile)).toEqual(c.graph);
+}
+
+/** The graph's dependencies between files: [dependent, dependency]. */
+function fileEdges(graphFile: string): string[][] {
+  const g = JSON.parse(readFileSync(graphFile, "utf8")) as { nodes: { id: string; source_file?: string }[]; links: { source: string; target: string }[] };
+  const file = new Map(g.nodes.map((n) => [n.id, n.source_file ?? ""]));
+  const pairs = g.links.map((l) => [file.get(l.source) ?? "", file.get(l.target) ?? ""]).filter(([a, b]) => a !== "" && b !== "" && a !== b);
+  return [...new Set(pairs.map((p) => p.join(" -> ")))].sort().map((p) => p.split(" -> "));
 }
 
 const tsCart = readFileSync(join(GATES_DIR, "fixtures/ts/src/cart.ts"), "utf8");
@@ -114,7 +131,12 @@ const tsKey = fakeAwsKey();
 const pyKey = fakeAwsKey();
 
 const tsCases: Case[] = [
-  { name: "clean change", files: { "src/cart.ts": `${tsCart}\nexport const isEmpty = (lines: readonly Line[]): boolean => lines.length === 0;\n` }, failing: [] },
+  {
+    name: "clean change",
+    files: { "src/cart.ts": `${tsCart}\nexport const isEmpty = (lines: readonly Line[]): boolean => lines.length === 0;\n` },
+    failing: [],
+    graph: [["test/cart.test.ts", "src/cart.ts"]],
+  },
   { name: "type error", files: { "src/cart.ts": `${tsCart}\nexport const count: number = "three";\n` }, failing: ["typecheck", "lint"] },
   { name: "lint error", files: { "src/cart.ts": `${tsCart}\nfunction unused(): void {}\n` }, failing: ["lint"] },
   { name: "failing test", files: { "test/cart.test.ts": tsTest.replace("600);", "601);") }, failing: ["test"] },
@@ -170,7 +192,12 @@ const tsCases: Case[] = [
 ];
 
 const pyCases: Case[] = [
-  { name: "clean change", files: { "src/cart.py": `${pyCart}\n\ndef is_empty(lines: list[Line]) -> bool:\n    return not lines\n` }, failing: [] },
+  {
+    name: "clean change",
+    files: { "src/cart.py": `${pyCart}\n\ndef is_empty(lines: list[Line]) -> bool:\n    return not lines\n` },
+    failing: [],
+    graph: [["tests/test_cart.py", "src/cart.py"]],
+  },
   { name: "type error", files: { "src/cart.py": `${pyCart}\n\ndef count() -> int:\n    return "three"\n` }, failing: ["typecheck"] },
   { name: "lint error", files: { "src/cart.py": `import os\n${pyCart}` }, failing: ["lint"] },
   { name: "failing test", files: { "tests/test_cart.py": pyTest.replace("== 600", "== 601") }, failing: ["test"] },

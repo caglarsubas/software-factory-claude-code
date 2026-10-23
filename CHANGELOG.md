@@ -4,6 +4,16 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-23
+
+### Added
+
+- **The code graph (P2-13, PR 1 of 2).** The gate image carries graphifyy 0.9.91. Each gate run builds the candidate's code graph with `graphify update --no-cluster`: offline, with no LLM, on the read-only tree.
+  - The graph is advisory: it is never one of the gates and never fails them.
+  - Its record in `gates.json` names the tool and stamps the candidate commit, so a graph of an older commit reads as stale.
+  - The pipeline commits the graph as `graph.json` beside each round's `gates.json`, and as `drift/<k>/graph.json` beside each re-verification's. It does so only when the record says it was built and the file's digest matches. Replayed gates carry none.
+- **`verify-tools` checks PyPI wheels.** A wheel with PEP 740 provenance is checked with cosign; the four tree-sitter wheels, which publish none, are checked against PyPI's own record of the file.
+
 ## [0.23.0] - 2026-10-22
 
 ### Added
@@ -478,7 +488,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.20.0...v0.21.0

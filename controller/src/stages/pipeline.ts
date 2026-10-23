@@ -18,7 +18,7 @@ import { cacheVolumeFor } from "../../../gates/src/run.ts";
 import { activeMs, budgetTier, calibrate, completedRuns, meteredSpend, monthOf, monthSpend, sessionCap, taskSpend } from "../budget/budget.ts";
 import { policyDigest, writeManifest } from "../bundle/manifest.ts";
 import { storeTree } from "../durable/objects.ts";
-import { writeAtomic } from "../fsutil.ts";
+import { sha256, writeAtomic } from "../fsutil.ts";
 import { changedFiles, commitAll, createTaskClone, diffPatch, fetchBundle, git, GitError, head, headBundle, mergeInto, mirrorPath, resetClone, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
 import type { GitHub } from "../github/client.ts";
 import { writeTokenFile, type Gateway } from "../gateway/gateway.ts";
@@ -627,6 +627,23 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     return [out(roundPath("build.json", n), { base_commit: c.base_commit, round: n, start_commit: start, candidate_commit: built }, null), { path: roundPath("candidate.bundle", n), content: headBundle(worktree, c.base_commit) }];
   };
 
+  /** Where the gate runner keeps a candidate's code graph (P2-13): a fresh file for each gate step. */
+  const graphFile = (label: string): string => {
+    const file = join(workDir(label), "graph.json");
+    rmSync(file, { force: true });
+    return file;
+  };
+  /**
+   * The code graph the gate runner built and kept, committed beside its gates.json; nothing when
+   * it was not built (an error, replayed gates) or the file is not the one its record names.
+   */
+  const graphOutput = (result: GatesResult, file: string, path: string): Output[] => {
+    if (result.graph?.status !== "built" || !existsSync(file)) return [];
+    const content = readFileSync(file);
+    if (result.graph.sha256 !== undefined && sha256(content) !== `sha256:${result.graph.sha256}`) return [];
+    return [{ path, content }];
+  };
+
   const gates = (n: number) => async (): Promise<Output[]> => {
     moveTo("VERIFYING", { round: n });
     const c = checkoutInfo();
@@ -635,8 +652,9 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     emit("stage_started", { stage: "gates", label, round: n });
     probe(`${label}:running`);
     const started = Date.now();
+    const graph = graphFile(label);
     const result = await deps.runGates({
-      worktree, base: c.base_commit, taskId, profile, image: deps.gateImage(), cacheVolume: cacheVolumeFor(task.target.repo), osvVolume: "sf-gates-osv",
+      worktree, base: c.base_commit, taskId, profile, image: deps.gateImage(), cacheVolume: cacheVolumeFor(task.target.repo), osvVolume: "sf-gates-osv", graphOut: graph,
       ...(deps.gatesFetchNetwork === undefined ? {} : { fetchNetwork: deps.gatesFetchNetwork }),
       ...(deps.gatesCaFile === undefined ? {} : { caFile: deps.gatesCaFile }),
       log: (l) => {
@@ -645,7 +663,7 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     }, label);
     const artifact = out(roundPath("gates.json", n), result, "gates.schema.json");
     emit("stage_completed", { stage: "gates", label, ok: result.passed, failing: result.gates.filter((g) => g.status !== "pass").map((g) => g.name), duration_ms: Date.now() - started, round: n });
-    return [artifact];
+    return [artifact, ...graphOutput(result, graph, roundPath("graph.json", n))];
   };
 
   // An infrastructure error is not the builder's to fix (D5): no remediation round for it.
@@ -1100,16 +1118,18 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
 
     // The gates and the policy again, on the merge, against the new base.
     probe(`${label}:gates`);
+    const graph = graphFile(`gates-${label}`);
     const g = await deps.runGates({
-      worktree, base: baseNow, taskId, profile, image: deps.gateImage(), cacheVolume: cacheVolumeFor(task.target.repo), osvVolume: "sf-gates-osv",
+      worktree, base: baseNow, taskId, profile, image: deps.gateImage(), cacheVolume: cacheVolumeFor(task.target.repo), osvVolume: "sf-gates-osv", graphOut: graph,
       ...(deps.gatesFetchNetwork === undefined ? {} : { fetchNetwork: deps.gatesFetchNetwork }),
       ...(deps.gatesCaFile === undefined ? {} : { caFile: deps.gatesCaFile }),
       log: (l) => {
         deps.log(`${taskId}: ${label} gates: ${l}`);
       },
     }, `gates-${label}`);
-    const gatesOut = out(driftPath("gates.json", k), g, "gates.schema.json");
-    if (!g.passed) return human(`the gates did not pass on the merge with the new base: ${g.gates.filter((x) => x.status !== "pass").map((x) => x.name).join(", ")}`, [gatesOut]);
+    // The merge's code graph goes with its gates.json in every record that keeps them.
+    const gatesOut = [out(driftPath("gates.json", k), g, "gates.schema.json"), ...graphOutput(g, graph, driftPath("graph.json", k))];
+    if (!g.passed) return human(`the gates did not pass on the merge with the new base: ${g.gates.filter((x) => x.status !== "pass").map((x) => x.name).join(", ")}`, gatesOut);
     const t = readJson("triage.json") as Triage;
     const sp = parse(readFileSync(join(dir, "spec.yaml"), "utf8")) as Spec;
     const after = evaluate({
@@ -1118,10 +1138,10 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
       injectionSuspect: has("injection.json") && suspect(readJson("injection.json") as InjectionScan),
     }, risk);
     const policyOut = out(driftPath("policy.json", k), after, null);
-    if (TIERS.indexOf(after.tier) > TIERS.indexOf(decision.tier)) return human(`the policy now puts the change at ${after.tier}, above the approved ${decision.tier}`, [gatesOut, policyOut], after.tier);
+    if (TIERS.indexOf(after.tier) > TIERS.indexOf(decision.tier)) return human(`the policy now puts the change at ${after.tier}, above the approved ${decision.tier}`, [...gatesOut, policyOut], after.tier);
 
     record({ candidate_commit: mergedHead, outcome: "reverified", reason: `the gates and the policy pass on ${baseNow.slice(0, 12)}; the approver's ${approver.decision} carries over`, tier_after: after.tier }, [
-      gatesOut, policyOut, { path: driftPath("candidate.bundle", k), content: headBundle(worktree, baseNow) },
+      ...gatesOut, policyOut, { path: driftPath("candidate.bundle", k), content: headBundle(worktree, baseNow) },
     ]);
     return publishDrift(k);
   }
