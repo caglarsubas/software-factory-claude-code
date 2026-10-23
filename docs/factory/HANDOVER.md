@@ -100,6 +100,18 @@ Every release up to `v0.19.0` is tagged, and `v0.19.0` is installed and pinned (
      - structured output on a refusal;
      - tighter Bash checks that become denials under `dontAsk`.
    - **Re-run:** every suite, then the eval suite on the release commit.
+   - **The branch** holds two commits on the old `main` 76c3033: 52476d1 moves the pin to 2.1.306 / 0.3.306, and 69c3534 keeps a flagged request on the session's pinned model (`availableModels` with `switchModelsOnFlag: false`, host and runner). Their messages carry the probe evidence.
+   - **The age gate** accepts every 0.3.306 package in the lockfile from 2026-10-28 02:37:47 UTC (win32-arm64 was published last).
+   - **Steps:**
+     1. Merge `main` into the branch with a merge commit, since the branch is pushed. Resolve the lockfile with pnpm, never by hand.
+     2. Re-check npm's dist-tags and that 0.3.306 is still the SDK for 2.1.306. Re-run the advisory check for anything newer than STATUS's pre-freeze row.
+     3. Run a plain `pnpm install --frozen-lockfile` with the gate on: it must pass. Then run `pnpm check` and `pnpm exec vitest run --config vitest.gates.config.ts controller/src/plugin/workflow.int.test.ts controller/src/session/models.int.test.ts`.
+     4. Release it:
+        - CHANGELOG: the pin move and the flagged-request rule;
+        - STATUS: the pin row, the platform log's action, and the release;
+        - the threat model: the ASI02 and ASI05 residuals that cite fixes missing from 2.1.286 now say 2.1.306 carries them, plus the model-fallback control;
+        - HANDOVER: the operator's steps (the eval suite passes on the release commit before the tag; then tag, install and use the release, run `doctor`, put their own `claude` at 2.1.306 for takeover, and run one live `ts-mini` R0 runner task and one attended host run).
+     5. Open the PR with the probe results in its body. CI's runner jobs and gates job are the first container runs of 2.1.306.
 2. **Parallel items** that touch no core file, if time allows before the freeze: P2-13 and P2-10 (P2-11 is done).
 3. **The freeze and G2.**
    - Tag the frozen release. The operator then runs the G2 procedure in the operator guide's Gate G2 section:
