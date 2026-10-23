@@ -36,7 +36,7 @@ Two PRs, each a release, on the branch `claude/epic-cannon-akxfwy-p2-13`, follow
   - the pipeline commits it as `graph.json` per round and `drift/<k>/graph.json` per re-verification;
   - `verify-tools` checks PyPI wheels.
   - CI's `gates` job on the full image confirmed the integration suite's expected file edges.
-- **PR 2 (`v0.25.0`):** `controller/src/graph/blast.ts`. The hops from the changed files back to the nearest R3 or Restricted path feed `graphHopsToProtected`. Only a fresh graph counts. The rule stays in shadow mode, so no tier moves.
+- **PR 2, #70 (`v0.25.0`):** `controller/src/graph/blast.ts`. The hops from the changed files back to the nearest R3 or Restricted path feed `graphHopsToProtected`. Only a fresh graph counts. The rule stays in shadow mode, so no tier moves.
   - `blast.json` per round and per re-verification is the per-task log the done-when asks for.
   - `report T` and `report --week` show it.
   - The operator guide's "Code graph (shadow)" section describes it.
