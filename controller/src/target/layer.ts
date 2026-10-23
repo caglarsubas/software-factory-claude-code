@@ -10,6 +10,7 @@
 // exactly what onboarding put in and leaves the rest byte for byte. Pure functions: the caller
 // reads the target's files and commits the result.
 import type { RiskPolicy, Tier } from "../policy/engine.ts";
+import { protectedGlobs } from "../policy/load.ts";
 import type { LayerRecord } from "./registry.ts";
 
 export class LayerError extends Error {}
@@ -85,18 +86,12 @@ export interface LayerInput {
   owned?: readonly string[];
 }
 
-/** The R3 and Restricted globs, the policy's and the profile's, in order and once each. */
-function guarded(risk: RiskPolicy): { r3: string[]; restricted: string[] } {
-  const of = (tier: Tier): string[] => [...new Set(risk.rules.filter((r) => r.minimum_risk === tier && r.mode !== "shadow").flatMap((r) => r.when.any_path ?? []))];
-  return { r3: of("R3"), restricted: of("Restricted") };
-}
-
 /** The layer's files, merged into the target's, and the record of what it added. */
 export function renderLayer(i: LayerInput): { files: Record<string, string>; record: LayerRecord } {
   const approvers = i.profile.governance?.approvers ?? [];
   if (approvers.length === 0) throw new LayerError(`${i.repo}'s profile names no governance.approvers`);
   const owners = approvers.map((a) => (a.startsWith("@") ? a : `@${a}`)).join(" ");
-  const { r3, restricted } = guarded(i.risk);
+  const { r3, restricted } = protectedGlobs(i.risk);
   const record: LayerRecord = { created: [], blocks: [], settings: [] };
   const files: Record<string, string> = {};
 

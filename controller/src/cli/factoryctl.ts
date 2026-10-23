@@ -79,7 +79,8 @@ import { sdkRunner } from "../session/runner.ts";
 import { calibrate, completedRuns, monthOf, monthSpend, TIERS } from "../budget/budget.ts";
 import { captureTask } from "../evals/capture.ts";
 import { writeAtomic } from "../fsutil.ts";
-import { isoWeek, taskReport, WEEK_HEADER, weekRow, weekRowMarkdown, type TaskReport } from "../report/report.ts";
+import { isoWeek, taskReport, WEEK_HEADER, weekRange, weekRow, weekRowMarkdown, type TaskReport } from "../report/report.ts";
+import { describeBlast, readBlasts, shadowCounts } from "../graph/blast.ts";
 import { specDigest } from "../stages/commit.ts";
 import { runTask } from "../stages/pipeline.ts";
 import { REVIEWERS } from "../stages/reviewers.ts";
@@ -998,12 +999,20 @@ async function main(): Promise<void> {
         if (positionals[1] !== undefined) {
           const id = taskArg(positionals, 1, store);
           printTaskReport(taskReport(store.events(id), reviewsOf(home, id)));
+          // The code graph's blast radius (P2-13): logged, never enforced, until P3-05 measures it.
+          const blasts = readBlasts(runDir(home, id));
+          out(`code graph (shadow): ${blasts.length === 0 ? "no decision logged" : blasts.map(describeBlast).join("; ")}`);
           return;
         }
-        const row = weekRow(store.allEvents(), values.week ?? isoWeek(new Date()));
+        const all = store.allEvents();
+        const row = weekRow(all, values.week ?? isoWeek(new Date()));
         out(`week ${row.week} (UTC, tasks created that week; live sessions only)`);
         out(WEEK_HEADER);
         out(weekRowMarkdown(row));
+        const { start, end } = weekRange(row.week);
+        const created = all.filter((e) => e.type === "task_created" && Date.parse(e.ts) >= start.getTime() && Date.parse(e.ts) < end.getTime()).map((e) => e.task_id);
+        const c = shadowCounts(created.flatMap((t) => readBlasts(runDir(home, t))));
+        out(`code graph (shadow): ${String(c.decisions)} decision(s), ${String(c.fresh)} fresh, ${String(c.stale)} stale, ${String(c.missing)} missing, ${String(c.error)} error; the rule matched ${String(c.matched)} and would have raised the tier ${String(c.raised)} time(s)`);
         return;
       }
       case "slo": {

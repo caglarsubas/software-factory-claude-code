@@ -4,6 +4,22 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-23
+
+### Added
+
+- **The blast radius in shadow mode (P2-13, PR 2 of 2).** The policy step reads each round's committed graph.
+  - **The walk:** from the changed files (renames' old paths too) back through the files that depend on them, up to 4 hops, to the nearest R3 or Restricted path. The dependency relations are graphifyy's `DEFAULT_AFFECTED_RELATIONS`.
+  - **Freshness:** only a graph of the commit judged gives a hop count. Another commit's is `stale`; none is `missing`; one that failed to build, or does not parse, is `error`. A file that is not the one the gates' record names never counts.
+  - **The rule:** the hops fill the policy engine's `graphHopsToProtected`, for each round and each drift re-verification. The `graph_reaches_protected_within_hops: 2` rule stays in shadow mode until P3-05, so no tier moves. The provisional tier and `policy-check` stay without the graph.
+- **`blast.json`** (`schemas/blast.schema.json`), for each round and each re-verification: the graph's status, the hops, the nearest guarded file, the files reached, and the rule (whether it matched, its shadow tier, the tier enforced). This is the per-task log of shadow decisions that P2-13's done-when asks for.
+- **Reports:** `factoryctl report T` ends with a "code graph (shadow)" line. `factoryctl report --week` counts the week's decisions by graph status, and how often the rule matched and would have raised the tier.
+
+### Changed
+
+- `protectedGlobs(risk)` moves from the target layer into `policy/load.ts`, where the footprint and the blast radius both read it.
+- The policy step's inputs gain the round's `graph.json`. A task that was mid-flight when this release was installed runs its policy step once more on resume.
+
 ## [0.24.0] - 2026-10-23
 
 ### Added
@@ -488,7 +504,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.21.0...v0.22.0

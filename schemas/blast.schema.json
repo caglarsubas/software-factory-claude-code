@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/blast.schema.json",
+  "title": "Blast radius",
+  "description": "The code graph's shadow decision for one round or one drift re-verification (P2-13): the graph's freshness, the hops from the changed files to the nearest guarded file, and what the shadow rule would have done beside the tier enforced.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "task_id": {
+      "$ref": "defs.schema.json#/$defs/taskId"
+    },
+    "candidate_commit": {
+      "$ref": "defs.schema.json#/$defs/gitSha"
+    },
+    "round": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "drift": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "fresh",
+            "stale",
+            "missing",
+            "error"
+          ]
+        },
+        "commit": {
+          "anyOf": [
+            {
+              "$ref": "defs.schema.json#/$defs/gitSha"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "detail": {
+          "$ref": "defs.schema.json#/$defs/text"
+        }
+      },
+      "required": [
+        "status",
+        "commit"
+      ]
+    },
+    "hops": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "nearest": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reached": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "rule": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "within": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "matched": {
+              "type": "boolean"
+            },
+            "shadow_tier": {
+              "$ref": "defs.schema.json#/$defs/tier"
+            },
+            "enforced_tier": {
+              "$ref": "defs.schema.json#/$defs/tier"
+            }
+          },
+          "required": [
+            "within",
+            "matched",
+            "shadow_tier",
+            "enforced_tier"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "task_id",
+    "candidate_commit",
+    "round",
+    "drift",
+    "graph",
+    "hops",
+    "nearest",
+    "reached",
+    "rule"
+  ]
+}

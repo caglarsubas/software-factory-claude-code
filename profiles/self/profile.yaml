@@ -2,7 +2,7 @@
 # prepare changes to them, and only the operator merges. Docs, dashboard and fixtures are R0–R2.
 schema_version: 1
 target: {repo: caglarsubas/software-factory-claude-code, default_branch: main, visibility: public}
-factory_release: v0.24.0
+factory_release: v0.25.0
 commands: {setup: "pnpm install --frozen-lockfile", typecheck: "pnpm typecheck", lint: "pnpm lint && pnpm lint:md", test: "pnpm test && pnpm check:docs"}
 gates: {adapters: [typescript], sast_rules: [default, sink_added]}
 protected_paths:
