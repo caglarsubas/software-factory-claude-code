@@ -51,18 +51,13 @@ The work moved to another session at a checkpoint. It continues on the branch `c
 - `gates/src/verify-tools.ts`: the PyPI branch, with its publisher table and its unattested table, and tests on a real provenance file in `gates/src/testdata/`.
 - `gates/src/run.test.ts`, and the integration suite's graph checks. The clean-change cases expect exactly one file edge each: `test/cart.test.ts` to `src/cart.ts`, and `tests/test_cart.py` to `src/cart.py`. The real stage image produces them.
 
-PR 1 still needs:
+Also on the branch, completing PR 1 (`v0.24.0`):
 
-1. **`controller/src/stages/pipeline.ts`:**
-   - The gates step passes `graphOut` (a file under `workDir(label)`, removed first). When the record says `built`, it commits the file as `roundPath("graph.json", n)` beside `gates.json`.
-   - Drift re-verification does the same as `driftPath("graph.json", k)`, in every `record` it makes.
-   - Replayed gates (`session/injection.ts`) carry no graph: an absent graph means missing.
-   - A pipeline test whose `runGates` stub writes `graphOut` shows the artifact committed.
-2. **Docs:**
-   - STATUS: the two deviation rows, then the PR row.
-   - The threat model: the supply-chain note (provenance, and the unattested grammars), and LLM08 (graph content is untrusted data, parsed only by `factoryctl` and shown to no agent in P2).
-   - The dated CHANGELOG section, `plugin.json`, both profiles' `factory_release`, and this file.
-3. **Checks:** `pnpm check`. CI's `gates` job is the first run of the integration suite on the full image.
+- `controller/src/stages/pipeline.ts`: each gate step passes `graphOut` and commits the graph as `roundPath("graph.json", n)` beside `gates.json`, and each drift re-verification as `driftPath("graph.json", k)` in every record it makes. Only a graph whose record says `built` and whose file matches the record's digest is committed; replayed gates carry none, so an absent graph means missing.
+- `stages/pipeline.test.ts`: a round's and a drift's graph committed; no graph committed when it was not built, when the file is not the one the record names, or when the gates are replayed.
+- STATUS's two deviation rows and the P2-13 row, the threat model's LLM03 and LLM08 rows, and the release.
+
+CI's `gates` job is the first run of the integration suite on the full image.
 
 **PR 2: the blast radius, freshness, `blast.json` and the report.**
 

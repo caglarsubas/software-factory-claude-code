@@ -13,7 +13,7 @@ import { join } from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse, stringify } from "yaml";
-import type { GatesResult } from "../../../gates/src/run.ts";
+import type { GatesResult, GraphRecord } from "../../../gates/src/run.ts";
 import { ledger, startGateway } from "../gateway/gateway.ts";
 import { memoryGitHub, type MemoryGitHub } from "../github/testing.ts";
 import { clearHalt, setHalt } from "../halt.ts";
@@ -879,6 +879,41 @@ describe("re-verification on base drift and serialised merges (P2-06)", () => {
   const merges = (): string[] => world.github.writes.filter((w) => w.startsWith("merge"));
   beforeEach(() => {
     gateLabels.length = 0;
+  });
+
+  /** Gates that keep the candidate's code graph (P2-13): a one-node graph naming the gate step, and its record. */
+  const graphing = (over: (built: GraphRecord) => GraphRecord = (b) => b): Deps["runGates"] => async (o, label) => {
+    const r = await counting()(o, label);
+    const json = JSON.stringify({ nodes: [{ id: label, source_file: "src/cart.ts" }], links: [] });
+    if (o.graphOut !== undefined) writeFileSync(o.graphOut, json);
+    return { ...r, graph: over({ status: "built", tool: "graphifyy 0.9.91", commit: r.candidate_commit, nodes: 1, edges: 0, files: 1, sha256: createHash("sha256").update(json).digest("hex") }) };
+  };
+  const committedPaths = (id: string): string[] => world.store.events(id).filter((e) => e.type === "artifact_committed").flatMap((e) => (e.payload["artifacts"] as { path: string }[]).map((a) => a.path));
+
+  it("commits each round's and each re-verification's code graph beside its gates.json (P2-13)", async () => {
+    const id = newTask();
+    expect(await live(id, graphing())).toBe("AUTO_APPROVED");
+    green(id);
+    advanceMain({ "NOTES.md": "Someone else's notes.\n" });
+    expect(await live(id, graphing())).toBe("AUTO_APPROVED");
+    const dir = runDir(world.home, id);
+    expect(JSON.parse(readFileSync(join(dir, "graph.json"), "utf8"))).toMatchObject({ nodes: [{ id: "gates" }] });
+    expect(JSON.parse(readFileSync(join(dir, "drift/1/graph.json"), "utf8"))).toMatchObject({ nodes: [{ id: "gates-drift-1" }] });
+    expect(committedPaths(id)).toEqual(expect.arrayContaining(["gates.json", "graph.json", "drift/1/gates.json", "drift/1/graph.json"]));
+  });
+
+  it("commits no graph the gates did not build, nor a file other than the one their record names", async () => {
+    const error = newTask();
+    expect(await live(error, graphing((b) => ({ status: "error", tool: b.tool, commit: b.commit, detail: "exit 1: no parser" })))).toBe("AUTO_APPROVED");
+    expect(existsSync(join(runDir(world.home, error), "graph.json"))).toBe(false);
+    const other = newTask();
+    expect(await live(other, graphing((b) => ({ ...b, sha256: "0".repeat(64) })))).toBe("AUTO_APPROVED");
+    expect(existsSync(join(runDir(world.home, other), "graph.json"))).toBe(false);
+    expect(committedPaths(other)).not.toContain("graph.json");
+    // Replayed gates carry no graph at all.
+    const replayed = newTask();
+    expect(await live(replayed)).toBe("AUTO_APPROVED");
+    expect(committedPaths(replayed)).not.toContain("graph.json");
   });
 
   it("re-runs the gates and the policy on a moved base, re-posts the verdict, and merges the re-verified head", async () => {
