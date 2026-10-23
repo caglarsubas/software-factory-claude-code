@@ -70,18 +70,16 @@ Commands that move the pin refuse to run inside a Claude Code session; only the 
 A release is a version tag on `main` whose version equals `plugin/.claude-plugin/plugin.json` and has its own section in [`CHANGELOG.md`](../../CHANGELOG.md). `pnpm check:release` holds the two together on every PR.
 
 1. **Bump.** A PR sets the new version in `plugin.json`, moves the `[Unreleased]` notes into a dated section for it, adds its link reference, and states any **Breaking** change for you.
-2. **Tag**, once that PR is merged and `ci` is green on the merge commit:
-
-   ```bash
-   git switch main && git pull --ff-only
-   git tag -a v0.2.0 -m "v0.2.0" && git push origin v0.2.0
-   ```
-
-   The `release` workflow then checks the tag against `plugin.json` and the changelog, waits for `ci` to pass on the tagged commit, and publishes the GitHub release with the changelog section as its notes. A tag that does not match fails the workflow, and no release is published.
+2. **Tag:** the `release` workflow does it when you merge the bump.
+   - **When:** on the push to `main` whose `plugin.json` version changed.
+   - **Checks:** the version against the changelog, then it waits for `ci` to pass on the merge commit.
+   - **Then:** it tags that commit `vX.Y.Z` and publishes the GitHub release, with the changelog section as its notes.
+   - **On a failure,** nothing is tagged. Once the cause is fixed, run the workflow by hand ("Run workflow" on the `release` workflow's Actions page) with the merge commit's full SHA. The same run tags a release whose merge the workflow missed.
+   - **A tag you push yourself** (`git tag -a vX.Y.Z -m vX.Y.Z` on the merge commit, then `git push origin vX.Y.Z`) is still checked and published the same way.
 3. **Install and pin** it on your machine, as in [Install a release](#install-a-release): `git fetch --tags`, then `pnpm factoryctl release install v0.2.0` from your checkout. `factoryctl doctor` must then show no `fail`.
 4. **Roll back** with `factoryctl release use v0.19.0`: any installed release can be pinned again, except across a store schema change. Since `v0.20.0` (store schema 4), earlier releases refuse the store. Tasks keep the event history they ran on, so check the changelog's **Breaking** notes before you roll back across them.
 
-Tag and pin only from your own terminal: `release install` and `release use` refuse to run inside a Claude Code session.
+Install and pin only from your own terminal: `release install` and `release use` refuse to run inside a Claude Code session. Your merge of the version bump is the release decision; the workflow only records it.
 
 ## Onboard a target
 

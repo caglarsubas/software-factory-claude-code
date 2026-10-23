@@ -4,6 +4,10 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+### Changed
+
+- **Releases tag themselves.** The `release` workflow runs on each push to `main` that changes `plugin.json`'s version. It checks the version against the changelog, waits for `ci` on the merge commit, then tags it and publishes the release. Run by hand with a commit on `main`, it tags a version whose merge was missed. A tag the operator pushes is still published as before.
+
 ## [0.25.0] - 2026-10-23
 
 ### Added
