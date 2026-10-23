@@ -206,6 +206,10 @@ export async function targetChecks(o: { home: Home; validator: Validator; token:
   for (const t of targets) {
     const name = `target ${t.repo}`;
     const again = `factoryctl onboard ${t.repo}`;
+    if (t.state === "offboarding") {
+      checks.push({ name, status: "warn", detail: `offboarding${t.offboard?.pr === undefined ? "" : ` (${t.offboard.pr.url})`}: factoryctl offboard ${t.repo} takes it further` });
+      continue;
+    }
     if (t.state !== "active") {
       checks.push({ name, status: "warn", detail: `${t.state}${t.pr === undefined ? "" : ` (${t.pr.url})`}: ${again} takes it further` });
       continue;

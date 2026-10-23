@@ -4,6 +4,26 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-22
+
+### Added
+
+- **`factoryctl offboard OWNER/NAME` (P2-11, last part).** It lets a target go, access first ([ADR 0003](docs/factory/adr/0003-onboarding-retention-and-purge.md)). It is operator-only. Each step is recorded in the target's record once done, so a run can stop anywhere and be repeated:
+  1. The target takes no new task. It refuses while a task of the target is unfinished or the onboarding PR is open.
+  2. The operator removes the repository from the App's installation, and a narrowed mint checks it.
+  3. The footprint's rulesets are deleted.
+  4. A PR from `software-factory/offboard` deletes the footprint and takes the layer out, so the target's files return to what they were.
+  5. Once the factory is idle, a purge journal deletes every task of the target in the home and the replica, with the mirror and the gate cache volume. The calibration is recomputed without the target, and the private store's directory goes last.
+
+  The report gives the tier budgets before and after, and scans the home, the replica and the remaining events for the target's names and its tasks' titles. `--local-only --reason` covers a repository that is gone, and `--app-unavailable --reason` a suspended App.
+- **P2-11's done-when, `roundtrip.test.ts`.** In `pnpm test`, the real `factoryctl` onboards ts-mini, runs and rejects a task on it beside another target's task that shares an object with it, then offboards it. It checks five things:
+  - the target's tree is back to its base, byte for byte;
+  - no file in the home or the replica holds its name or its task's title;
+  - the other task and the shared object are intact;
+  - the purged id is never issued again;
+  - a restore and the restore drill bring nothing back.
+- `doctor` points an offboarding target at `factoryctl offboard`.
+
 ## [0.22.0] - 2026-10-22
 
 ### Added
@@ -458,7 +478,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.19.0...v0.20.0

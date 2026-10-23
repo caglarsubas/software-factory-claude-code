@@ -23,6 +23,7 @@ pnpm factoryctl gate G0 --begin     # then the fixture dry runs, then: gate G0
 pnpm factoryctl gate G1 --begin     # then a counted task to its merge, then: budgets, gate G1
 pnpm factoryctl prune [--dry-run] # expire finished tasks' evidence past retention (ADR 0003)
 pnpm factoryctl onboard OWNER/NAME [--confirm | --update]   # inventory, profile, STOP, footprint PR, rulesets, App (P2-11)
+pnpm factoryctl offboard OWNER/NAME [--local-only | --app-unavailable] [--reason "…"]   # App, rulesets, PR, then purge (P2-11)
 pnpm factoryctl intake [PROFILE.yaml…]   # labelled issues as tasks; with none, every onboarded target's
 pnpm factoryctl doctor
 ```

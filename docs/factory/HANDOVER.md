@@ -19,12 +19,12 @@ A new Claude Code session picks up the factory's development from here. Read thi
 - **`v0.18.0` (#61):** keeps mods out of sessions' config directories and turns the `AGENTS.md` loader off.
 - **P2-14 (`v0.19.0`, #63):** the plugin's `factory-review` workflow, for interactive use only.
 - **Parallel items:** P2-10 and P2-13 are todo. P2-12 stays stopped until a written egress policy exists (Appendix A).
-- **P2-11 (in progress, 2026-10-22):** four PRs from `claude/epic-cannon-akxfwy-p2-11`, each a release. They follow [ADR 0003](adr/0003-onboarding-retention-and-purge.md), the operator's decisions of 2026-10-22: purge by record with tombstones, and the App added and removed by hand, verified by factoryctl.
-  - PR 1: deleting by record (store schema 4, purge journals, the replica).
-  - PR 2: retention per profile, `prune`, and old-bundle migration tests.
-  - PR 3: `onboard`.
-  - PR 4: `offboard` and the round-trip test (the done-when).
-- **The pin move** to 2.1.306 / 0.3.306 is built on `claude/epic-cannon-akxfwy` and opens on Oct 28, when pnpm's age gate accepts it. P2-11's first PR claims `v0.20.0`; whichever of the two merges second takes the next version and merges `main` first.
+- **P2-11 (done, 2026-10-22):** four PRs, each a release, following [ADR 0003](adr/0003-onboarding-retention-and-purge.md), the operator's decisions of 2026-10-22: purge by record with tombstones, and the App added and removed by hand, verified by factoryctl.
+  - #65 (`v0.20.0`): deleting by record (store schema 4, purge journals, the replica).
+  - #66 (`v0.21.0`): retention per profile, `prune`, and old-bundle migration tests.
+  - #67 (`v0.22.0`): `onboard`, and the fix for the kill-point suite's "fetch failed" flake (the stub GitHub's keep-alive).
+  - #68 (`v0.23.0`): `offboard` and the round-trip test (the done-when). The round trip ran offline only; a live one is for P3-08.
+- **The pin move** to 2.1.306 / 0.3.306 is built on `claude/epic-cannon-akxfwy` and opens on Oct 28, when pnpm's age gate accepts it. P2-11 took `v0.20.0` to `v0.23.0`, so the pin move merges `main` first and takes `v0.24.0`.
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
 
 ## Waiting on the operator
@@ -48,7 +48,7 @@ Every release up to `v0.19.0` is tagged, and `v0.19.0` is installed and pinned (
      - structured output on a refusal;
      - tighter Bash checks that become denials under `dontAsk`.
    - **Re-run:** every suite, then the eval suite on the release commit.
-2. **Parallel items** that touch no core file, if time allows before the freeze: P2-11, P2-13 and P2-10.
+2. **Parallel items** that touch no core file, if time allows before the freeze: P2-13 and P2-10 (P2-11 is done).
 3. **The freeze and G2.**
    - Tag the frozen release. The operator then runs the G2 procedure in the operator guide's Gate G2 section:
      - `gate G2 --begin`;
@@ -64,7 +64,7 @@ Every release up to `v0.19.0` is tagged, and `v0.19.0` is installed and pinned (
 
 - **The operator** is the repository owner. They:
   - merge every PR, tag every release and run every live task;
-  - run the operator-only commands, which refuse inside Claude Code: `release install` and `use`, `approve`, `unhalt`, `reject`, `takeover`, `replica init`, `restore`, `prune`, `onboard`, and `drill kill-switch` and `serve-kill`.
+  - run the operator-only commands, which refuse inside Claude Code: `release install` and `use`, `approve`, `unhalt`, `reject`, `takeover`, `replica init`, `restore`, `prune`, `onboard`, `offboard`, and `drill kill-switch` and `serve-kill`.
 - **Commands for the operator:** step by step. Their shell is zsh, where `#` starts no comment, so a command block carries no inline comments. Never ask them to paste or echo a token.
 - **One PR at a time, from the session's branch:**
   1. Commit and push, open the PR, then push a STATUS commit with the PR's number. The cancelled CI run on the superseded commit is expected.
