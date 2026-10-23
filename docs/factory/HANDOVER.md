@@ -18,14 +18,66 @@ A new Claude Code session picks up the factory's development from here. Read thi
   - The operator decided to move the pin before the freeze.
 - **`v0.18.0` (#61):** keeps mods out of sessions' config directories and turns the `AGENTS.md` loader off.
 - **P2-14 (`v0.19.0`, #63):** the plugin's `factory-review` workflow, for interactive use only.
-- **Parallel items:** P2-10 and P2-13 are todo. P2-12 stays stopped until a written egress policy exists (Appendix A).
+- **Parallel items:** P2-13 is in progress (next section); P2-10 is todo. P2-12 stays stopped until a written egress policy exists (Appendix A).
 - **P2-11 (done, 2026-10-22):** four PRs, each a release, following [ADR 0003](adr/0003-onboarding-retention-and-purge.md), the operator's decisions of 2026-10-22: purge by record with tombstones, and the App added and removed by hand, verified by factoryctl.
   - #65 (`v0.20.0`): deleting by record (store schema 4, purge journals, the replica).
   - #66 (`v0.21.0`): retention per profile, `prune`, and old-bundle migration tests.
   - #67 (`v0.22.0`): `onboard`, and the fix for the kill-point suite's "fetch failed" flake (the stub GitHub's keep-alive).
   - #68 (`v0.23.0`): `offboard` and the round-trip test (the done-when). The round trip ran offline only; a live one is for P3-08.
-- **The pin move** to 2.1.306 / 0.3.306 is built on `claude/epic-cannon-akxfwy` and opens on Oct 28, when pnpm's age gate accepts it. P2-11 took `v0.20.0` to `v0.23.0`, so the pin move merges `main` first and takes `v0.24.0`.
+- **The pin move** to 2.1.306 / 0.3.306 is built on `claude/epic-cannon-akxfwy` and opens on Oct 28, when pnpm's age gate accepts it. P2-11 took `v0.20.0` to `v0.23.0`, so the pin move merges `main` first and takes the next free version (P2-13's first PR may take `v0.24.0` before it).
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
+
+## In flight: P2-13, the code graph in shadow mode (2026-10-23)
+
+The work moved to another session at a checkpoint. It continues on the branch `claude/epic-cannon-akxfwy-p2-13`, cut from `main` at the merge of #68. No PR is open yet.
+
+**The operator's decisions (2026-10-23):**
+
+- The four tree-sitter wheels publish no PyPI attestations. They are pinned by SHA-256 alone, and STATUS's deviations log records it.
+- Two PRs, each a release. The first to merge takes the next free version; the pin move takes the one after main's newest CHANGELOG section.
+- The branch above, for both PRs: restart it from `main` after the first merges.
+
+**Facts checked on 2026-10-23:**
+
+- graphifyy has no `extract` subcommand. `graphify update PATH --no-cluster` extracts code with no LLM and writes node-link JSON (`nodes`, then `links`) to `$GRAPHIFY_OUT/graph.json`. Nodes carry `source_file`, which is empty for an external module; links carry `relation`. It writes nothing into the scanned tree. STATUS records "`update`, not `extract --code-only`" as a deviation.
+- The pins: graphifyy 0.9.91 (0.9.92 was under 7 days old), networkx 3.7, numpy 2.5.4, rapidfuzz 3.14.6, tree-sitter 0.25.2, tree-sitter-python 0.25.0, tree-sitter-javascript 0.25.0 and tree-sitter-typescript 0.23.2. The first four carry PEP 740 provenance.
+- `verify-tools` turns a wheel's PyPI provenance into a Sigstore bundle and checks it with `cosign verify-blob-attestation`. All 14 wheel pins verified locally, with `--trusted-root` because the TUF CDN is blocked in a cloud container; CI reaches TUF.
+
+**PR 1: graphifyy in the gate image, and each round's graph.** Committed on the branch so far:
+
+- `gates/image/Dockerfile`: the wheels pinned per architecture, an offline install into `/opt/graphify` with `--no-deps --no-index`, and a build-time smoke check. `docker build --target graphify gates/image` builds in a cloud container; the full image does not, because `deb.debian.org` is blocked there.
+- `gates/src/run.ts`: a fourth scan, `graph`, offline on the read-only candidate tree. It is advisory: never in `gates[]`, it never fails the gates, and its record stamps the candidate commit as the freshness anchor. `RunOptions.graphOut` keeps the graph file. `graphifyTool()` in `image.ts` names the pinned release.
+- `schemas/gates.schema.json`: the optional `graph` record, with fixtures.
+- `gates/src/verify-tools.ts`: the PyPI branch, with its publisher table and its unattested table, and tests on a real provenance file in `gates/src/testdata/`.
+- `gates/src/run.test.ts`, and the integration suite's graph checks. The clean-change cases expect exactly one file edge each: `test/cart.test.ts` to `src/cart.ts`, and `tests/test_cart.py` to `src/cart.py`. The real stage image produces them.
+
+PR 1 still needs:
+
+1. **`controller/src/stages/pipeline.ts`:**
+   - The gates step passes `graphOut` (a file under `workDir(label)`, removed first). When the record says `built`, it commits the file as `roundPath("graph.json", n)` beside `gates.json`.
+   - Drift re-verification does the same as `driftPath("graph.json", k)`, in every `record` it makes.
+   - Replayed gates (`session/injection.ts`) carry no graph: an absent graph means missing.
+   - A pipeline test whose `runGates` stub writes `graphOut` shows the artifact committed.
+2. **Docs:**
+   - STATUS: the two deviation rows, then the PR row.
+   - The threat model: the supply-chain note (provenance, and the unattested grammars), and LLM08 (graph content is untrusted data, parsed only by `factoryctl` and shown to no agent in P2).
+   - The dated CHANGELOG section, `plugin.json`, both profiles' `factory_release`, and this file.
+3. **Checks:** `pnpm check`. CI's `gates` job is the first run of the integration suite on the full image.
+
+**PR 2: the blast radius, freshness, `blast.json` and the report.**
+
+- **`controller/src/graph/blast.ts`:**
+  - `parseGraph`: accepts `links` or `edges`, caps size, and maps nodes to `source_file`; labels are never used.
+  - Two files are one hop apart when a node of one has a dependency edge to a node of the other. The relations follow graphify's `DEFAULT_AFFECTED_RELATIONS`: calls, indirect_call, references, imports, imports_from, dynamic_import, re_exports, inherits, extends, implements, uses, mixes_in, embeds, defines, requires.
+  - `blastRadius`: a reverse walk from the changed files, renames' old paths included, up to 4 hops. It returns `hops` (0 when a changed file is itself protected, `null` when nothing protected is in reach), `nearest`, and the number of files reached.
+  - `graphFacts`: `fresh` when the graph's commit is the commit judged; otherwise `stale`, `missing` or `error`, and only `fresh` gives a hop count.
+- **`protectedGlobs(risk)`:** moves from `target/layer.ts`'s private `guarded()` into `policy/load.ts`.
+- **Wiring:**
+  - `diffFacts(n)` and drift re-verification fill `graphHopsToProtected`. The policy step's inputs gain the graph artifact.
+  - The provisional tier and `governance/policy-check.ts` stay `null`.
+- **`blast.json`:** per round and per drift, with `schemas/blast.schema.json`: the task, the candidate, the graph's status, `hops`, `nearest`, and the rule (`within`, `matched`, the shadow tier against the enforced tier). It is the per-task log of the shadow decision, which the done-when asks for.
+- **The report:** a "code graph (shadow)" line in `report T`, and counts in `report --week`.
+- **Docs:** an operator-guide section, STATUS's P2-13 row done, and the release.
 
 ## Waiting on the operator
 
@@ -38,7 +90,7 @@ Every release up to `v0.19.0` is tagged, and `v0.19.0` is installed and pinned (
 
 ## What comes next
 
-1. **The pin move** (a core release of its own, `v0.20.0`), built on or after Oct 27.
+1. **The pin move** (a core release of its own, taking the next free version), built on or after Oct 27. The branch `claude/epic-cannon-akxfwy` holds it: merge `main` into it before the PR.
    - **Version:** the newest npm `stable` at or above 2.1.305 that is at least 7 days old (`minimumReleaseAge`), with the SDK whose `claudeCodeVersion` matches. 2.1.304 fails behind the gateway when ToolSearch is outside a session's tools. If `stable` is still 2.1.304 then, use 2.1.305 and log a deviation.
    - **Bump the pin in:** `config/factory.yaml`, `controller/package.json` and the lockfile, `runner/Dockerfile` (URLs and checksums), the CI workflows' `npx` lines, and the `verify-tools` test fixture.
    - **Adapt to:**

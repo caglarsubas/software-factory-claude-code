@@ -15,6 +15,13 @@ export function imageInputs(): string[] {
   return ["image/Dockerfile", "image/Dockerfile.dockerignore", ...seed, ...rules].sort();
 }
 
+/** The graphifyy release the image installs, read from its pin (P2-13). */
+export function graphifyTool(): string {
+  const m = /\/graphifyy-([0-9][^-/]*)-py3-none-any\.whl /.exec(readFileSync(join(GATES_DIR, "image/Dockerfile"), "utf8"));
+  if (m === null) throw new Error("the gate image pins no graphifyy wheel");
+  return `graphifyy ${m[1] ?? ""}`;
+}
+
 export function imageTag(): string {
   const hash = createHash("sha256");
   for (const rel of imageInputs()) hash.update(rel).update("\0").update(readFileSync(join(GATES_DIR, rel))).update("\0");
