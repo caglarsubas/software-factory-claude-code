@@ -28,7 +28,8 @@ import { describeHalt, readHalt } from "../halt.ts";
 import { runDir, worktreeDir, type Home } from "../home.ts";
 import { evaluate, TIERS, type ChangedFile, type Decision, type DiffFacts, type RiskPolicy, type Tier } from "../policy/engine.ts";
 import { scanInjection, suspect, type InjectionScan } from "../policy/injection.ts";
-import { loadRiskPolicy } from "../policy/load.ts";
+import { loadRiskPolicy, protectedGlobs as riskGuardedGlobs } from "../policy/load.ts";
+import { blastRecord, graphFacts, type GraphFacts } from "../graph/blast.ts";
 import type { BudgetTier, Release } from "../release.ts";
 import type { Validator } from "../schemas/validate.ts";
 import { ForeignModsError, prepareSession, type StageSpec } from "../session/options.ts";
@@ -234,6 +235,8 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
   const profilePath = task.target.profile;
   const profile: Profile = loadProfile(profilePath, validator);
   const risk: RiskPolicy = loadRiskPolicy(release.root, profilePath);
+  // The paths the code graph's blast radius measures against (P2-13): every R3 and Restricted glob.
+  const guarded = ((g) => [...new Set([...g.r3, ...g.restricted])])(riskGuardedGlobs(risk));
   const dir = runDir(home, taskId);
   const worktree = worktreeDir(home, taskId);
   const bundleDir = join(dir, "bundle");
@@ -732,6 +735,21 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     });
   };
 
+  const graphCache = new Map<string, GraphFacts>();
+  /** Round n's code graph (P2-13): its committed graph.json against the candidate judged; only a fresh one counts hops. */
+  const roundGraph = (n: number): GraphFacts => {
+    const commit = candidate(n);
+    const key = `${String(n)}:${commit}`;
+    let f = graphCache.get(key);
+    if (f === undefined) {
+      const g = readJson(roundPath("gates.json", n)) as GatesResult;
+      const path = join(dir, roundPath("graph.json", n));
+      f = graphFacts({ record: g.graph, content: existsSync(path) ? readFileSync(path) : null, commit, changed: changedFiles(worktree, checkoutInfo().base_commit, commit), guarded });
+      graphCache.set(key, f);
+    }
+    return f;
+  };
+
   /** Round n's facts for the policy engine: the candidate's diff and its gate signals, all committed. */
   const diffFacts = (n: number, injection: InjectionScan = injectionOf(n)): DiffFacts => {
     const g = readJson(roundPath("gates.json", n)) as GatesResult;
@@ -743,7 +761,7 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
       secretMaterial: g.signals.secret_material,
       classificationUncertain: t.uncertain,
       operationRequested: s.operation_requested === true,
-      graphHopsToProtected: null,
+      graphHopsToProtected: roundGraph(n).hops,
       proposedTier: t.proposed_tier,
       injectionSuspect: suspect(injection),
     };
@@ -842,7 +860,8 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
   const policy = (n: number) => (): Promise<Output[]> => {
     const injection = injectionOf(n);
     const decision = evaluate(diffFacts(n, injection), risk);
-    return Promise.resolve([out("policy.json", decision, null), out("injection.json", injection, null)]);
+    const blast = blastRecord({ taskId, commit: candidate(n), round: n, drift: null, facts: roundGraph(n), decision, risk });
+    return Promise.resolve([out("policy.json", decision, null), out("injection.json", injection, null), out(roundPath("blast.json", n), blast, "blast.schema.json")]);
   };
 
   const approve = (n: number) => async (): Promise<Output[]> => {
@@ -1132,16 +1151,20 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     if (!g.passed) return human(`the gates did not pass on the merge with the new base: ${g.gates.filter((x) => x.status !== "pass").map((x) => x.name).join(", ")}`, gatesOut);
     const t = readJson("triage.json") as Triage;
     const sp = parse(readFileSync(join(dir, "spec.yaml"), "utf8")) as Spec;
+    const files = changedFiles(worktree, baseNow, mergedHead);
+    const kept = gatesOut.find((o) => o.path === driftPath("graph.json", k))?.content;
+    const graphNow = graphFacts({ record: g.graph, content: kept === undefined ? null : Buffer.from(kept), commit: mergedHead, changed: files, guarded });
     const after = evaluate({
-      files: changedFiles(worktree, baseNow, mergedHead), sinksAdded: g.signals.sink_added, secretMaterial: g.signals.secret_material,
-      classificationUncertain: t.uncertain, operationRequested: sp.operation_requested === true, graphHopsToProtected: null, proposedTier: t.proposed_tier,
+      files, sinksAdded: g.signals.sink_added, secretMaterial: g.signals.secret_material,
+      classificationUncertain: t.uncertain, operationRequested: sp.operation_requested === true, graphHopsToProtected: graphNow.hops, proposedTier: t.proposed_tier,
       injectionSuspect: has("injection.json") && suspect(readJson("injection.json") as InjectionScan),
     }, risk);
     const policyOut = out(driftPath("policy.json", k), after, null);
-    if (TIERS.indexOf(after.tier) > TIERS.indexOf(decision.tier)) return human(`the policy now puts the change at ${after.tier}, above the approved ${decision.tier}`, [...gatesOut, policyOut], after.tier);
+    const blastOut = out(driftPath("blast.json", k), blastRecord({ taskId, commit: mergedHead, round: null, drift: k, facts: graphNow, decision: after, risk }), "blast.schema.json");
+    if (TIERS.indexOf(after.tier) > TIERS.indexOf(decision.tier)) return human(`the policy now puts the change at ${after.tier}, above the approved ${decision.tier}`, [...gatesOut, policyOut, blastOut], after.tier);
 
     record({ candidate_commit: mergedHead, outcome: "reverified", reason: `the gates and the policy pass on ${baseNow.slice(0, 12)}; the approver's ${approver.decision} carries over`, tier_after: after.tier }, [
-      ...gatesOut, policyOut, { path: driftPath("candidate.bundle", k), content: headBundle(worktree, baseNow) },
+      ...gatesOut, policyOut, blastOut, { path: driftPath("candidate.bundle", k), content: headBundle(worktree, baseNow) },
     ]);
     return publishDrift(k);
   }
@@ -1272,7 +1295,7 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     }
     const n = round;
     const reviews = [...reviewPaths(n), roundPath("refutations.json", n)];
-    await runStep({ label: "policy", stage: "policy", inputs: [roundPath("build.json", n), roundPath("gates.json", n), "triage.json", "spec.yaml"], run: policy(n), exit: noExit });
+    await runStep({ label: "policy", stage: "policy", inputs: [roundPath("build.json", n), roundPath("gates.json", n), roundPath("graph.json", n), "triage.json", "spec.yaml"], run: policy(n), exit: noExit });
     await runStep({ label: "approve", stage: "approve", inputs: ["policy.json", ...reviews], run: approve(n), exit: approveExit(n) });
     await runStep({ label: "summarize", stage: "summarize", inputs: ["verdict.json"], run: summarize(n), exit: noExit });
     await runStep({ label: "publish", stage: "publish", inputs: ["summary.json", "policy.json", roundPath("build.json", n)], run: publish(n), exit: publishExit });

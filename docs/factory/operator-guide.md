@@ -522,6 +522,21 @@ Every failed task carries exactly one category (P1-07):
 
 Once a week, run `factoryctl report --week 2026-W42` (the ISO week, in UTC) and add the row it prints to the weekly table in STATUS. It counts the live tasks created that week by outcome: aggregates only, which is all the public repository may hold. Replayed tasks never count.
 
+## Code graph (shadow)
+
+From `v0.24.0` every gate run also builds the candidate's code graph with graphifyy, offline and with no LLM, on the read-only tree (P2-13). It never fails the gates. The pipeline commits it as `graph.json` beside each round's `gates.json`, and as `drift/<k>/graph.json` for each re-verification.
+
+From `v0.25.0` the policy step reads that graph as the blast radius:
+
+- **The walk:** from the changed files (a rename's old path too) back through the files that depend on them, up to 4 hops, to the nearest R3 or Restricted path in the policy and the target's profile. The dependency relations are graphifyy's own: calls, imports, inheritance and the like.
+- **Freshness:** a graph counts only when it describes the commit being judged. A graph of another commit is `stale`, a run without one is `missing`, and a graph that failed to build or parse is `error`; none of them gives a hop count.
+- **Shadow mode:** the `graph_reaches_protected_within_hops: 2` rule in `policies/risk.yaml` raises nothing yet. P3-05 measures it before it is enforced. The provisional tier and `policy-check` do not use the graph.
+- **The log:** each round's `blast.json` and each re-verification's `drift/<k>/blast.json` record the graph's status, the hops, the nearest guarded file, and the rule: whether it matched, the tier it would give, and the tier enforced.
+
+`factoryctl report T-…` ends with a "code graph (shadow)" line for each decision. `factoryctl report --week` counts the week's decisions: fresh, stale, missing and error, how often the rule matched, and how often it would have raised the tier.
+
+The graph is the target's own data: only `factoryctl` reads it, with a size cap, and no agent sees it.
+
 ## Kill switch
 
 Use it the moment an agent does something you did not expect, or a credential may be exposed. Choose the lightest step that is enough, and escalate.

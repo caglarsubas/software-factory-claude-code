@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0001",
+  "candidate_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "round": 1,
+  "drift": null,
+  "graph": {
+    "status": "fresh",
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "hops": 2,
+  "nearest": "src/auth/login.ts",
+  "reached": 2
+}

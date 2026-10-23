@@ -882,9 +882,9 @@ describe("re-verification on base drift and serialised merges (P2-06)", () => {
   });
 
   /** Gates that keep the candidate's code graph (P2-13): a one-node graph naming the gate step, and its record. */
-  const graphing = (over: (built: GraphRecord) => GraphRecord = (b) => b): Deps["runGates"] => async (o, label) => {
+  const graphing = (over: (built: GraphRecord) => GraphRecord = (b) => b, shape: (label: string) => object = (label) => ({ nodes: [{ id: label, source_file: "src/cart.ts" }], links: [] })): Deps["runGates"] => async (o, label) => {
     const r = await counting()(o, label);
-    const json = JSON.stringify({ nodes: [{ id: label, source_file: "src/cart.ts" }], links: [] });
+    const json = JSON.stringify(shape(label));
     if (o.graphOut !== undefined) writeFileSync(o.graphOut, json);
     return { ...r, graph: over({ status: "built", tool: "graphifyy 0.9.91", commit: r.candidate_commit, nodes: 1, edges: 0, files: 1, sha256: createHash("sha256").update(json).digest("hex") }) };
   };
@@ -900,6 +900,34 @@ describe("re-verification on base drift and serialised merges (P2-06)", () => {
     expect(JSON.parse(readFileSync(join(dir, "graph.json"), "utf8"))).toMatchObject({ nodes: [{ id: "gates" }] });
     expect(JSON.parse(readFileSync(join(dir, "drift/1/graph.json"), "utf8"))).toMatchObject({ nodes: [{ id: "gates-drift-1" }] });
     expect(committedPaths(id)).toEqual(expect.arrayContaining(["gates.json", "graph.json", "drift/1/gates.json", "drift/1/graph.json"]));
+  });
+
+  it("logs the blast radius as a shadow decision per round and per re-verification, and enforces nothing (P2-13)", async () => {
+    // A guarded file calls the cart the build changes: one hop, inside the shadow rule's two.
+    const reaching = (label: string): object => ({
+      nodes: [{ id: `${label}:cart`, source_file: "src/cart.ts" }, { id: "guard", source_file: "src/auth/guard.ts" }, { id: "react", label: "react" }],
+      links: [{ source: "guard", target: `${label}:cart`, relation: "calls" }, { source: `${label}:cart`, target: "react", relation: "imports" }],
+    });
+    const id = newTask();
+    expect(await live(id, graphing(undefined, reaching))).toBe("AUTO_APPROVED");
+    const dir = runDir(world.home, id);
+    const round = JSON.parse(readFileSync(join(dir, "blast.json"), "utf8")) as Record<string, unknown>;
+    expect(round).toMatchObject({ task_id: id, round: 1, drift: null, graph: { status: "fresh" }, hops: 1, nearest: "src/auth/guard.ts", reached: 1, rule: { within: 2, matched: true, shadow_tier: "R2", enforced_tier: "R1" } });
+    expect((JSON.parse(readFileSync(join(dir, "policy.json"), "utf8")) as { tier: string }).tier).toBe("R1");
+    green(id);
+    advanceMain({ "NOTES.md": "Someone else's notes.\n" });
+    expect(await live(id, graphing(undefined, reaching))).toBe("AUTO_APPROVED");
+    expect(JSON.parse(readFileSync(join(dir, "drift/1/blast.json"), "utf8"))).toMatchObject({ round: null, drift: 1, candidate_commit: drift(id)["candidate_commit"], graph: { status: "fresh" }, hops: 1, rule: { matched: true, enforced_tier: "R1" } });
+    expect(committedPaths(id)).toEqual(expect.arrayContaining(["blast.json", "drift/1/blast.json"]));
+  });
+
+  it("counts no hops from a graph of another commit, or from no graph", async () => {
+    const stale = newTask();
+    expect(await live(stale, graphing((b) => ({ ...b, commit: "f".repeat(40) })))).toBe("AUTO_APPROVED");
+    expect(JSON.parse(readFileSync(join(runDir(world.home, stale), "blast.json"), "utf8"))).toMatchObject({ graph: { status: "stale", commit: "f".repeat(40) }, hops: null, rule: { matched: false, shadow_tier: "R1" } });
+    const none = newTask();
+    expect(await live(none)).toBe("AUTO_APPROVED");
+    expect(JSON.parse(readFileSync(join(runDir(world.home, none), "blast.json"), "utf8"))).toMatchObject({ graph: { status: "missing", commit: null }, hops: null, nearest: null, reached: null });
   });
 
   it("commits no graph the gates did not build, nor a file other than the one their record names", async () => {
