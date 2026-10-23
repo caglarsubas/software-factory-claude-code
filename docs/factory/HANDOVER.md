@@ -44,7 +44,12 @@ Two PRs, each a release, on the branch `claude/epic-cannon-akxfwy-p2-13`, follow
 
 ## Waiting on the operator
 
-Every release up to `v0.19.0` is tagged, and `v0.19.0` is installed and pinned (STATUS's Factory release row). Each later release is tagged on its PR's merge commit, then installed with `factoryctl release install`, `release use` and `factoryctl doctor`, and recorded in that row.
+Every release up to `v0.19.0` is tagged, and `v0.19.0` is installed and pinned (STATUS's Factory release row).
+
+- **Tagging is no longer the operator's step:** the `release` workflow tags and publishes a version when its bump merges (operator guide, Releases).
+- **The backfill:** `v0.20.0` to `v0.25.0` were merged before that and are tagged by running the workflow by hand with each merge commit: `e4d5061`, `d0a2fbe`, `130d3bc`, `6bd6fa3`, `ff63c89` and `cf86bb7`.
+- **Installing stays with the operator:** `factoryctl release install`, `release use` and `factoryctl doctor`, for the releases they will run (the latest one, not each in turn). Record it in STATUS's Factory release row.
+- **The operator's Mac:** a local session (the Claude Desktop app, or `claude remote-control` in their checkout) can run what needs their machine: `doctor`, the live checks below, T-0020 and the mirror reset. The operator-only commands still refuse inside any Claude Code session.
 
 1. **One live task in the runner.** This bills the operator's account. Run one `ts-mini` R0 task with `factoryctl run T-… --runner container --attach`, then check `$FACTORY_HOME/runs/T-…/egress/proxy.ndjson` for its requests on the gateway route. Once the pin move is installed, run one again on the new pin, before the G2 sample.
 2. **T-0020** is admitted from an issue and still `RECEIVED`: run it or cancel it.
