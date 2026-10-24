@@ -46,11 +46,11 @@ Two PRs, each a release, on the branch `claude/epic-cannon-akxfwy-p2-13`, follow
 
 Two PRs, each a release, on the same branch, restarted from `main` after each merge.
 
-- **PR 1, #72 (`v0.26.0`): the read-only dashboard.** `factoryctl dashboard` serves the board, the evidence drawer and a live stream on loopback (`controller/src/dashboard/`).
+- **PR 1, #72 (`v0.26.0`, merged): the read-only dashboard.** `factoryctl dashboard` serves the board, the evidence drawer and a live stream on loopback (`controller/src/dashboard/`).
   - **The done-when:** it reads `factory.db` through `EventStore.openReadOnly`, whose `EventReader` type has no write method and on which SQLite refuses writes. The server answers `GET` only.
   - **The stream's position** is store-wide (`EventStore.cursor()`, the events table's row id): `seq` counts per task.
   - **Exposure:** a token new for each launch, in the address's fragment; `refusal()` from `serve/api.ts` checks the token, `Host` and `Origin`; a strict CSP; the page writes text with `textContent` only.
-- **PR 2 (`v0.27.0`): the command bus.** The dashboard passes its commands to `serve`'s API with `serve`'s token, and `serve` validates and writes them: pause, resume, drain, and a task's pause, resume, priority (new, also `factoryctl priority`) and cancel. With no `serve`, a command is refused.
+- **PR 2, #73 (`v0.27.0`): the command bus.** The dashboard passes its commands to `serve`'s API with `serve`'s token, and `serve` validates and writes them: pause, resume, drain, and a task's pause, resume, priority (new, also `factoryctl priority`) and cancel. With no `serve`, a command is refused.
   - **Drawer opens:** `$FACTORY_HOME/dashboard/drawer-opens.ndjson`, counted by `report --week` (§6 approval fatigue).
   - **Left out, by the operator's decisions of 2026-10-24** (a STATUS deviation row): approve or reject, request changes, re-run a stage, extend the budget, raise the tier. Raising a tier waits until after G2: done safely it must reach the spec gate, reviewer selection and the policy step before they run, which changes the policy code that feeds auto-merge.
 - **P2-10 is done.**
