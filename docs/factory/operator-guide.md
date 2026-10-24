@@ -243,6 +243,7 @@ An admitted issue gets one comment from the App: the task's ID, its state and it
 - **Pause:** `factoryctl pause T-0001 [--reason …]`. The task stops before its next step, once the step in flight has committed. Nothing fails, and the task shows `(paused)` in `status`.
   - `run` refuses a paused task; `factoryctl resume T-0001` lifts the pause and continues.
   - To stop at once, use `cancel`, which ends the task, or `halt`, which stops everything.
+- **Priority:** `factoryctl priority T-0001 low|normal|high [--reason …]` changes the order in which `serve` starts waiting tasks (from `v0.27.0`). The task's record keeps the priority it was created with; the command is an event, and the latest one wins.
 - **Take over:** `factoryctl takeover T-0001` opens your own Claude Code in the task's worktree. It resumes the last live build session if there is one, and starts a new session if there isn't.
   - **What it runs under:** the walls of a build session.
     - Settings, plugin and guard come from the installed release; only the release's settings apply (`--setting-sources ""`).
@@ -273,7 +274,7 @@ Every run takes its task's lease first (P2-03), and everything it writes carries
 - **Commands:** while it runs, the CLI is its client.
   - `pause` and `resume` without a task stop and restart new work.
   - `factoryctl drain` lets running tasks finish, then stops `serve`.
-  - `pause`, `resume` and `cancel` with a task go through it.
+  - `pause`, `resume`, `cancel` and `priority` with a task go through it.
   - `run`, `takeover` and `reject` refuse until it stops.
 - **API:** it listens on `127.0.0.1:7317` (`--port`; `--host` takes a tailnet address only).
   - Every request needs the bearer token in `$FACTORY_HOME/secrets/serve.token`.
@@ -287,8 +288,13 @@ From `v0.26.0`, `factoryctl dashboard [--port N]` serves the board, each task's 
 - **Board:** a column for each group of states: received, building, reviewing, needs human, merging, merged and ended. Each card shows the state and gate, the tier, `paused`, and the cost so far. The most recently changed card comes first.
 - **Evidence drawer:** click a card for the spec and its acceptance criteria, the tier and the rules that set it, the base and candidate commits, each stage's model, cost and cap against the tier's budget, the gate results, the reviewers' findings, the verdict, the human decisions, the code graph's shadow decisions and the event timeline.
 - **Live:** the board and an open drawer refresh within about a second of each event.
-- **Reads only:** it opens `factory.db` read-only, and it has no route that writes. It runs beside `serve` or a run, and during a halt. Commands come in its next release; until then, use the CLI.
-- **Exposure:** loopback only. The token is new for each launch and reaches the page in the address's fragment, which the browser never sends to a server. Every data request needs that token and a `Host` naming the bound address, and any `Origin` it sends must be its own. The page loads nothing from elsewhere, and it shows task titles, findings and other target text as text, never as markup.
+- **Commands (from `v0.27.0`):** they go to `serve`, which checks each one and writes it, as it does for the CLI. While no `serve` runs, the buttons are off, and the CLI does the same work.
+  - **The header:** pause new work, resume it, or drain `serve`.
+  - **The drawer:** pause or resume the task, set its priority (low, normal or high), or cancel it, which asks you to confirm. Each takes an optional reason, recorded with the command and shown under human decisions.
+  - **Not here yet:** approving or rejecting, requesting changes, re-running a stage, extending a budget and raising a tier. Use `factoryctl approve`, `reject` and `cancel`, and your GitHub review. STATUS's deviations log says why.
+- **Reads only:** it opens `factory.db` read-only and never writes it; commands are `serve`'s writes. It runs beside `serve` or a run, and during a halt.
+- **Drawer opens:** each time you open a task's drawer, one line goes to `$FACTORY_HOME/dashboard/drawer-opens.ndjson`, with the time, the task, its state and gate. A refresh is not an opening. `factoryctl report --week` counts them, for approval fatigue (§6): the rate should fall as the evidence gets easier to trust.
+- **Exposure:** loopback only. The token is new for each launch and reaches the page in the address's fragment, which the browser never sends to a server. Every data request and command needs that token and a `Host` naming the bound address, and any `Origin` it sends must be its own. A command must also be a JSON `POST`, which a cross-site form cannot send. The page loads nothing from elsewhere, and it shows task titles, findings and other target text as text, never as markup.
 
 ## Approve
 
@@ -762,3 +768,4 @@ G2 closes Phase 2, on the frozen system. `factoryctl gate G2` checks its six aut
 | `targets/<owner>__<name>/` | the private store: each onboarded target's `target.json`, `profile.yaml`, `inventory.json` and `journal.ndjson`; the replica copies it, and `offboard` deletes it last |
 | `gates/<gate>/` | gate snapshots and evidence |
 | `HALT`, `halt.log` | the kill switch and its audit trail |
+| `dashboard/drawer-opens.ndjson` | each opening of the dashboard's evidence drawer: time, task, state and gate (P2-10) |

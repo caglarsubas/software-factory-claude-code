@@ -18,13 +18,13 @@ A new Claude Code session picks up the factory's development from here. Read thi
   - The operator decided to move the pin before the freeze.
 - **`v0.18.0` (#61):** keeps mods out of sessions' config directories and turns the `AGENTS.md` loader off.
 - **P2-14 (`v0.19.0`, #63):** the plugin's `factory-review` workflow, for interactive use only.
-- **Parallel items:** P2-13 is done (next section). P2-10 is in progress (the section after it). P2-12 stays stopped until a written egress policy exists (Appendix A).
+- **Parallel items:** P2-13 and P2-10 are done (the next two sections). P2-12 stays stopped until a written egress policy exists (Appendix A).
 - **P2-11 (done, 2026-10-22):** four PRs, each a release, following [ADR 0003](adr/0003-onboarding-retention-and-purge.md), the operator's decisions of 2026-10-22: purge by record with tombstones, and the App added and removed by hand, verified by factoryctl.
   - #65 (`v0.20.0`): deleting by record (store schema 4, purge journals, the replica).
   - #66 (`v0.21.0`): retention per profile, `prune`, and old-bundle migration tests.
   - #67 (`v0.22.0`): `onboard`, and the fix for the kill-point suite's "fetch failed" flake (the stub GitHub's keep-alive).
   - #68 (`v0.23.0`): `offboard` and the round-trip test (the done-when). The round trip ran offline only; a live one is for P3-08.
-- **The pin move** to 2.1.306 / 0.3.306 is built on `claude/epic-cannon-akxfwy` and opens on Oct 28, when pnpm's age gate accepts it. P2-11 took `v0.20.0` to `v0.23.0` and P2-13 `v0.24.0` and `v0.25.0`, and P2-10's first PR `v0.26.0`, so the pin move merges `main` first and takes the next free version (`v0.27.0` unless another release comes first).
+- **The pin move** to 2.1.306 / 0.3.306 is built on `claude/epic-cannon-akxfwy` and opens on Oct 28, when pnpm's age gate accepts it. P2-11 took `v0.20.0` to `v0.23.0` and P2-13 `v0.24.0` and `v0.25.0`, and P2-10 `v0.26.0` and `v0.27.0`, so the pin move merges `main` first and takes the next free version (`v0.28.0` unless another release comes first).
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
 
 ## P2-13, the code graph in shadow mode (2026-10-23)
@@ -46,11 +46,14 @@ Two PRs, each a release, on the branch `claude/epic-cannon-akxfwy-p2-13`, follow
 
 Two PRs, each a release, on the same branch, restarted from `main` after each merge.
 
-- **PR 1, #72 (`v0.26.0`): the read-only dashboard.** `factoryctl dashboard` serves the board, the evidence drawer and a live stream on loopback (`controller/src/dashboard/`).
+- **PR 1, #72 (`v0.26.0`, merged): the read-only dashboard.** `factoryctl dashboard` serves the board, the evidence drawer and a live stream on loopback (`controller/src/dashboard/`).
   - **The done-when:** it reads `factory.db` through `EventStore.openReadOnly`, whose `EventReader` type has no write method and on which SQLite refuses writes. The server answers `GET` only.
   - **The stream's position** is store-wide (`EventStore.cursor()`, the events table's row id): `seq` counts per task.
   - **Exposure:** a token new for each launch, in the address's fragment; `refusal()` from `serve/api.ts` checks the token, `Host` and `Origin`; a strict CSP; the page writes text with `textContent` only.
-- **PR 2 (`v0.27.0` unless the pin move comes first): the command bus.** The drawer's commands go to `serve`'s API, which validates them, so the dashboard still never writes the store. `serve`'s API has pause, resume, drain and a task's pause, resume and cancel today. The rest of §7 E2's list (approve or reject with a reason, priority, budget extension, raising the tier) needs `serve` routes first; whatever cannot be built safely before the freeze gets a deviation row. Log each drawer opening for the approval-fatigue metric (§6).
+- **PR 2, #73 (`v0.27.0`): the command bus.** The dashboard passes its commands to `serve`'s API with `serve`'s token, and `serve` validates and writes them: pause, resume, drain, and a task's pause, resume, priority (new, also `factoryctl priority`) and cancel. With no `serve`, a command is refused.
+  - **Drawer opens:** `$FACTORY_HOME/dashboard/drawer-opens.ndjson`, counted by `report --week` (§6 approval fatigue).
+  - **Left out, by the operator's decisions of 2026-10-24** (a STATUS deviation row): approve or reject, request changes, re-run a stage, extend the budget, raise the tier. Raising a tier waits until after G2: done safely it must reach the spec gate, reviewer selection and the policy step before they run, which changes the policy code that feeds auto-merge.
+- **P2-10 is done.**
 
 ## Waiting on the operator
 
@@ -90,7 +93,7 @@ Every release up to `v0.19.0` is tagged, and `v0.19.0` is installed and pinned (
         - the threat model: the ASI02 and ASI05 residuals that cite fixes missing from 2.1.286 now say 2.1.306 carries them, plus the model-fallback control;
         - HANDOVER: the operator's steps (the eval suite passes on the release commit before the tag; then tag, install and use the release, run `doctor`, put their own `claude` at 2.1.306 for takeover, and run one live `ts-mini` R0 runner task and one attended host run).
      5. Open the PR with the probe results in its body. CI's runner jobs and gates job are the first container runs of 2.1.306.
-2. **Parallel items** that touch no core file, if time allows before the freeze: P2-10 (P2-11 and P2-13 are done).
+2. **Parallel items:** P2-10, P2-11, P2-13 and P2-14 are done; P2-12 stays stopped.
 3. **The freeze and G2.**
    - Tag the frozen release. The operator then runs the G2 procedure in the operator guide's Gate G2 section:
      - `gate G2 --begin`;

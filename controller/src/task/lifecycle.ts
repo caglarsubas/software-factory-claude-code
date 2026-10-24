@@ -69,3 +69,13 @@ export function isPaused(events: readonly FactoryEvent[]): boolean {
   const last = events.findLast((e) => e.type === "command" && (e.payload["command"] === "pause" || e.payload["command"] === "unpause"));
   return last?.payload["command"] === "pause";
 }
+
+export const PRIORITIES = ["low", "normal", "high"] as const;
+export type Priority = (typeof PRIORITIES)[number];
+export const isPriority = (v: unknown): v is Priority => typeof v === "string" && (PRIORITIES as readonly string[]).includes(v);
+
+/** A task's priority: the operator's latest change (P2-10), or else its record's. */
+export function currentPriority(recorded: Priority, events: readonly FactoryEvent[]): Priority {
+  const last = events.findLast((e) => e.type === "command" && e.payload["command"] === "priority")?.payload["priority"];
+  return isPriority(last) ? last : recorded;
+}

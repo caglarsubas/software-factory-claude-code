@@ -146,6 +146,8 @@ describe("factoryctl", { timeout: 30_000 }, () => {
     expect(row.stdout).toContain(WEEK_HEADER);
     // Both tasks ran replayed sessions: a week row never counts them.
     expect(row.stdout).toContain(`| ${week} | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | $0.00 in total; 2 replayed, not counted |`);
+    // Approval fatigue (P2-10): the dashboard's drawer opens that week.
+    expect(row.stdout).toMatch(/^dashboard: 0 drawer open\(s\) on 0 task\(s\), 0 at a human gate$/m);
     expect(factoryctl(["report", "--week", "2026-42"]).stderr).toContain("a week is YYYY-Www");
   });
 
@@ -297,6 +299,17 @@ appendFileSync("src/empty.ts", "// reviewed by hand\\n");
     const again = factoryctl(["resume", "T-0005", "--replay", dir]);
     expect(again.stdout.trim()).toBe("T-0005 NEEDS_HUMAN (gate: merge)");
     expect(spawnSync("git", ["-C", remote, "show", "factory/T-0005:src/empty.ts"], { encoding: "utf8" }).stdout).toContain("// reviewed by hand");
+  });
+
+  it("changes a task's priority, without serve, and refuses a bad one or an ended task", () => {
+    const id = factoryctl(["task", "create", "--profile", profilePath, "--title", "Billing rounding", "--body-file", body, "--untrusted", "--remote", remote]).stdout.trim();
+    expect(factoryctl(["priority", id, "urgent"]).stderr).toContain("usage: factoryctl priority T-0001 low|normal|high");
+    const raised = factoryctl(["priority", id, "high", "--reason", "release"]);
+    expect(raised.status, raised.stderr).toBe(0);
+    expect(raised.stdout.trim()).toBe(`${id}: priority normal → high`);
+    expect(factoryctl(["priority", id, "high"]).stdout.trim()).toBe(`${id} is already at high priority`);
+    expect(factoryctl(["cancel", id]).status).toBe(0);
+    expect(factoryctl(["priority", "T-0002", "low"]).stderr).toContain("T-0002 has already ended");
   });
 
   it("rejects unknown tasks and commands", () => {

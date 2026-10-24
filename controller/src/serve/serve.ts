@@ -23,7 +23,7 @@ import { isLive, self, type ProcRef } from "../proc.ts";
 import { leaseState, stopHolder, takeLease } from "../sched/lease.ts";
 import { nextTasks, waitsOnGitHub, type Ledger, type TaskView } from "../sched/schedule.ts";
 import type { EventStore } from "../store/events.ts";
-import { currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
+import { currentPriority, currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
 import { readTask } from "../task/task.ts";
 import { apiHandler, type ApiCommand } from "./api.ts";
 
@@ -148,7 +148,7 @@ export async function startServe(o: ServeOptions): Promise<Serve> {
       return null;
     }
     const target = task.target.repo;
-    const priority = PRIORITY[task.priority] ?? 1;
+    const priority = PRIORITY[currentPriority(task.priority, events)] ?? 1;
     let scope: string[] | null = null;
     try {
       scope = (parse(readFileSync(join(runDir(home, id), "spec.yaml"), "utf8")) as { scope: { include: string[] } }).scope.include;
@@ -234,6 +234,18 @@ export async function startServe(o: ServeOptions): Promise<Serve> {
       store.append({ task_id: id, actor: operator, type: "command", payload: { command: "pause", reason: c.reason ?? "no reason given" } });
       return { ok: true, message: workers.has(id) ? `${id} pauses at its next step boundary` : `${id} paused` };
     }
+    if (c.command === "priority") {
+      let recorded;
+      try {
+        recorded = readTask(home, id).priority;
+      } catch {
+        return { ok: false, message: `${id} has no task record in its run directory` };
+      }
+      const now = currentPriority(recorded, events);
+      if (c.priority === undefined || c.priority === now) return { ok: true, message: `${id} is already at ${now} priority` };
+      store.append({ task_id: id, actor: operator, type: "command", payload: { command: "priority", priority: c.priority, from: now, ...(c.reason === undefined ? {} : { reason: c.reason }) } });
+      return { ok: true, message: `${id}: priority ${now} → ${c.priority}` };
+    }
     if (c.command === "task-resume") {
       if (isPaused(events)) store.append({ task_id: id, actor: operator, type: "command", payload: { command: "unpause" } });
       finished.delete(id);
@@ -256,7 +268,7 @@ export async function startServe(o: ServeOptions): Promise<Serve> {
       serve: { pid: process.pid, host: o.host, port: o.port, paused, draining, halted: readHalt(home) !== null, max_tasks: o.maxTasks, workers: [...workers.entries()].map(([task, w]) => ({ task, pid: w.pid })) },
       tasks: store.taskIds().flatMap((id) => {
         const v = view(id, now);
-        return v === null ? [] : [{ id: v.id, state: v.state, gate: v.gate, paused: v.paused, lease: v.lease, epoch: store.lease(id)?.epoch ?? 0, running: workers.has(id) }];
+        return v === null ? [] : [{ id: v.id, state: v.state, gate: v.gate, paused: v.paused, priority: v.priority, lease: v.lease, epoch: store.lease(id)?.epoch ?? 0, running: workers.has(id) }];
       }),
     };
   }

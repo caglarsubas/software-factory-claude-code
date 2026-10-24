@@ -4,6 +4,20 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-24
+
+### Added
+
+- **The dashboard's commands (P2-10, PR 2 of 2).** The header pauses, resumes or drains `serve`. A task's drawer pauses or resumes it, sets its priority, or cancels it after a confirmation. Each command can carry a reason.
+  - **Through `serve`:** the dashboard passes each command to `serve`'s API with `serve`'s token; `serve` validates and writes it, so the dashboard still never writes `factory.db`. With no `serve` running, a command is refused and the CLI does the work.
+  - **Exposure:** a command is a JSON `POST` with the launch's token, the bound `Host` and no foreign `Origin`; the dashboard keeps only a reason (up to 500 characters) and a priority before passing it on. A refusal closes the connection.
+- **Priority:** `factoryctl priority T-… low|normal|high [--reason …]`, and `serve`'s `/v1/tasks/T-…/priority`. The latest `priority` command overrides the task record's priority in `serve`'s scheduling, on the board and in `status`.
+- **The drawer-open log** (`$FACTORY_HOME/dashboard/drawer-opens.ndjson`): each opening of a task's drawer, with its state and gate. `factoryctl report --week` counts them, for §6's approval-fatigue measure.
+
+### Not included
+
+- Approving or rejecting, requesting changes, re-running a stage, extending a budget and raising a tier stay outside the dashboard (STATUS's deviations log).
+
 ## [0.26.0] - 2026-10-24
 
 ### Added
@@ -520,7 +534,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.23.0...v0.24.0

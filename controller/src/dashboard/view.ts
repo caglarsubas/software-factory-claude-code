@@ -13,7 +13,7 @@ import { tierOf } from "../report/slo.ts";
 import { REVIEWERS } from "../stages/reviewers.ts";
 import { latestRound, roundPath } from "../stages/rounds.ts";
 import type { EventReader, FactoryEvent, State } from "../store/events.ts";
-import { isPaused } from "../task/lifecycle.ts";
+import { currentPriority, isPaused, type Priority } from "../task/lifecycle.ts";
 import { readTask } from "../task/task.ts";
 
 /** The board's columns, in lifecycle order (ROADMAP §2.1): every durable state has one. */
@@ -35,6 +35,7 @@ export interface Card {
   gate: string | null;
   tier: string | null;
   paused: boolean;
+  priority: Priority;
   costUsd: number;
   /** The newest event's time and sequence number: what changed last. */
   updatedAt: string;
@@ -61,6 +62,7 @@ function card(home: Home, id: string, events: readonly FactoryEvent[]): Card {
     gate: report.gate,
     tier: report.tier,
     paused: isPaused(events),
+    priority: currentPriority(task.priority, events),
     costUsd: Math.round(report.totals.costUsd * 100) / 100,
     updatedAt: last?.ts ?? task.created_at,
     seq: last?.seq ?? 0,
@@ -123,7 +125,7 @@ function timelineEntry(e: FactoryEvent): { seq: number; at: string; type: string
   return { seq: e.seq, at: e.ts, type: e.type, summary };
 }
 
-const DECISIONS = new Set(["approve", "reject", "cancel", "takeover", "pause", "unpause"]);
+const DECISIONS = new Set(["approve", "reject", "cancel", "takeover", "pause", "unpause", "priority"]);
 
 export function drawer(home: Home, store: EventReader, budgets: Pick<BudgetsPolicy, "task_usd" | "calibration">, id: string): Drawer | null {
   const events = store.events(id);
@@ -179,7 +181,8 @@ export function drawer(home: Home, store: EventReader, budgets: Pick<BudgetsPoli
   const decisions = events.flatMap((e) => {
     if (e.type === "command" && e.actor.kind === "operator" && DECISIONS.has(String(e.payload["command"]))) {
       const reason = str(e.payload["reason"]);
-      return [{ at: e.ts, by: e.actor.id, what: `${String(e.payload["command"])}${str(e.payload["gate"]) === null ? "" : ` (${String(e.payload["gate"])} gate)`}${reason === null ? "" : `: ${reason}`}` }];
+      const detail = str(e.payload["gate"]) !== null ? ` (${String(e.payload["gate"])} gate)` : str(e.payload["priority"]) !== null ? ` ${str(e.payload["from"]) ?? "?"} → ${String(e.payload["priority"])}` : "";
+      return [{ at: e.ts, by: e.actor.id, what: `${String(e.payload["command"])}${detail}${reason === null ? "" : `: ${reason}`}` }];
     }
     if (e.type === "state_changed" && e.to === "MERGED") return [{ at: e.ts, by: e.actor.id, what: "merged" }];
     return [];

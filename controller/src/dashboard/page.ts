@@ -2,7 +2,8 @@
 // the dashboard itself (its CSP allows nothing else). The script reads the launch token from the
 // URL's fragment, keeps it in the tab's sessionStorage, and sends it as a bearer token. Every value
 // it shows goes in with textContent: task titles and findings can carry issue text, which is
-// untrusted, so nothing is ever parsed as markup.
+// untrusted, so nothing is ever parsed as markup. Its commands are JSON POSTs that the dashboard
+// passes to serve.
 
 export const PAGE = `<!doctype html>
 <html lang="en">
@@ -13,7 +14,7 @@ export const PAGE = `<!doctype html>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<header><h1>Software factory</h1><span id="status">connecting…</span></header>
+<header><h1>Software factory</h1><span id="serve"></span><span id="status">connecting…</span></header>
 <main>
 <section id="board" aria-label="Board"></section>
 <aside id="drawer" hidden aria-label="Evidence"></aside>
@@ -47,6 +48,11 @@ main { display: flex; gap: 12px; padding: 12px 16px; align-items: flex-start; }
 #drawer td, #drawer th { text-align: left; padding: 2px 6px 2px 0; border-bottom: 1px solid var(--line); }
 code { font: 12px ui-monospace, monospace; }
 button.close { float: right; }
+#serve { display: flex; gap: 6px; align-items: baseline; font-size: 12px; }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.actions input[type=text] { flex: 1 1 100%; font: inherit; padding: 2px 4px; }
+.note { color: var(--muted); font-size: 12px; }
+button.danger { color: var(--warn); }
 `;
 
 export const APP_JS = `"use strict";
@@ -64,6 +70,11 @@ export const APP_JS = `"use strict";
   let openTask = null;
   let cursor = 0;
   let pending = null;
+  let serveState = { running: false };
+  // The reason being typed survives the drawer's refreshes; opening another task clears it.
+  let draft = "";
+  const serveEl = document.getElementById("serve");
+  const ENDED = ["DONE", "ROLLED_BACK", "FAILED", "CANCELLED", "SUPERSEDED"];
 
   const el = (tag, text, cls) => {
     const e = document.createElement(tag);
@@ -82,6 +93,36 @@ export const APP_JS = `"use strict";
     return r.json();
   }
 
+  // A command goes to serve through the dashboard; serve's answer is shown as it came.
+  async function post(path, body) {
+    try {
+      const r = await fetch(path, { method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(body || {}) });
+      const b = await r.json().catch(() => ({}));
+      status.textContent = b.message || b.error || ("HTTP " + r.status);
+    } catch (e) {
+      status.textContent = String(e.message || e);
+    }
+    await renderServe().catch(() => undefined);
+    refreshSoon(null);
+  }
+
+  function button(text, onClick, cls) {
+    const b = el("button", text, cls);
+    b.type = "button";
+    b.disabled = !serveState.running;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  async function renderServe() {
+    serveState = await get("/api/serve");
+    const s = serveState;
+    const label = !s.running ? "serve: not running (commands need it)" : "serve: " + (s.halted ? "halted" : s.draining ? "draining" : s.paused ? "paused" : "running") + " · " + s.workers + " worker(s)";
+    serveEl.replaceChildren(el("span", label, "note"),
+      button(s.paused ? "Resume new work" : "Pause new work", () => post(s.paused ? "/api/serve/resume" : "/api/serve/pause")),
+      button("Drain", () => { if (confirm("Drain: serve stops once its running tasks end. Continue?")) post("/api/serve/drain"); }));
+  }
+
   function cardEl(c) {
     const card = el("div", null, "card");
     card.tabIndex = 0;
@@ -90,9 +131,10 @@ export const APP_JS = `"use strict";
     add(meta, el("span", c.state + (c.gate ? " · " + c.gate + " gate" : ""), "badge"));
     if (c.tier) add(meta, el("span", c.tier, "badge"));
     if (c.paused) add(meta, el("span", "paused", "badge warn"));
+    if (c.priority !== "normal") add(meta, el("span", c.priority + " priority", "badge"));
     add(meta, el("span", usd(c.costUsd)));
     add(card, meta, el("div", c.repo, "meta"));
-    const open = () => { openTask = c.id; renderDrawer(); };
+    const open = () => { if (openTask !== c.id) draft = ""; openTask = c.id; renderDrawer(true).catch((e) => { status.textContent = String(e.message || e); }); };
     card.addEventListener("click", open);
     card.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); });
     return card;
@@ -133,16 +175,46 @@ export const APP_JS = `"use strict";
     return t;
   }
 
-  async function renderDrawer() {
+  function actions(c) {
+    if (ENDED.includes(c.state)) return section("Actions", el("p", "the task has ended", "note"));
+    const reason = el("input");
+    reason.type = "text";
+    reason.placeholder = "reason (optional)";
+    reason.maxLength = 500;
+    reason.value = draft;
+    reason.addEventListener("input", () => { draft = reason.value; });
+    const why = () => { const r = reason.value.trim(); draft = ""; return r === "" ? {} : { reason: r }; };
+    const base = "/api/tasks/" + encodeURIComponent(c.id) + "/";
+    const priority = el("select");
+    for (const p of ["low", "normal", "high"]) {
+      const o = el("option", p);
+      o.value = p;
+      o.selected = p === c.priority;
+      priority.appendChild(o);
+    }
+    priority.disabled = !serveState.running;
+    const row = el("div", null, "actions");
+    add(row, reason,
+      button(c.paused ? "Resume" : "Pause", () => post(base + (c.paused ? "resume" : "pause"), why())),
+      priority,
+      button("Set priority", () => post(base + "priority", { priority: priority.value, ...why() })),
+      button("Cancel task", () => { if (confirm("Cancel " + c.id + "? This ends the task.")) post(base + "cancel", why()); }, "danger"));
+    const s = section("Actions", row);
+    if (!serveState.running) s.appendChild(el("p", "serve is not running: these go through it. Until it runs, use the CLI (factoryctl pause, resume, priority, cancel).", "note"));
+    return s;
+  }
+
+  async function renderDrawer(opening) {
     if (openTask === null) { drawerEl.hidden = true; return; }
-    const d = await get("/api/tasks/" + encodeURIComponent(openTask));
+    const d = await get("/api/tasks/" + encodeURIComponent(openTask) + (opening ? "?open=1" : ""));
     const close = el("button", "close", "close");
     close.addEventListener("click", () => { openTask = null; drawerEl.hidden = true; });
     const c = d.card;
     drawerEl.replaceChildren(
       close,
       el("h2", c.id + " · " + c.title),
-      el("div", c.state + (c.gate ? " (" + c.gate + " gate)" : "") + " · " + c.repo, "meta"),
+      el("div", c.state + (c.gate ? " (" + c.gate + " gate)" : "") + " · " + c.priority + " priority · " + c.repo, "meta"),
+      actions(c),
       section("Spec", el("p", d.spec ? d.spec.objective : "no spec yet"), list(d.spec ? d.spec.acceptance.map((a) => a.id + ": " + a.statement) : [])),
       section("Tier", el("p", d.tier ? d.tier.tier : "not decided yet"), list(d.tier ? d.tier.rules : [])),
       section("Commits", el("p", "base " + short(d.commits.base) + " · candidate " + short(d.commits.candidate))),
@@ -164,7 +236,7 @@ export const APP_JS = `"use strict";
       pending = null;
       try {
         await renderBoard();
-        if (openTask !== null && (task === null || task === openTask)) await renderDrawer();
+        if (openTask !== null && (task === null || task === openTask)) await renderDrawer(false);
       } catch (e) { status.textContent = String(e.message || e); }
     }, 300);
   }
@@ -199,6 +271,8 @@ export const APP_JS = `"use strict";
     }
   }
 
+  renderServe().catch(() => undefined);
+  setInterval(() => { renderServe().catch(() => undefined); }, 5000);
   renderBoard().then(stream, (e) => { status.textContent = String(e.message || e); });
 })();
 `;
