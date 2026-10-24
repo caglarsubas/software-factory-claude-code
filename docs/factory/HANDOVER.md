@@ -2,7 +2,7 @@
 
 A new Claude Code session picks up the factory's development from here. Read this file, then [`ROADMAP.md`](ROADMAP.md) (§2.6 and §3 twice), [`STATUS.md`](STATUS.md) and the [operator guide](operator-guide.md). STATUS is the record of what is done; this file holds what a new session cannot recover from the code alone: where the work stands, what comes next, and how the operator and the agent work together. Update it whenever one of those changes, and keep it free of private target names, task text, findings and secrets, as for STATUS.
 
-## Where the work stands (2026-10-21)
+## Where the work stands (2026-10-24)
 
 - **Phase:** P2, Team-grade. G0 and G1 are signed (`gates/G0.md`, `gates/G1.md`).
 - **Phase 2 core:** every core item, P2-01 to P2-09, is done.
@@ -18,13 +18,13 @@ A new Claude Code session picks up the factory's development from here. Read thi
   - The operator decided to move the pin before the freeze.
 - **`v0.18.0` (#61):** keeps mods out of sessions' config directories and turns the `AGENTS.md` loader off.
 - **P2-14 (`v0.19.0`, #63):** the plugin's `factory-review` workflow, for interactive use only.
-- **Parallel items:** P2-13 is done once its second PR merges (next section); P2-10 is todo. P2-12 stays stopped until a written egress policy exists (Appendix A).
+- **Parallel items:** P2-13 is done (next section). P2-10 is in progress (the section after it). P2-12 stays stopped until a written egress policy exists (Appendix A).
 - **P2-11 (done, 2026-10-22):** four PRs, each a release, following [ADR 0003](adr/0003-onboarding-retention-and-purge.md), the operator's decisions of 2026-10-22: purge by record with tombstones, and the App added and removed by hand, verified by factoryctl.
   - #65 (`v0.20.0`): deleting by record (store schema 4, purge journals, the replica).
   - #66 (`v0.21.0`): retention per profile, `prune`, and old-bundle migration tests.
   - #67 (`v0.22.0`): `onboard`, and the fix for the kill-point suite's "fetch failed" flake (the stub GitHub's keep-alive).
   - #68 (`v0.23.0`): `offboard` and the round-trip test (the done-when). The round trip ran offline only; a live one is for P3-08.
-- **The pin move** to 2.1.306 / 0.3.306 is built on `claude/epic-cannon-akxfwy` and opens on Oct 28, when pnpm's age gate accepts it. P2-11 took `v0.20.0` to `v0.23.0` and P2-13 `v0.24.0` and `v0.25.0`, so the pin move merges `main` first and takes the next free version (`v0.26.0` unless another release comes first).
+- **The pin move** to 2.1.306 / 0.3.306 is built on `claude/epic-cannon-akxfwy` and opens on Oct 28, when pnpm's age gate accepts it. P2-11 took `v0.20.0` to `v0.23.0` and P2-13 `v0.24.0` and `v0.25.0`, and P2-10's first PR `v0.26.0`, so the pin move merges `main` first and takes the next free version (`v0.27.0` unless another release comes first).
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
 
 ## P2-13, the code graph in shadow mode (2026-10-23)
@@ -36,18 +36,28 @@ Two PRs, each a release, on the branch `claude/epic-cannon-akxfwy-p2-13`, follow
   - the pipeline commits it as `graph.json` per round and `drift/<k>/graph.json` per re-verification;
   - `verify-tools` checks PyPI wheels.
   - CI's `gates` job on the full image confirmed the integration suite's expected file edges.
-- **PR 2, #70 (`v0.25.0`):** `controller/src/graph/blast.ts`. The hops from the changed files back to the nearest R3 or Restricted path feed `graphHopsToProtected`. Only a fresh graph counts. The rule stays in shadow mode, so no tier moves.
+- **PR 2, #70 (`v0.25.0`, merged):** `controller/src/graph/blast.ts`. The hops from the changed files back to the nearest R3 or Restricted path feed `graphHopsToProtected`. Only a fresh graph counts. The rule stays in shadow mode, so no tier moves.
   - `blast.json` per round and per re-verification is the per-task log the done-when asks for.
   - `report T` and `report --week` show it.
   - The operator guide's "Code graph (shadow)" section describes it.
-- **After PR 2 merges:** P2-13 is done. The graph's enforcement waits for P3-05's A/B, after G2.
+- **P2-13 is done.** The graph's enforcement waits for P3-05's A/B, after G2.
+
+## P2-10, the dashboard (2026-10-24)
+
+Two PRs, each a release, on the same branch, restarted from `main` after each merge.
+
+- **PR 1 (`v0.26.0`): the read-only dashboard.** `factoryctl dashboard` serves the board, the evidence drawer and a live stream on loopback (`controller/src/dashboard/`).
+  - **The done-when:** it reads `factory.db` through `EventStore.openReadOnly`, whose `EventReader` type has no write method and on which SQLite refuses writes. The server answers `GET` only.
+  - **The stream's position** is store-wide (`EventStore.cursor()`, the events table's row id): `seq` counts per task.
+  - **Exposure:** a token new for each launch, in the address's fragment; `refusal()` from `serve/api.ts` checks the token, `Host` and `Origin`; a strict CSP; the page writes text with `textContent` only.
+- **PR 2 (`v0.27.0` unless the pin move comes first): the command bus.** The drawer's commands go to `serve`'s API, which validates them, so the dashboard still never writes the store. `serve`'s API has pause, resume, drain and a task's pause, resume and cancel today. The rest of §7 E2's list (approve or reject with a reason, priority, budget extension, raising the tier) needs `serve` routes first; whatever cannot be built safely before the freeze gets a deviation row. Log each drawer opening for the approval-fatigue metric (§6).
 
 ## Waiting on the operator
 
 Every release up to `v0.19.0` is tagged, and `v0.19.0` is installed and pinned (STATUS's Factory release row).
 
 - **Tagging is no longer the operator's step:** the `release` workflow tags and publishes a version when its bump merges (operator guide, Releases).
-- **The backfill:** `v0.20.0` to `v0.25.0` were merged before that and are tagged by running the workflow by hand with each merge commit: `e4d5061`, `d0a2fbe`, `130d3bc`, `6bd6fa3`, `ff63c89` and `cf86bb7`.
+- **The backfill is done:** `v0.20.0` to `v0.25.0`, merged before the workflow existed, were tagged and published by running it by hand with each merge commit.
 - **Installing stays with the operator:** `factoryctl release install`, `release use` and `factoryctl doctor`, for the releases they will run (the latest one, not each in turn). Record it in STATUS's Factory release row.
 - **The operator's Mac:** a local session (the Claude Desktop app, or `claude remote-control` in their checkout) can run what needs their machine: `doctor`, the live checks below, T-0020 and the mirror reset. The operator-only commands still refuse inside any Claude Code session.
 
@@ -95,13 +105,25 @@ Every release up to `v0.19.0` is tagged, and `v0.19.0` is installed and pinned (
 ## How the operator and the agent work
 
 - **The operator** is the repository owner. They:
-  - merge every PR, tag every release and run every live task;
+  - merge every PR that changes a guardrail (below), and run every live task;
   - run the operator-only commands, which refuse inside Claude Code: `release install` and `use`, `approve`, `unhalt`, `reject`, `takeover`, `replica init`, `restore`, `prune`, `onboard`, `offboard`, and `drill kill-switch` and `serve-kill`.
 - **Commands for the operator:** step by step. Their shell is zsh, where `#` starts no comment, so a command block carries no inline comments. Never ask them to paste or echo a token.
 - **One PR at a time, from the session's branch:**
   1. Commit and push, open the PR, then push a STATUS commit with the PR's number. The cancelled CI run on the superseded commit is expected.
   2. Watch the PR until it merges.
   3. After the merge, restart the branch from `main`.
+- **Who merges (the operator's decision of 2026-10-24):**
+  - **The agent merges** a PR once CI is green on its latest commit, the branch is up to date with `main`, no review thread is open, and `pnpm check` passed locally.
+  - **The operator merges** a PR that changes a guardrail:
+    - the hooks or the guard (`plugin/hooks/`);
+    - `policies/`;
+    - the runner's managed settings, seccomp profile or egress proxy;
+    - the credential gateway;
+    - `.github/workflows/`;
+    - the governance and verdict code;
+    - the Claude Code or Agent SDK pin.
+
+    The agent gets such a PR green, then tells the operator in one line what it changes in the guardrails.
 - **Every core PR** bumps the version in `plugin/.claude-plugin/plugin.json`, both profiles' `factory_release`, and a dated CHANGELOG section with its compare link. `pnpm check:release` checks them.
 - **STATUS:** IDs, PR links, release tags, commit SHAs taken from git (never typed from memory) and aggregates. A plan change goes through an ADR; a fallback or deviation gets a row in the deviations log.
 - **Before a push:** `pnpm check`, and `pnpm test:gates` for anything near the pipeline, gates or fixtures. Run the heavy suites one at a time: run alongside one another, they starve the kill-point suite's timing.

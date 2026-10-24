@@ -4,6 +4,18 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-10-24
+
+### Added
+
+- **The dashboard (P2-10, PR 1 of 2).** `factoryctl dashboard [--port N]` serves, on `127.0.0.1:7318`:
+  - **the board:** a column for each group of durable states, with each task's state, gate, tier, pause and cost;
+  - **the evidence drawer:** the spec and its acceptance criteria, the tier and the rules that set it, the base and candidate commits, each stage's model, cost and cap against the tier's budget, gates, findings, the verdict, human decisions, the code graph's shadow decisions and the timeline;
+  - **a live stream** of events, which refreshes the board and an open drawer.
+- **Reads only.** The dashboard opens `factory.db` with a read-only connection (`EventStore.openReadOnly`), whose type has no write method and on which SQLite refuses every write. Its server answers `GET` only. This is P2-10's done-when; the command bus through `serve` is PR 2.
+- **Exposure:** loopback only, with a token new for each launch, given in the address's fragment. Data requests need the token and the bound `Host`, and a foreign `Origin` is refused. The page loads nothing from elsewhere and writes target text as text, never as markup.
+- `EventStore.cursor()` and `eventsAfter()`: a store-wide position (the events table's row id), for a reader that follows every task at once.
+
 ### Changed
 
 - **Releases tag themselves.** The `release` workflow runs on each push to `main` that changes `plugin.json`'s version. It checks the version against the changelog, waits for `ci` on the merge commit, then tags it and publishes the release. Run by hand with a commit on `main`, it tags a version whose merge was missed. A tag the operator pushes is still published as before.
@@ -508,7 +520,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.22.0...v0.23.0

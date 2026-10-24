@@ -120,6 +120,9 @@ export class StaleEpochError extends EventError {}
 /** A lease another live writer holds. */
 export class LeaseHeldError extends EventError {}
 
+/** What a reader of the store may call: no write path. */
+export type EventReader = Pick<EventStore, "events" | "allEvents" | "taskIds" | "cursor" | "eventsAfter" | "lease" | "leases" | "close">;
+
 export class EventStore {
   readonly #db: DatabaseSync;
   readonly #validator: Validator;
@@ -152,6 +155,22 @@ export class EventStore {
       db.exec("ROLLBACK");
       db.close();
       throw e;
+    }
+    return new EventStore(db, opts.validator ?? createValidator(), opts.now ?? (() => new Date()));
+  }
+
+  /**
+   * The store for reading only (the dashboard, P2-10): SQLite refuses every write on this
+   * connection, and the type has no write method. It migrates nothing, so the store must already
+   * be at this factoryctl's schema.
+   */
+  static openReadOnly(path: string, opts: { validator?: Validator; now?: () => Date } = {}): EventReader {
+    const db = new DatabaseSync(path, { readOnly: true });
+    db.exec("PRAGMA busy_timeout = 5000;");
+    const row = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string } | undefined;
+    if (Number(row?.value ?? 0) !== MIGRATIONS.length) {
+      db.close();
+      throw new EventError(`factory.db is at schema ${row?.value ?? "0"}; this factoryctl reads ${String(MIGRATIONS.length)}`);
     }
     return new EventStore(db, opts.validator ?? createValidator(), opts.now ?? (() => new Date()));
   }
@@ -305,6 +324,18 @@ export class EventStore {
   allEvents(): FactoryEvent[] {
     const rows = this.#db.prepare("SELECT body FROM events ORDER BY task_id, seq").all() as { body: string }[];
     return rows.map((r) => JSON.parse(r.body) as FactoryEvent);
+  }
+
+  /** The store-wide position of the newest event (its row id, never reused); 0 for an empty store. */
+  cursor(): number {
+    const row = this.#db.prepare("SELECT MAX(id) AS id FROM events").get() as { id: number | null };
+    return row.id ?? 0;
+  }
+
+  /** Events appended after a store-wide position, oldest first, each with its own position. */
+  eventsAfter(cursor: number, limit: number): { cursor: number; event: FactoryEvent }[] {
+    const rows = this.#db.prepare("SELECT id, body FROM events WHERE id > ? ORDER BY id LIMIT ?").all(cursor, limit) as { id: number; body: string }[];
+    return rows.map((r) => ({ cursor: r.id, event: JSON.parse(r.body) as FactoryEvent }));
   }
 
   taskIds(): string[] {
