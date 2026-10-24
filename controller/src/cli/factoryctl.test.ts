@@ -1,7 +1,7 @@
 // factoryctl as an operator runs it: a separate process, its own FACTORY_HOME, and --replay
 // in place of a model. The run to a merge gate with real container gates is in
 // factoryctl.int.test.ts.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 import { REPO_ROOT } from "../policy/load.ts";
 import { isoWeek, WEEK_HEADER } from "../report/report.ts";
+import { EventStore } from "../store/events.ts";
 import { answer, assistant, result, toolUse } from "../session/transcript.ts";
 
 const CLI = join(REPO_ROOT, "controller/src/cli/factoryctl.ts");
@@ -318,5 +319,35 @@ appendFileSync("src/empty.ts", "// reviewed by hand\\n");
     const remote = factoryctl(["run", "T-0001"], { FACTORY_OTEL_ENDPOINT: "https://otel.example.com" });
     expect(remote.status).toBe(2);
     expect(remote.stderr).toContain("FACTORY_OTEL_ENDPOINT must be a collector");
+  });
+
+  it("dashboard refuses a home with no store, and otherwise serves the board until stopped", async () => {
+    const fresh = join(root, "dashboard-home");
+    const none = factoryctl(["dashboard"], { FACTORY_HOME: fresh });
+    expect(none.status).toBe(2);
+    expect(none.stderr).toContain("no event store");
+    mkdirSync(fresh, { recursive: true });
+    EventStore.open(join(fresh, "factory.db")).close();
+    const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", CLI, "dashboard", "--port", "0"], { env: { ...env, FACTORY_HOME: fresh } });
+    let stdout = "";
+    const url = await new Promise<string>((resolve, reject) => {
+      child.stdout.on("data", (c: Buffer) => {
+        stdout += c.toString();
+        const m = /dashboard: (http:\/\/127\.0\.0\.1:[0-9]+\/#token=\S+)/.exec(stdout);
+        if (m?.[1] !== undefined) resolve(m[1]);
+      });
+      child.once("exit", (code) => {
+        reject(new Error(`dashboard exited ${String(code)}`));
+      });
+    });
+    const u = new URL(url);
+    const token = u.hash.slice("#token=".length);
+    const r = await fetch(new URL("/api/board", u), { headers: { authorization: `Bearer ${token}` } });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { cursor: number }).cursor).toBe(0);
+    expect((await fetch(new URL("/api/board", u))).status).toBe(401);
+    const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+    child.kill("SIGINT");
+    expect(await exited).toBe(0);
   });
 });

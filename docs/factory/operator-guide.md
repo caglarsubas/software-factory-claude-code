@@ -280,6 +280,16 @@ Every run takes its task's lease first (P2-03), and everything it writes carries
   - Every request also needs a `Host` header naming the bound address, and its own `Origin` if it sends one.
   - Every write needs a JSON body.
 
+### Dashboard
+
+From `v0.26.0`, `factoryctl dashboard [--port N]` serves the board, each task's evidence and a live stream to your browser (P2-10). It prints an address on `127.0.0.1:7318` with a token in it; open that address. Ctrl-C stops it.
+
+- **Board:** a column for each group of states: received, building, reviewing, needs human, merging, merged and ended. Each card shows the state and gate, the tier, `paused`, and the cost so far. The most recently changed card comes first.
+- **Evidence drawer:** click a card for the spec and its acceptance criteria, the tier and the rules that set it, the base and candidate commits, each stage's model, cost and cap against the tier's budget, the gate results, the reviewers' findings, the verdict, the human decisions, the code graph's shadow decisions and the event timeline.
+- **Live:** the board and an open drawer refresh within about a second of each event.
+- **Reads only:** it opens `factory.db` read-only, and it has no route that writes. It runs beside `serve` or a run, and during a halt. Commands come in its next release; until then, use the CLI.
+- **Exposure:** loopback only. The token is new for each launch and reaches the page in the address's fragment, which the browser never sends to a server. Every data request needs that token and a `Host` naming the bound address, and any `Origin` it sends must be its own. The page loads nothing from elsewhere, and it shows task titles, findings and other target text as text, never as markup.
+
 ## Approve
 
 - **Spec gate:** read `spec.md` and `spec.yaml`, then approve and continue:

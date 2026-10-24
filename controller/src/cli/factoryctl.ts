@@ -24,6 +24,7 @@
 //   factoryctl gate G0|G1|G2 --begin [--checkout DIR]... | gate G0|G1|G2 [--repo OWNER/NAME]
 //   factoryctl drill kill-switch | restore | serve-kill
 //   factoryctl prune [--dry-run]             expire finished tasks' evidence past retention; finish a stopped purge (ADR 0003)
+//   factoryctl dashboard [--port N]          the board, the evidence drawer and a live stream, read-only, on loopback
 //   factoryctl doctor
 //
 // FACTORY_HOME holds run state (default ~/.factory); FACTORY_RELEASE overrides the release the
@@ -32,7 +33,7 @@
 // instead of calling a model: zero tokens; its replay.json holds test-only injection
 // (session/injection.ts).
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -60,6 +61,7 @@ import { footprintRulesets } from "../governance/footprint.ts";
 import { beginGate, evaluateG0, writeEvidence } from "../gate/g0.ts";
 import { evaluateG1 } from "../gate/g1.ts";
 import { evaluateG2 } from "../gate/g2.ts";
+import { DEFAULT_DASHBOARD_PORT, startDashboard } from "../dashboard/server.ts";
 import { CANARY_ENV, plantCanary, readCanary } from "../gate/canary.ts";
 import { appConfig, AppConfigError, appConfigPath, appInfo, appTokens, type AppTokens } from "../github/app.ts";
 import { githubApiUrl, GitHubError, isLoopbackApi, restCommitChecks, restGateReads, restGitHub, type GitHub } from "../github/client.ts";
@@ -462,6 +464,31 @@ async function main(): Promise<void> {
     haltLog(home, { command: "halt", reason });
     for (const l of lines) out(l);
     out(`lift with: factoryctl unhalt --reason "…"`);
+    return;
+  }
+
+  // The dashboard (P2-10) reads only: it opens the store read-only, never through the writer below.
+  if (command === "dashboard") {
+    if (!existsSync(home.db)) fail(`no event store at ${home.db} yet: create a task first`);
+    const port = Number(values.port ?? String(DEFAULT_DASHBOARD_PORT));
+    if (!Number.isInteger(port) || port < 0 || port > 65535) fail("--port takes a port number");
+    const release = loadRelease(createValidator());
+    const reader = EventStore.openReadOnly(home.db);
+    let d;
+    try {
+      d = await startDashboard({ home, store: reader, budgets: release.budgets, port, log: (l) => process.stderr.write(`factoryctl: ${l}\n`) });
+    } catch (e) {
+      reader.close();
+      fail(e instanceof Error ? e.message : String(e));
+    }
+    out(`dashboard: ${d.url}`);
+    out("open that address in your browser (the token is in it); Ctrl-C stops the dashboard");
+    await new Promise<void>((resolve) => {
+      process.once("SIGINT", resolve);
+      process.once("SIGTERM", resolve);
+    });
+    await d.close();
+    reader.close();
     return;
   }
 

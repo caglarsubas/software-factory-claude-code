@@ -2,7 +2,7 @@
 # targets keep their profile in the private store, never in this repository.
 schema_version: 1
 target: {repo: owner/name, default_branch: main, visibility: private}
-factory_release: v0.25.0
+factory_release: v0.26.0
 commands: {setup: "pnpm install --frozen-lockfile", typecheck: "pnpm tsc --noEmit", lint: "pnpm lint", test: "pnpm test"}
 gates: {adapters: [typescript], sast_rules: [default, sink_added]}
 protected_paths:
