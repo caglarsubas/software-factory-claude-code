@@ -46,7 +46,7 @@ Two PRs, each a release, on the branch `claude/epic-cannon-akxfwy-p2-13`, follow
 
 Two PRs, each a release, on the same branch, restarted from `main` after each merge.
 
-- **PR 1 (`v0.26.0`): the read-only dashboard.** `factoryctl dashboard` serves the board, the evidence drawer and a live stream on loopback (`controller/src/dashboard/`).
+- **PR 1, #72 (`v0.26.0`): the read-only dashboard.** `factoryctl dashboard` serves the board, the evidence drawer and a live stream on loopback (`controller/src/dashboard/`).
   - **The done-when:** it reads `factory.db` through `EventStore.openReadOnly`, whose `EventReader` type has no write method and on which SQLite refuses writes. The server answers `GET` only.
   - **The stream's position** is store-wide (`EventStore.cursor()`, the events table's row id): `seq` counts per task.
   - **Exposure:** a token new for each launch, in the address's fragment; `refusal()` from `serve/api.ts` checks the token, `Host` and `Origin`; a strict CSP; the page writes text with `textContent` only.
