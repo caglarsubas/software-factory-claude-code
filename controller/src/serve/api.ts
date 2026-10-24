@@ -11,11 +11,14 @@
 // network allowlist names registries only, and the token file is denied to every session.
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
+import { isPriority, type Priority } from "../task/lifecycle.ts";
 
 export interface ApiCommand {
-  command: "pause" | "resume" | "drain" | "task-pause" | "task-resume" | "cancel";
+  command: "pause" | "resume" | "drain" | "task-pause" | "task-resume" | "cancel" | "priority";
   task?: string;
   reason?: string;
+  /** For "priority": the task's new priority (P2-10). */
+  priority?: Priority;
 }
 
 export interface ApiOptions {
@@ -29,7 +32,8 @@ export interface ApiOptions {
 const MAX_BODY = 16 * 1024;
 const TASK = /^T-[0-9]{4,}$/;
 const ROUTES: Record<string, ApiCommand["command"]> = { "/v1/pause": "pause", "/v1/resume": "resume", "/v1/drain": "drain" };
-const TASK_ROUTE = /^\/v1\/tasks\/(T-[0-9]{4,})\/(pause|resume|cancel)$/;
+const TASK_ROUTE = /^\/v1\/tasks\/(T-[0-9]{4,})\/(pause|resume|cancel|priority)$/;
+const TASK_COMMANDS: Record<string, ApiCommand["command"]> = { pause: "task-pause", resume: "task-resume", cancel: "cancel", priority: "priority" };
 
 function send(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" });
@@ -84,9 +88,9 @@ export function apiHandler(o: ApiOptions): RequestListener {
           send(res, 404, { error: "not found" });
           return;
         }
-        let parsed: { reason?: unknown };
+        let parsed: { reason?: unknown; priority?: unknown };
         try {
-          parsed = body === "" ? {} : (JSON.parse(body) as { reason?: unknown });
+          parsed = body === "" ? {} : (JSON.parse(body) as { reason?: unknown; priority?: unknown });
         } catch {
           send(res, 400, { error: "invalid JSON" });
           return;
@@ -96,8 +100,14 @@ export function apiHandler(o: ApiOptions): RequestListener {
         const task = TASK_ROUTE.exec(path);
         let c: ApiCommand;
         if (serveWide !== undefined) c = { command: serveWide, ...(reason === undefined ? {} : { reason }) };
-        else if (task !== null && TASK.test(task[1] ?? "")) c = { command: task[2] === "cancel" ? "cancel" : task[2] === "pause" ? "task-pause" : "task-resume", task: task[1] ?? "", ...(reason === undefined ? {} : { reason }) };
-        else {
+        else if (task !== null && TASK.test(task[1] ?? "")) {
+          const command = TASK_COMMANDS[task[2] ?? ""] ?? "task-pause";
+          if (command === "priority" && !isPriority(parsed.priority)) {
+            send(res, 400, { error: "priority is low, normal or high" });
+            return;
+          }
+          c = { command, task: task[1] ?? "", ...(reason === undefined ? {} : { reason }), ...(command === "priority" && isPriority(parsed.priority) ? { priority: parsed.priority } : {}) };
+        } else {
           send(res, 404, { error: "not found" });
           return;
         }

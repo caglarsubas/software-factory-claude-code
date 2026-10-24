@@ -18,7 +18,7 @@ import { cacheVolumeFor } from "../../../gates/src/run.ts";
 import { activeMs, budgetTier, calibrate, completedRuns, meteredSpend, monthOf, monthSpend, sessionCap, taskSpend } from "../budget/budget.ts";
 import { policyDigest, writeManifest } from "../bundle/manifest.ts";
 import { storeTree } from "../durable/objects.ts";
-import { writeAtomic } from "../fsutil.ts";
+import { sha256, writeAtomic } from "../fsutil.ts";
 import { changedFiles, commitAll, createTaskClone, diffPatch, fetchBundle, git, GitError, head, headBundle, mergeInto, mirrorPath, resetClone, resolveCommit, syncMirror, type GitAuth } from "../git/repo.ts";
 import type { GitHub } from "../github/client.ts";
 import { writeTokenFile, type Gateway } from "../gateway/gateway.ts";
@@ -28,7 +28,8 @@ import { describeHalt, readHalt } from "../halt.ts";
 import { runDir, worktreeDir, type Home } from "../home.ts";
 import { evaluate, TIERS, type ChangedFile, type Decision, type DiffFacts, type RiskPolicy, type Tier } from "../policy/engine.ts";
 import { scanInjection, suspect, type InjectionScan } from "../policy/injection.ts";
-import { loadRiskPolicy } from "../policy/load.ts";
+import { loadRiskPolicy, protectedGlobs as riskGuardedGlobs } from "../policy/load.ts";
+import { blastRecord, graphFacts, type GraphFacts } from "../graph/blast.ts";
 import type { BudgetTier, Release } from "../release.ts";
 import type { Validator } from "../schemas/validate.ts";
 import { ForeignModsError, prepareSession, type StageSpec } from "../session/options.ts";
@@ -225,10 +226,17 @@ export async function runTask(inputs: PipelineInputs): Promise<State> {
 
 async function runTaskCore(inputs: PipelineInputs): Promise<State> {
   const { home, store, validator, release, deps, taskId } = inputs;
+  // First, before anything a v0.1.x task's run directory or profile may no longer hold.
+  const created = store.events(taskId).find((e) => e.type === "task_created");
+  if (created?.payload["commit_protocol"] !== 1 && store.events(taskId).some((e) => e.type === "stage_started")) {
+    throw new ProtocolError(`${taskId} was started by a factoryctl without the commit protocol (v0.1.x), which cannot open this store since v0.20.0: cancel it (factoryctl cancel ${taskId}) and create a new task`);
+  }
   const task: Task = readTask(home, taskId);
   const profilePath = task.target.profile;
   const profile: Profile = loadProfile(profilePath, validator);
   const risk: RiskPolicy = loadRiskPolicy(release.root, profilePath);
+  // The paths the code graph's blast radius measures against (P2-13): every R3 and Restricted glob.
+  const guarded = ((g) => [...new Set([...g.r3, ...g.restricted])])(riskGuardedGlobs(risk));
   const dir = runDir(home, taskId);
   const worktree = worktreeDir(home, taskId);
   const bundleDir = join(dir, "bundle");
@@ -237,13 +245,9 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     mkdirSync(d, { recursive: true, mode: 0o700 });
     return d;
   };
-  const created = store.events(taskId).find((e) => e.type === "task_created");
   const remote = typeof created?.payload["remote"] === "string" ? created.payload["remote"] : "";
   const protectedGlobs = [...profile.protected_paths.map((p) => p.glob), ...profile.restricted.map((r) => r.glob)];
   const text: TaskText = { title: task.title, body: readFileSync(join(dir, "task.md"), "utf8"), trust: task.text_trust };
-  if (created?.payload["commit_protocol"] !== 1 && store.events(taskId).some((e) => e.type === "stage_started")) {
-    throw new ProtocolError(`${taskId} was started by a factoryctl without the commit protocol (v0.1.x); finish it on that release (factoryctl release use v0.1.2) or create a new task`);
-  }
 
   // --- small helpers -------------------------------------------------------------------
   const now = (): Date => deps.now?.() ?? new Date();
@@ -626,6 +630,23 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     return [out(roundPath("build.json", n), { base_commit: c.base_commit, round: n, start_commit: start, candidate_commit: built }, null), { path: roundPath("candidate.bundle", n), content: headBundle(worktree, c.base_commit) }];
   };
 
+  /** Where the gate runner keeps a candidate's code graph (P2-13): a fresh file for each gate step. */
+  const graphFile = (label: string): string => {
+    const file = join(workDir(label), "graph.json");
+    rmSync(file, { force: true });
+    return file;
+  };
+  /**
+   * The code graph the gate runner built and kept, committed beside its gates.json; nothing when
+   * it was not built (an error, replayed gates) or the file is not the one its record names.
+   */
+  const graphOutput = (result: GatesResult, file: string, path: string): Output[] => {
+    if (result.graph?.status !== "built" || !existsSync(file)) return [];
+    const content = readFileSync(file);
+    if (result.graph.sha256 !== undefined && sha256(content) !== `sha256:${result.graph.sha256}`) return [];
+    return [{ path, content }];
+  };
+
   const gates = (n: number) => async (): Promise<Output[]> => {
     moveTo("VERIFYING", { round: n });
     const c = checkoutInfo();
@@ -634,8 +655,9 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     emit("stage_started", { stage: "gates", label, round: n });
     probe(`${label}:running`);
     const started = Date.now();
+    const graph = graphFile(label);
     const result = await deps.runGates({
-      worktree, base: c.base_commit, taskId, profile, image: deps.gateImage(), cacheVolume: cacheVolumeFor(task.target.repo), osvVolume: "sf-gates-osv",
+      worktree, base: c.base_commit, taskId, profile, image: deps.gateImage(), cacheVolume: cacheVolumeFor(task.target.repo), osvVolume: "sf-gates-osv", graphOut: graph,
       ...(deps.gatesFetchNetwork === undefined ? {} : { fetchNetwork: deps.gatesFetchNetwork }),
       ...(deps.gatesCaFile === undefined ? {} : { caFile: deps.gatesCaFile }),
       log: (l) => {
@@ -644,7 +666,7 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     }, label);
     const artifact = out(roundPath("gates.json", n), result, "gates.schema.json");
     emit("stage_completed", { stage: "gates", label, ok: result.passed, failing: result.gates.filter((g) => g.status !== "pass").map((g) => g.name), duration_ms: Date.now() - started, round: n });
-    return [artifact];
+    return [artifact, ...graphOutput(result, graph, roundPath("graph.json", n))];
   };
 
   // An infrastructure error is not the builder's to fix (D5): no remediation round for it.
@@ -713,6 +735,21 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     });
   };
 
+  const graphCache = new Map<string, GraphFacts>();
+  /** Round n's code graph (P2-13): its committed graph.json against the candidate judged; only a fresh one counts hops. */
+  const roundGraph = (n: number): GraphFacts => {
+    const commit = candidate(n);
+    const key = `${String(n)}:${commit}`;
+    let f = graphCache.get(key);
+    if (f === undefined) {
+      const g = readJson(roundPath("gates.json", n)) as GatesResult;
+      const path = join(dir, roundPath("graph.json", n));
+      f = graphFacts({ record: g.graph, content: existsSync(path) ? readFileSync(path) : null, commit, changed: changedFiles(worktree, checkoutInfo().base_commit, commit), guarded });
+      graphCache.set(key, f);
+    }
+    return f;
+  };
+
   /** Round n's facts for the policy engine: the candidate's diff and its gate signals, all committed. */
   const diffFacts = (n: number, injection: InjectionScan = injectionOf(n)): DiffFacts => {
     const g = readJson(roundPath("gates.json", n)) as GatesResult;
@@ -724,7 +761,7 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
       secretMaterial: g.signals.secret_material,
       classificationUncertain: t.uncertain,
       operationRequested: s.operation_requested === true,
-      graphHopsToProtected: null,
+      graphHopsToProtected: roundGraph(n).hops,
       proposedTier: t.proposed_tier,
       injectionSuspect: suspect(injection),
     };
@@ -823,7 +860,8 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
   const policy = (n: number) => (): Promise<Output[]> => {
     const injection = injectionOf(n);
     const decision = evaluate(diffFacts(n, injection), risk);
-    return Promise.resolve([out("policy.json", decision, null), out("injection.json", injection, null)]);
+    const blast = blastRecord({ taskId, commit: candidate(n), round: n, drift: null, facts: roundGraph(n), decision, risk });
+    return Promise.resolve([out("policy.json", decision, null), out("injection.json", injection, null), out(roundPath("blast.json", n), blast, "blast.schema.json")]);
   };
 
   const approve = (n: number) => async (): Promise<Output[]> => {
@@ -1099,28 +1137,34 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
 
     // The gates and the policy again, on the merge, against the new base.
     probe(`${label}:gates`);
+    const graph = graphFile(`gates-${label}`);
     const g = await deps.runGates({
-      worktree, base: baseNow, taskId, profile, image: deps.gateImage(), cacheVolume: cacheVolumeFor(task.target.repo), osvVolume: "sf-gates-osv",
+      worktree, base: baseNow, taskId, profile, image: deps.gateImage(), cacheVolume: cacheVolumeFor(task.target.repo), osvVolume: "sf-gates-osv", graphOut: graph,
       ...(deps.gatesFetchNetwork === undefined ? {} : { fetchNetwork: deps.gatesFetchNetwork }),
       ...(deps.gatesCaFile === undefined ? {} : { caFile: deps.gatesCaFile }),
       log: (l) => {
         deps.log(`${taskId}: ${label} gates: ${l}`);
       },
     }, `gates-${label}`);
-    const gatesOut = out(driftPath("gates.json", k), g, "gates.schema.json");
-    if (!g.passed) return human(`the gates did not pass on the merge with the new base: ${g.gates.filter((x) => x.status !== "pass").map((x) => x.name).join(", ")}`, [gatesOut]);
+    // The merge's code graph goes with its gates.json in every record that keeps them.
+    const gatesOut = [out(driftPath("gates.json", k), g, "gates.schema.json"), ...graphOutput(g, graph, driftPath("graph.json", k))];
+    if (!g.passed) return human(`the gates did not pass on the merge with the new base: ${g.gates.filter((x) => x.status !== "pass").map((x) => x.name).join(", ")}`, gatesOut);
     const t = readJson("triage.json") as Triage;
     const sp = parse(readFileSync(join(dir, "spec.yaml"), "utf8")) as Spec;
+    const files = changedFiles(worktree, baseNow, mergedHead);
+    const kept = gatesOut.find((o) => o.path === driftPath("graph.json", k))?.content;
+    const graphNow = graphFacts({ record: g.graph, content: kept === undefined ? null : Buffer.from(kept), commit: mergedHead, changed: files, guarded });
     const after = evaluate({
-      files: changedFiles(worktree, baseNow, mergedHead), sinksAdded: g.signals.sink_added, secretMaterial: g.signals.secret_material,
-      classificationUncertain: t.uncertain, operationRequested: sp.operation_requested === true, graphHopsToProtected: null, proposedTier: t.proposed_tier,
+      files, sinksAdded: g.signals.sink_added, secretMaterial: g.signals.secret_material,
+      classificationUncertain: t.uncertain, operationRequested: sp.operation_requested === true, graphHopsToProtected: graphNow.hops, proposedTier: t.proposed_tier,
       injectionSuspect: has("injection.json") && suspect(readJson("injection.json") as InjectionScan),
     }, risk);
     const policyOut = out(driftPath("policy.json", k), after, null);
-    if (TIERS.indexOf(after.tier) > TIERS.indexOf(decision.tier)) return human(`the policy now puts the change at ${after.tier}, above the approved ${decision.tier}`, [gatesOut, policyOut], after.tier);
+    const blastOut = out(driftPath("blast.json", k), blastRecord({ taskId, commit: mergedHead, round: null, drift: k, facts: graphNow, decision: after, risk }), "blast.schema.json");
+    if (TIERS.indexOf(after.tier) > TIERS.indexOf(decision.tier)) return human(`the policy now puts the change at ${after.tier}, above the approved ${decision.tier}`, [...gatesOut, policyOut, blastOut], after.tier);
 
     record({ candidate_commit: mergedHead, outcome: "reverified", reason: `the gates and the policy pass on ${baseNow.slice(0, 12)}; the approver's ${approver.decision} carries over`, tier_after: after.tier }, [
-      gatesOut, policyOut, { path: driftPath("candidate.bundle", k), content: headBundle(worktree, baseNow) },
+      ...gatesOut, policyOut, blastOut, { path: driftPath("candidate.bundle", k), content: headBundle(worktree, baseNow) },
     ]);
     return publishDrift(k);
   }
@@ -1251,7 +1295,7 @@ async function runTaskCore(inputs: PipelineInputs): Promise<State> {
     }
     const n = round;
     const reviews = [...reviewPaths(n), roundPath("refutations.json", n)];
-    await runStep({ label: "policy", stage: "policy", inputs: [roundPath("build.json", n), roundPath("gates.json", n), "triage.json", "spec.yaml"], run: policy(n), exit: noExit });
+    await runStep({ label: "policy", stage: "policy", inputs: [roundPath("build.json", n), roundPath("gates.json", n), roundPath("graph.json", n), "triage.json", "spec.yaml"], run: policy(n), exit: noExit });
     await runStep({ label: "approve", stage: "approve", inputs: ["policy.json", ...reviews], run: approve(n), exit: approveExit(n) });
     await runStep({ label: "summarize", stage: "summarize", inputs: ["verdict.json"], run: summarize(n), exit: noExit });
     await runStep({ label: "publish", stage: "publish", inputs: ["summary.json", "policy.json", roundPath("build.json", n)], run: publish(n), exit: publishExit });

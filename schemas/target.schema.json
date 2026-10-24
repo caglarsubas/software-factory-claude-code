@@ -1,0 +1,438 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/caglarsubas/software-factory-claude-code/main/schemas/target.schema.json",
+  "title": "Target",
+  "description": "A target's onboarding record in the private store, $FACTORY_HOME/targets/<owner>__<name>/target.json (P2-11, ADR 0003).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "$ref": "defs.schema.json#/$defs/schemaVersion"
+    },
+    "repo": {
+      "$ref": "defs.schema.json#/$defs/repo"
+    },
+    "remote": {
+      "description": "Where the factory fetches and pushes the target: its GitHub remote, or a local path in tests.",
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "default_branch": {
+      "$ref": "defs.schema.json#/$defs/text"
+    },
+    "state": {
+      "description": "drafted: inventory and profile written, waiting for the operator (STOP). confirmed: the footprint commit is built. proposed: its PR is open. merged: the operator merged it. active: rulesets applied and the App's access checked. offboarding: offboard has started; the target takes no new task, and each step is recorded under offboard.",
+      "enum": [
+        "drafted",
+        "confirmed",
+        "proposed",
+        "merged",
+        "active",
+        "offboarding"
+      ]
+    },
+    "created_at": {
+      "$ref": "defs.schema.json#/$defs/timestamp"
+    },
+    "updated_at": {
+      "$ref": "defs.schema.json#/$defs/timestamp"
+    },
+    "admission": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        },
+        "head": {
+          "$ref": "defs.schema.json#/$defs/gitSha"
+        },
+        "profile_digest": {
+          "$ref": "defs.schema.json#/$defs/digest"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "$ref": "defs.schema.json#/$defs/text"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "ok",
+              "detail"
+            ]
+          }
+        }
+      },
+      "required": [
+        "at",
+        "head",
+        "profile_digest",
+        "passed",
+        "checks"
+      ]
+    },
+    "confirmed": {
+      "description": "What the operator confirmed, and the change built from it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        },
+        "by": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "profile_digest": {
+          "$ref": "defs.schema.json#/$defs/digest"
+        },
+        "release": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repo": {
+              "$ref": "defs.schema.json#/$defs/repo"
+            },
+            "sha": {
+              "$ref": "defs.schema.json#/$defs/gitSha"
+            },
+            "tag": {
+              "type": "string",
+              "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+            }
+          },
+          "required": [
+            "repo",
+            "sha",
+            "tag"
+          ]
+        },
+        "branch": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "base": {
+          "$ref": "defs.schema.json#/$defs/gitSha"
+        },
+        "commit": {
+          "$ref": "defs.schema.json#/$defs/gitSha"
+        },
+        "layer": {
+          "description": "What the change wrote, so offboarding can take exactly that out.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "created": {
+              "description": "Files the factory owns whole: the footprint and the files it created.",
+              "type": "array",
+              "items": {
+                "$ref": "defs.schema.json#/$defs/text"
+              }
+            },
+            "blocks": {
+              "description": "Files that hold a marked block of the factory's.",
+              "type": "array",
+              "items": {
+                "$ref": "defs.schema.json#/$defs/text"
+              }
+            },
+            "settings": {
+              "description": "Keys the factory added to .claude/settings.json, as top-level key and entry.",
+              "type": "array",
+              "items": {
+                "$ref": "defs.schema.json#/$defs/text"
+              }
+            }
+          },
+          "required": [
+            "created",
+            "blocks",
+            "settings"
+          ]
+        },
+        "replaces": {
+          "description": "An update's record of the change it replaces: what the target holds until the update merges, and again if its PR is closed.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "$ref": "defs.schema.json#/$defs/timestamp"
+            },
+            "by": {
+              "$ref": "defs.schema.json#/$defs/text"
+            },
+            "profile_digest": {
+              "$ref": "defs.schema.json#/$defs/digest"
+            },
+            "release": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "repo": {
+                  "$ref": "defs.schema.json#/$defs/repo"
+                },
+                "sha": {
+                  "$ref": "defs.schema.json#/$defs/gitSha"
+                },
+                "tag": {
+                  "type": "string",
+                  "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+                }
+              },
+              "required": [
+                "repo",
+                "sha",
+                "tag"
+              ]
+            },
+            "branch": {
+              "$ref": "defs.schema.json#/$defs/text"
+            },
+            "base": {
+              "$ref": "defs.schema.json#/$defs/gitSha"
+            },
+            "commit": {
+              "$ref": "defs.schema.json#/$defs/gitSha"
+            }
+          },
+          "required": [
+            "at",
+            "by",
+            "profile_digest",
+            "release",
+            "branch",
+            "base",
+            "commit"
+          ]
+        }
+      },
+      "required": [
+        "at",
+        "by",
+        "profile_digest",
+        "release",
+        "branch",
+        "base",
+        "commit",
+        "layer"
+      ]
+    },
+    "pr": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "url": {
+          "$ref": "defs.schema.json#/$defs/text"
+        }
+      },
+      "required": [
+        "number",
+        "url"
+      ]
+    },
+    "active": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        },
+        "rulesets": {
+          "type": "array",
+          "items": {
+            "$ref": "defs.schema.json#/$defs/text"
+          }
+        }
+      },
+      "required": [
+        "at",
+        "rulesets"
+      ]
+    },
+    "offboard": {
+      "description": "Offboarding, step by step (ADR 0003): each is recorded when done and never done again.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "$ref": "defs.schema.json#/$defs/timestamp"
+        },
+        "by": {
+          "$ref": "defs.schema.json#/$defs/text"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "local_only": {
+          "description": "The repository is gone or out of reach: only the factory's own data is purged.",
+          "type": "boolean"
+        },
+        "app": {
+          "description": "The App no longer reaches the repository, or why that could not be checked.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "$ref": "defs.schema.json#/$defs/timestamp"
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "at",
+            "detail"
+          ]
+        },
+        "rulesets": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "$ref": "defs.schema.json#/$defs/timestamp"
+            },
+            "removed": {
+              "type": "array",
+              "items": {
+                "$ref": "defs.schema.json#/$defs/text"
+              }
+            }
+          },
+          "required": [
+            "at",
+            "removed"
+          ]
+        },
+        "change": {
+          "description": "The commit that takes the footprint and the layer out.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "branch": {
+              "$ref": "defs.schema.json#/$defs/text"
+            },
+            "base": {
+              "$ref": "defs.schema.json#/$defs/gitSha"
+            },
+            "commit": {
+              "$ref": "defs.schema.json#/$defs/gitSha"
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "$ref": "defs.schema.json#/$defs/text"
+              }
+            }
+          },
+          "required": [
+            "branch",
+            "base",
+            "commit",
+            "files"
+          ]
+        },
+        "pr": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "number": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "url": {
+              "$ref": "defs.schema.json#/$defs/text"
+            }
+          },
+          "required": [
+            "number",
+            "url"
+          ]
+        },
+        "cleaned": {
+          "description": "The default branch holds nothing of the factory's.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "$ref": "defs.schema.json#/$defs/timestamp"
+            },
+            "detail": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "at",
+            "detail"
+          ]
+        },
+        "purge": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "$ref": "defs.schema.json#/$defs/timestamp"
+            },
+            "journal": {
+              "$ref": "defs.schema.json#/$defs/text"
+            },
+            "tasks": {
+              "type": "array",
+              "items": {
+                "$ref": "defs.schema.json#/$defs/taskId"
+              }
+            },
+            "titles": {
+              "description": "The purged tasks' titles, for the scan that follows; deleted with this record.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "budgets_before": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number"
+              }
+            }
+          },
+          "required": [
+            "at",
+            "journal",
+            "tasks",
+            "titles",
+            "budgets_before"
+          ]
+        }
+      },
+      "required": [
+        "at",
+        "by",
+        "local_only"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "repo",
+    "remote",
+    "default_branch",
+    "state",
+    "created_at",
+    "updated_at"
+  ]
+}

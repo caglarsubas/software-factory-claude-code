@@ -4,6 +4,142 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-10-24
+
+### Added
+
+- **The dashboard's commands (P2-10, PR 2 of 2).** The header pauses, resumes or drains `serve`. A task's drawer pauses or resumes it, sets its priority, or cancels it after a confirmation. Each command can carry a reason.
+  - **Through `serve`:** the dashboard passes each command to `serve`'s API with `serve`'s token; `serve` validates and writes it, so the dashboard still never writes `factory.db`. With no `serve` running, a command is refused and the CLI does the work.
+  - **Exposure:** a command is a JSON `POST` with the launch's token, the bound `Host` and no foreign `Origin`; the dashboard keeps only a reason (up to 500 characters) and a priority before passing it on. A refusal closes the connection.
+- **Priority:** `factoryctl priority T-… low|normal|high [--reason …]`, and `serve`'s `/v1/tasks/T-…/priority`. The latest `priority` command overrides the task record's priority in `serve`'s scheduling, on the board and in `status`.
+- **The drawer-open log** (`$FACTORY_HOME/dashboard/drawer-opens.ndjson`): each opening of a task's drawer, with its state and gate. `factoryctl report --week` counts them, for §6's approval-fatigue measure.
+
+### Not included
+
+- Approving or rejecting, requesting changes, re-running a stage, extending a budget and raising a tier stay outside the dashboard (STATUS's deviations log).
+
+## [0.26.0] - 2026-10-24
+
+### Added
+
+- **The dashboard (P2-10, PR 1 of 2).** `factoryctl dashboard [--port N]` serves, on `127.0.0.1:7318`:
+  - **the board:** a column for each group of durable states, with each task's state, gate, tier, pause and cost;
+  - **the evidence drawer:** the spec and its acceptance criteria, the tier and the rules that set it, the base and candidate commits, each stage's model, cost and cap against the tier's budget, gates, findings, the verdict, human decisions, the code graph's shadow decisions and the timeline;
+  - **a live stream** of events, which refreshes the board and an open drawer.
+- **Reads only.** The dashboard opens `factory.db` with a read-only connection (`EventStore.openReadOnly`), whose type has no write method and on which SQLite refuses every write. Its server answers `GET` only. This is P2-10's done-when; the command bus through `serve` is PR 2.
+- **Exposure:** loopback only, with a token new for each launch, given in the address's fragment. Data requests need the token and the bound `Host`, and a foreign `Origin` is refused. The page loads nothing from elsewhere and writes target text as text, never as markup.
+- `EventStore.cursor()` and `eventsAfter()`: a store-wide position (the events table's row id), for a reader that follows every task at once.
+
+### Changed
+
+- **Releases tag themselves.** The `release` workflow runs on each push to `main` that changes `plugin.json`'s version. It checks the version against the changelog, waits for `ci` on the merge commit, then tags it and publishes the release. Run by hand with a commit on `main`, it tags a version whose merge was missed. A tag the operator pushes is still published as before.
+
+## [0.25.0] - 2026-10-23
+
+### Added
+
+- **The blast radius in shadow mode (P2-13, PR 2 of 2).** The policy step reads each round's committed graph.
+  - **The walk:** from the changed files (renames' old paths too) back through the files that depend on them, up to 4 hops, to the nearest R3 or Restricted path. The dependency relations are graphifyy's `DEFAULT_AFFECTED_RELATIONS`.
+  - **Freshness:** only a graph of the commit judged gives a hop count. Another commit's is `stale`; none is `missing`; one that failed to build, or does not parse, is `error`. A file that is not the one the gates' record names never counts.
+  - **The rule:** the hops fill the policy engine's `graphHopsToProtected`, for each round and each drift re-verification. The `graph_reaches_protected_within_hops: 2` rule stays in shadow mode until P3-05, so no tier moves. The provisional tier and `policy-check` stay without the graph.
+- **`blast.json`** (`schemas/blast.schema.json`), for each round and each re-verification: the graph's status, the hops, the nearest guarded file, the files reached, and the rule (whether it matched, its shadow tier, the tier enforced). This is the per-task log of shadow decisions that P2-13's done-when asks for.
+- **Reports:** `factoryctl report T` ends with a "code graph (shadow)" line. `factoryctl report --week` counts the week's decisions by graph status, and how often the rule matched and would have raised the tier.
+
+### Changed
+
+- `protectedGlobs(risk)` moves from the target layer into `policy/load.ts`, where the footprint and the blast radius both read it.
+- The policy step's inputs gain the round's `graph.json`. A task that was mid-flight when this release was installed runs its policy step once more on resume.
+
+## [0.24.0] - 2026-10-23
+
+### Added
+
+- **The code graph (P2-13, PR 1 of 2).** The gate image carries graphifyy 0.9.91. Each gate run builds the candidate's code graph with `graphify update --no-cluster`: offline, with no LLM, on the read-only tree.
+  - The graph is advisory: it is never one of the gates and never fails them.
+  - Its record in `gates.json` names the tool and stamps the candidate commit, so a graph of an older commit reads as stale.
+  - The pipeline commits the graph as `graph.json` beside each round's `gates.json`, and as `drift/<k>/graph.json` beside each re-verification's. It does so only when the record says it was built and the file's digest matches. Replayed gates carry none.
+- **`verify-tools` checks PyPI wheels.** A wheel with PEP 740 provenance is checked with cosign; the four tree-sitter wheels, which publish none, are checked against PyPI's own record of the file.
+
+## [0.23.0] - 2026-10-22
+
+### Added
+
+- **`factoryctl offboard OWNER/NAME` (P2-11, last part).** It lets a target go, access first ([ADR 0003](docs/factory/adr/0003-onboarding-retention-and-purge.md)). It is operator-only. Each step is recorded in the target's record once done, so a run can stop anywhere and be repeated:
+  1. The target takes no new task. It refuses while a task of the target is unfinished or the onboarding PR is open.
+  2. The operator removes the repository from the App's installation, and a narrowed mint checks it.
+  3. The footprint's rulesets are deleted.
+  4. A PR from `software-factory/offboard` deletes the footprint and takes the layer out, so the target's files return to what they were.
+  5. Once the factory is idle, a purge journal deletes every task of the target in the home and the replica, with the mirror and the gate cache volume. The calibration is recomputed without the target, and the private store's directory goes last.
+
+  The report gives the tier budgets before and after, and scans the home, the replica and the remaining events for the target's names and its tasks' titles. `--local-only --reason` covers a repository that is gone, and `--app-unavailable --reason` a suspended App.
+- **P2-11's done-when, `roundtrip.test.ts`.** In `pnpm test`, the real `factoryctl` onboards ts-mini, runs and rejects a task on it beside another target's task that shares an object with it, then offboards it. It checks five things:
+  - the target's tree is back to its base, byte for byte;
+  - no file in the home or the replica holds its name or its task's title;
+  - the other task and the shared object are intact;
+  - the purged id is never issued again;
+  - a restore and the restore drill bring nothing back.
+- `doctor` points an offboarding target at `factoryctl offboard`.
+
+## [0.22.0] - 2026-10-22
+
+### Added
+
+- **`factoryctl onboard OWNER/NAME` (P2-11, third part).** It takes a repository on as a target: inventory, a drafted profile, admission, a STOP for the operator, then the footprint PR, the rulesets and the App's access ([ADR 0003](docs/factory/adr/0003-onboarding-retention-and-purge.md)). It is operator-only.
+  - Each run takes the target one state further (`drafted`, `confirmed`, `proposed`, `merged`, `active`) and stops where a person acts. Every step finds before it acts, so a run can be repeated at any point, after a crash too.
+  - **The inventory** reads the default branch from the mirror without a checkout. It proposes the commands from the lockfile and `package.json` scripts, or from uv and `pyproject.toml`. It reproduces both fixtures' commands exactly, and notes what it cannot decide instead of guessing.
+  - **Admission** needs every command gate green in the gate image, CI of the target's own, and a protected default branch. The profile must be valid and name its approvers.
+  - **`--confirm`** accepts only the profile admission passed on. It builds one deterministic commit of the footprint and the layer: a marked block in `CODEOWNERS` and in `CLAUDE.md`, `.claude/rules/factory-invariants.md`, and the factory's plugin in `.claude/settings.json`, pinned to the release. It merges into the target's files and records what it added, for offboarding. The PR goes from `software-factory/onboard` with the operator's token, not through the task outbox.
+  - **After the merge,** it checks the default branch holds what was proposed and that `gates` passed, applies the rulesets, and checks the App reaches the repository. If the App does not, it prints the installation-settings step.
+  - **`--update`** proposes a profile edit or a release move on `software-factory/update`. A closed update leaves the target on the change it had.
+- **The private store,** `$FACTORY_HOME/targets/<owner>__<name>/`, holds `target.json` (`schemas/target.schema.json`), `profile.yaml`, `inventory.json` (`schemas/inventory.schema.json`) and an audit journal. The replica copies it, and a restore brings it back.
+- **`task create --repo OWNER/NAME`** uses an active target's confirmed profile and remote. **`intake` without profiles** polls every active target with an `intake:` block. Both refuse a profile changed since it was confirmed.
+- **`doctor`** checks every target in the store: its state, its profile against the confirmed one, its rulesets and the App's access.
+
+## [0.21.0] - 2026-10-22
+
+### Added
+
+- **Retention per profile (P2-11, second part).** A finished task keeps its evidence for the shorter of its profile's and the config's `retention_days`, counted from its last activity ([ADR 0003](docs/factory/adr/0003-onboarding-retention-and-purge.md)).
+  - Transcripts expire into the run's transcripts and session directory.
+  - A bundle expires into everything but `task.json`, with the worktree, the session directory and the eval captures. The task's events stay.
+  - A task's telemetry expires from the OTel files.
+
+  Each expiry is an `evidence_expired` event recorded before anything goes. Objects only expired evidence names are deleted, in the home and, from its own record, in the replica, and a restore leaves expired files out. A task that has not finished is never pruned.
+- **`factoryctl prune [--dry-run]`.** It shows and applies what is due, and finishes a purge that stopped part-way. It is operator-only, and runs only while the factory is idle.
+- **`doctor`** warns when tasks are past retention and when a purge stopped part-way.
+- **Schema migrations tested on old bundles.** `controller/src/store/testdata/` holds homes that v0.1.2 and v0.7.0 wrote with their own `factoryctl` (`generate.ts` rebuilds them). `old-homes.test.ts` checks that each one:
+  - migrates to store schema 4 with every event kept and still append-only;
+  - keeps every artifact valid at the schema version it declares;
+  - is read by `status`, `report` and `prune --dry-run`;
+  - can be pruned, purged, replicated and restored.
+
+### Changed
+
+- `status` reads a task's record from the object store when its run directory is gone, and marks a task whose bundle expired.
+- The refusal for a task started on v0.1.x says to cancel it and create a new task: v0.1.x cannot open the store since `v0.20.0`.
+
+## [0.20.0] - 2026-10-22
+
+### Changed
+
+- **Breaking: store schema 4.** `factory.db` and the replica gain a `tombstones` table, the one record a purge writes ([ADR 0003](docs/factory/adr/0003-onboarding-retention-and-purge.md)). Installing this release migrates both on first use, and an older `factoryctl` then refuses the store: there is no rolling back across it.
+- **Events stay append-only except by record.** An event can now be deleted only once its task has a tombstone. Nothing can be added to a tombstoned task, tombstones are themselves append-only, and a purged task's id is never reused. Every other update and delete still aborts.
+- Deleted rows are overwritten (`secure_delete`).
+- The replica's sync starts after the highest row id it has ever copied, which SQLite keeps after a purge deleted those rows, rather than after the highest row it still holds.
+
+### Added
+
+- **Purging by record (P2-11, first part).** A purge is planned in full into a journal under `$FACTORY_HOME/purges/`, then run step by step; a crash anywhere resumes where it stopped. Each purge:
+  - writes the tombstones, deleting the tasks' events in the same transaction;
+  - deletes every object only those tasks referenced, and objects no task names that are over an hour old;
+  - removes their run, worktree and session directories and eval captures;
+  - drops their OTel lines;
+  - compacts the store;
+  - has the replica complete the same purge from its own record.
+
+  A restore completes a purge the replica had recorded and not finished. The restore drill fails if anything purged comes back. Nothing runs a purge yet: `offboard` and `prune` come in the next P2-11 releases.
+- **ADR 0003** records the purge as the single exception to principle 8. It also settles the private store (`$FACTORY_HOME/targets/`), retention (shortest of profile and config), the admission bar, and how onboarding and offboarding PRs are opened.
+
 ## [0.19.0] - 2026-10-21
 
 ### Added
@@ -398,7 +534,15 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.26.0...v0.27.0
+[0.26.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.25.0...v0.26.0
+[0.25.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.24.0...v0.25.0
+[0.24.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.23.0...v0.24.0
+[0.23.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.22.0...v0.23.0
+[0.22.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.21.0...v0.22.0
+[0.21.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.20.0...v0.21.0
+[0.20.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.16.0...v0.17.0

@@ -2,12 +2,15 @@
 // factoryctl v0 (ROADMAP P0-07, P0-09): task create, run, resume, status, cancel, approve,
 // doctor, the kill switch, releases and gate evidence.
 //
-//   factoryctl task create --profile FILE --title TEXT --body-file FILE [--untrusted] [--remote URL]
-//   factoryctl intake PROFILE.yaml...         admit the targets' labelled issues as tasks (P2-04)
+//   factoryctl task create --profile FILE | --repo OWNER/NAME --title TEXT --body-file FILE [--untrusted] [--remote URL]
+//   factoryctl intake [PROFILE.yaml...]       admit the targets' labelled issues as tasks (P2-04); none: every onboarded target's
+//   factoryctl onboard OWNER/NAME [--remote URL] [--confirm | --update] [--factory-ref TAG [--source DIR]]  take a target on (P2-11)
+//   factoryctl offboard OWNER/NAME [--local-only | --app-unavailable] [--reason TEXT]  let a target go and purge its data (P2-11)
 //   factoryctl run T-0001 [--attach] [--replay DIR] [--runner host|container]  drive a task until it needs a human or ends
 //   factoryctl resume T-0001 [--attach] [--replay DIR] [--runner host|container]  the same, after a stop, a pause, a halt or a crash
 //   factoryctl serve [--replay DIR] [--max-tasks N] [--port N]  schedule tasks unattended, every live session in the runner
 //   factoryctl pause T-0001 [--reason TEXT]  stop the task at its next step boundary, until resume
+//   factoryctl priority T-0001 low|normal|high [--reason TEXT]  change the order serve starts tasks in
 //   factoryctl takeover T-0001               open its build session yourself; the result goes back through the gates
 //   factoryctl status [T-0001]
 //   factoryctl cancel T-0001
@@ -21,6 +24,8 @@
 //   factoryctl release install TAG [--source DIR] | use TAG|SHA | status
 //   factoryctl gate G0|G1|G2 --begin [--checkout DIR]... | gate G0|G1|G2 [--repo OWNER/NAME]
 //   factoryctl drill kill-switch | restore | serve-kill
+//   factoryctl prune [--dry-run]             expire finished tasks' evidence past retention; finish a stopped purge (ADR 0003)
+//   factoryctl dashboard [--port N]          the board, the evidence drawer and a live stream on loopback; commands go through serve
 //   factoryctl doctor
 //
 // FACTORY_HOME holds run state (default ~/.factory); FACTORY_RELEASE overrides the release the
@@ -29,13 +34,16 @@
 // instead of calling a model: zero tokens; its replay.json holds test-only injection
 // (session/injection.ts).
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { parse } from "yaml";
 import { engineHost, PROXY_ENV, removeTaskContainers } from "../../../gates/src/container.ts";
-import { haltNow, killSwitchDrill, restoreDrill, serveKillDrill, type Activity } from "../durable/drill.ts";
+import { activity, haltNow, idle, killSwitchDrill, restoreDrill, serveKillDrill, type Activity } from "../durable/drill.ts";
+import { pendingJournals, PurgeError, runJournal } from "../durable/purge.ts";
+import { expiredScopes } from "../durable/refs.ts";
+import { planRetention, profilePolicy, prune } from "../durable/retention.ts";
 import { initReplica, keepReplica, replicaStatus, restore, syncReplica } from "../durable/replica.ts";
 import { startRunGateway, type Gateway } from "../gateway/gateway.ts";
 import { reapRunnerContainers } from "../runner/container.ts";
@@ -48,12 +56,14 @@ import { reapTaskNetworks } from "../runner/network.ts";
 import { runGates } from "../../../gates/src/run.ts";
 import { ensureImage } from "../../../gates/src/image.ts";
 import { runBypassVariants } from "../../../plugin/hooks/bypass-cases.ts";
-import { appCheck, doctor, rulesetCheck } from "../doctor.ts";
+import { appCheck, doctor, rulesetCheck, targetChecks } from "../doctor.ts";
 import { fixtureNames, loadFixture } from "../fixtures/targets.ts";
 import { footprintRulesets } from "../governance/footprint.ts";
 import { beginGate, evaluateG0, writeEvidence } from "../gate/g0.ts";
 import { evaluateG1 } from "../gate/g1.ts";
 import { evaluateG2 } from "../gate/g2.ts";
+import { drawerOpenCounts, readDrawerOpens } from "../dashboard/opens.ts";
+import { DEFAULT_DASHBOARD_PORT, startDashboard } from "../dashboard/server.ts";
 import { CANARY_ENV, plantCanary, readCanary } from "../gate/canary.ts";
 import { appConfig, AppConfigError, appConfigPath, appInfo, appTokens, type AppTokens } from "../github/app.ts";
 import { githubApiUrl, GitHubError, isLoopbackApi, restCommitChecks, restGateReads, restGitHub, type GitHub } from "../github/client.ts";
@@ -73,13 +83,20 @@ import { sdkRunner } from "../session/runner.ts";
 import { calibrate, completedRuns, monthOf, monthSpend, TIERS } from "../budget/budget.ts";
 import { captureTask } from "../evals/capture.ts";
 import { writeAtomic } from "../fsutil.ts";
-import { isoWeek, taskReport, WEEK_HEADER, weekRow, weekRowMarkdown, type TaskReport } from "../report/report.ts";
+import { isoWeek, taskReport, WEEK_HEADER, weekRange, weekRow, weekRowMarkdown, type TaskReport } from "../report/report.ts";
+import { describeBlast, readBlasts, shadowCounts } from "../graph/blast.ts";
 import { specDigest } from "../stages/commit.ts";
 import { runTask } from "../stages/pipeline.ts";
 import { REVIEWERS } from "../stages/reviewers.ts";
 import { EventStore, LeaseHeldError, type FactoryEvent } from "../store/events.ts";
-import { currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
-import { createTask, loadProfile, readTask } from "../task/task.ts";
+import { currentPriority, currentState, currentStatePayload, isPaused, isPriority, isTerminal, transition } from "../task/lifecycle.ts";
+import { createTask, loadProfile, readTask, taskRecord } from "../task/task.ts";
+import { targetReads } from "../target/github.ts";
+import { LayerError } from "../target/layer.ts";
+import { offboard, OffboardError } from "../target/offboard.ts";
+import { onboard, OnboardError } from "../target/onboard.ts";
+import { activeProfile, listTargets, readTarget, RegistryError } from "../target/registry.ts";
+import { FootprintError } from "../governance/footprint.ts";
 import { pollIntake } from "../intake/intake.ts";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { describeMessage } from "../session/attach.ts";
@@ -430,6 +447,12 @@ async function main(): Promise<void> {
       "app-id": { type: "string" },
       "installation-id": { type: "string" },
       runner: { type: "string" },
+      "dry-run": { type: "boolean" },
+      confirm: { type: "boolean" },
+      "local-only": { type: "boolean" },
+      "app-unavailable": { type: "boolean" },
+      update: { type: "boolean" },
+      "factory-ref": { type: "string" },
     },
   });
   const home = factoryHome();
@@ -443,6 +466,31 @@ async function main(): Promise<void> {
     haltLog(home, { command: "halt", reason });
     for (const l of lines) out(l);
     out(`lift with: factoryctl unhalt --reason "…"`);
+    return;
+  }
+
+  // The dashboard (P2-10) reads only: it opens the store read-only, never through the writer below.
+  if (command === "dashboard") {
+    if (!existsSync(home.db)) fail(`no event store at ${home.db} yet: create a task first`);
+    const port = Number(values.port ?? String(DEFAULT_DASHBOARD_PORT));
+    if (!Number.isInteger(port) || port < 0 || port > 65535) fail("--port takes a port number");
+    const release = loadRelease(createValidator());
+    const reader = EventStore.openReadOnly(home.db);
+    let d;
+    try {
+      d = await startDashboard({ home, store: reader, budgets: release.budgets, port, log: (l) => process.stderr.write(`factoryctl: ${l}\n`) });
+    } catch (e) {
+      reader.close();
+      fail(e instanceof Error ? e.message : String(e));
+    }
+    out(`dashboard: ${d.url}`);
+    out("open that address in your browser (the token is in it); Ctrl-C stops the dashboard");
+    await new Promise<void>((resolve) => {
+      process.once("SIGINT", resolve);
+      process.once("SIGTERM", resolve);
+    });
+    await d.close();
+    reader.close();
     return;
   }
 
@@ -599,6 +647,8 @@ async function main(): Promise<void> {
       }
     }
     checks.push(...(await appCheck({ home, api: apiUrl() })));
+    // Each onboarded target (P2-11): its state, its profile, its rulesets and the App's access.
+    checks.push(...(await targetChecks({ home, validator, token: token ?? null, api: apiUrl() })));
     for (const c of checks) out(`${c.status.padEnd(4)}  ${c.name}: ${c.detail}`);
     process.exitCode = checks.some((c) => c.status === "fail") ? 1 : 0;
     return;
@@ -629,7 +679,7 @@ async function main(): Promise<void> {
     if (r.status !== 200) fail(r.body.message ?? r.body.error ?? `serve answered ${String(r.status)}`);
     out(r.body.message ?? "done");
   };
-  const exclusive = ["run", "takeover", "reject"];
+  const exclusive = ["run", "takeover", "reject", "prune", "offboard"];
   if (served !== null && command !== undefined && exclusive.includes(command)) {
     fail(`serve is running (pid ${String(served.pid)}) and schedules every task; pause or cancel the task through it, or stop it with: factoryctl drain`);
   }
@@ -672,13 +722,25 @@ async function main(): Promise<void> {
         return;
       }
       case "intake": {
-        const profiles = positionals.slice(1);
-        if (profiles.length === 0) fail("usage: factoryctl intake PROFILE.yaml... (each with an intake: block)");
         const validator = createValidator();
-        const targets = profiles.map((p) => {
-          const profile = loadProfile(resolve(p), validator);
-          if (profile.intake === undefined) fail(`${p} has no intake: block (label and maintainers)`);
-          return { profilePath: resolve(p), profile };
+        // With no profiles named, every onboarded target that takes issues (P2-11).
+        const named = positionals.slice(1).map((p) => resolve(p));
+        const profiles = named.length > 0 ? named : listTargets(home, validator).filter((t) => t.state === "active").flatMap((t) => {
+          try {
+            return [activeProfile(home, t.repo, validator).path];
+          } catch (e) {
+            process.stderr.write(`factoryctl: skipping ${t.repo}: ${e instanceof Error ? e.message : String(e)}\n`);
+            return [];
+          }
+        });
+        if (profiles.length === 0) fail("usage: factoryctl intake [PROFILE.yaml...]: name profiles, or onboard a target (factoryctl onboard OWNER/NAME)");
+        const targets = profiles.flatMap((p) => {
+          const profile = loadProfile(p, validator);
+          if (profile.intake === undefined) {
+            if (named.length > 0) fail(`${p} has no intake: block (label and maintainers)`);
+            return [];
+          }
+          return [{ profilePath: p, profile }];
         });
         const app = appConfig(home);
         const token = process.env["FACTORY_GITHUB_TOKEN"];
@@ -711,20 +773,121 @@ async function main(): Promise<void> {
         await viaServe("/v1/drain");
         return;
       case "task": {
-        if (positionals[1] !== "create") fail("usage: factoryctl task create --profile FILE --title TEXT --body-file FILE");
-        if (values.profile === undefined || values.title === undefined || values["body-file"] === undefined) fail("task create needs --profile, --title and --body-file");
+        if (positionals[1] !== "create") fail("usage: factoryctl task create --profile FILE | --repo OWNER/NAME --title TEXT --body-file FILE");
+        if ((values.profile === undefined) === (values.repo === undefined) || values.title === undefined || values["body-file"] === undefined) fail("task create needs --profile or --repo (an onboarded target), --title and --body-file");
         const priority = values.priority ?? "normal";
         if (priority !== "low" && priority !== "normal" && priority !== "high") fail("--priority is low, normal or high");
-        const task = createTask(home, store, createValidator(), {
-          profilePath: values.profile,
+        const validator = createValidator();
+        // An onboarded target's profile as confirmed, and its remote (P2-11).
+        const onboarded = values.repo === undefined ? null : (() => {
+          try {
+            return activeProfile(home, values.repo, validator);
+          } catch (e) {
+            return fail(e instanceof Error ? e.message : String(e));
+          }
+        })();
+        const remote = values.remote ?? onboarded?.record.remote;
+        const task = createTask(home, store, validator, {
+          profilePath: onboarded?.path ?? values.profile ?? "",
           title: values.title,
           body: readFileSync(values["body-file"], "utf8"),
           trust: values.untrusted === true ? "untrusted" : "operator",
           admittedBy: process.env["USER"] ?? "operator",
           priority,
-          ...(values.remote === undefined ? {} : { remote: values.remote }),
+          ...(remote === undefined ? {} : { remote }),
         });
         out(task.id);
+        return;
+      }
+      case "offboard": {
+        operatorOnly("offboard");
+        const repo = positionals[1];
+        if (repo === undefined) fail("usage: factoryctl offboard OWNER/NAME [--local-only | --app-unavailable] [--reason TEXT]");
+        const validator = createValidator();
+        const release = loadRelease(validator);
+        const token = process.env["FACTORY_GITHUB_TOKEN"] ?? null;
+        const api = apiUrl();
+        let app;
+        try {
+          app = appConfig(home);
+        } catch (e) {
+          fail(e instanceof AppConfigError ? e.message : String(e));
+        }
+        // Kill points, for tests only, with nothing leaving the machine.
+        const injection = values.replay === undefined ? {} : readInjection(values.replay);
+        if (values.replay !== undefined && token !== null && !isLoopbackApi(api)) fail("--replay needs a loopback FACTORY_GITHUB_API_URL");
+        const probe = killAt(injection.kill_at);
+        const engine = process.env["FACTORY_CONTAINER_ENGINE"] ?? "docker";
+        try {
+          process.exitCode = await offboard(repo, {
+            localOnly: values["local-only"] === true,
+            appUnavailable: values["app-unavailable"] === true,
+            ...(values.reason === undefined ? {} : { reason: values.reason }),
+          }, {
+            home, store, validator, release, token, api, app,
+            github: token === null ? null : restGitHub(token, api),
+            operator: operator(),
+            now: () => new Date(),
+            busy: () => {
+              const a = activity(home);
+              return idle(a) ? null : describeActivity(a);
+            },
+            engine: (args) => {
+              const r = spawnSync(engine, args, { encoding: "utf8" });
+              return { status: r.status, stderr: r.stderr || (r.error?.message ?? "") };
+            },
+            out,
+            log: (l) => process.stderr.write(`factoryctl: ${l}\n`),
+            ...(probe === undefined ? {} : { probe }),
+          });
+        } catch (e) {
+          if (e instanceof OffboardError || e instanceof RegistryError || e instanceof PurgeError) fail(e.message);
+          throw e;
+        }
+        return;
+      }
+      case "onboard": {
+        operatorOnly("onboard");
+        const repo = positionals[1];
+        if (repo === undefined || (values.confirm === true && values.update === true)) fail("usage: factoryctl onboard OWNER/NAME [--remote URL] [--confirm | --update] [--factory-ref TAG [--source DIR]]");
+        const validator = createValidator();
+        const release = loadRelease(validator);
+        const token = process.env["FACTORY_GITHUB_TOKEN"] ?? null;
+        const api = apiUrl();
+        let app;
+        try {
+          app = appConfig(home);
+        } catch (e) {
+          fail(e instanceof AppConfigError ? e.message : String(e));
+        }
+        // Replayed gates, for tests only: a local remote and a loopback API, as for a task.
+        const injection = values.replay === undefined ? {} : readInjection(values.replay);
+        const remote = values.remote ?? readTarget(home, repo, validator)?.remote;
+        if (injection.gates !== undefined && (remote === undefined || !isLocalRemote(remote) || !isLoopbackApi(api))) fail("replayed gates need a local --remote and a loopback FACTORY_GITHUB_API_URL");
+        const probe = killAt(injection.kill_at);
+        try {
+          process.exitCode = await onboard(repo, {
+            ...(values.remote === undefined ? {} : { remote: values.remote }),
+            confirm: values.confirm === true,
+            update: values.update === true,
+            ...(values["factory-ref"] === undefined ? {} : { factoryRef: values["factory-ref"] }),
+            ...(values.source === undefined ? {} : { source: values.source }),
+          }, {
+            home, validator, release, token, api, app,
+            github: token === null ? null : restGitHub(token, api),
+            reads: token === null ? null : targetReads(token, api),
+            runGates: injection.gates === undefined ? runGates : replayedGates(injection.gates),
+            gateImage: injection.gates === undefined ? () => ensureImage() : () => "software-factory-gates:replay",
+            operator: operator(),
+            now: () => new Date(),
+            out,
+            log: (l) => process.stderr.write(`factoryctl: ${l}\n`),
+            ...(probe === undefined ? {} : { probe }),
+          });
+        } catch (e) {
+          if (e instanceof OnboardError || e instanceof RegistryError || e instanceof LayerError || e instanceof FootprintError) fail(e.message);
+          throw e;
+        }
         return;
       }
       case "run":
@@ -760,6 +923,26 @@ async function main(): Promise<void> {
         out(liveHolder(home)?.task_id === id ? `${id} pauses at its next step boundary; continue it with: factoryctl resume ${id}` : `${id} paused; continue it with: factoryctl resume ${id}`);
         return;
       }
+      case "priority": {
+        const id = taskArg(positionals, 1, store);
+        const priority = positionals[2];
+        if (!isPriority(priority)) fail("usage: factoryctl priority T-0001 low|normal|high [--reason TEXT]");
+        const reason = values.reason === undefined ? {} : { reason: values.reason };
+        if (served !== null) {
+          await viaServe(`/v1/tasks/${id}/priority`, { priority, ...reason });
+          return;
+        }
+        const events = store.events(id);
+        if (isTerminal(currentState(events))) fail(`${id} has already ended`);
+        const now = currentPriority(readTask(home, id).priority, events);
+        if (now === priority) {
+          out(`${id} is already at ${now} priority`);
+          return;
+        }
+        store.append({ task_id: id, actor: { kind: "operator", id: operator() }, type: "command", payload: { command: "priority", priority, from: now, ...reason } });
+        out(`${id}: priority ${now} → ${priority}`);
+        return;
+      }
       case "takeover":
         await takeover(home, store, taskArg(positionals, 1, store));
         return;
@@ -774,8 +957,37 @@ async function main(): Promise<void> {
           const gate = typeof payload["gate"] === "string" ? ` gate=${payload["gate"]}` : "";
           // A task runs while its lease is held: by an attended run or a serve worker (P2-03).
           const running = leaseState(store.lease(id), Date.now()) === "held" ? " (running)" : isPaused(events) ? " (paused)" : "";
-          out(`${id}  ${currentState(events).padEnd(12)}${gate}${running}  ${readTask(home, id).title}`);
+          const expired = expiredScopes(events).has("bundle") ? " (evidence expired)" : "";
+          out(`${id}  ${currentState(events).padEnd(12)}${gate}${running}${expired}  ${taskRecord(home, store, id)?.title ?? "(no task record)"}`);
         }
+        return;
+      }
+      case "prune": {
+        operatorOnly("prune");
+        const now = activity(home);
+        if (!idle(now)) fail(`prune runs only while the factory is idle; now: ${describeActivity(now)}`);
+        const validator = createValidator();
+        const release = loadRelease(validator);
+        const dryRun = values["dry-run"] === true;
+        // A purge that stopped part-way finishes first (ADR 0003).
+        for (const j of pendingJournals(home)) {
+          if (dryRun) {
+            out(`purge ${j.id} (${j.reason}) stopped part-way: prune finishes it`);
+            continue;
+          }
+          const r = runJournal(home, store, j);
+          out(`purge ${j.id} (${j.reason}) finished: ${String(r.tasks)} task(s), ${String(r.objects)} object(s), ${String(r.paths)} path(s)`);
+        }
+        const plan = planRetention({ store, config: release.config.retention_days, policyFor: profilePolicy(home, store, validator), now: new Date() });
+        for (const x of plan.expire) out(`${x.task_id}  ${x.scope}: ${String(x.age_days)} day(s) since its last activity; kept ${String(x.days)}`);
+        for (const u of plan.unfinished) out(`${u.task_id}  not finished after ${String(u.age_days)} day(s): cancel or resume it; prune leaves it`);
+        if (plan.fallback.length > 0) out(`no readable profile for ${plan.fallback.join(", ")}: the config's retention applies`);
+        if (dryRun) {
+          out(`dry run: ${String(plan.expire.length)} expiry(ies) and ${String(plan.otel.length)} task(s)' telemetry due; nothing changed`);
+          return;
+        }
+        const r = prune({ home, store, plan, by: operator() });
+        out(`pruned: ${String(r.expired.length)} expiry(ies) recorded; ${String(r.objects)} object(s), ${String(r.paths)} path(s) and ${String(r.otel)} telemetry export(s) deleted${r.replica === null ? "" : `; the replica deleted ${String(r.replica)} object(s)`}`);
         return;
       }
       case "cancel": {
@@ -836,12 +1048,23 @@ async function main(): Promise<void> {
         if (positionals[1] !== undefined) {
           const id = taskArg(positionals, 1, store);
           printTaskReport(taskReport(store.events(id), reviewsOf(home, id)));
+          // The code graph's blast radius (P2-13): logged, never enforced, until P3-05 measures it.
+          const blasts = readBlasts(runDir(home, id));
+          out(`code graph (shadow): ${blasts.length === 0 ? "no decision logged" : blasts.map(describeBlast).join("; ")}`);
           return;
         }
-        const row = weekRow(store.allEvents(), values.week ?? isoWeek(new Date()));
+        const all = store.allEvents();
+        const row = weekRow(all, values.week ?? isoWeek(new Date()));
         out(`week ${row.week} (UTC, tasks created that week; live sessions only)`);
         out(WEEK_HEADER);
         out(weekRowMarkdown(row));
+        const { start, end } = weekRange(row.week);
+        const created = all.filter((e) => e.type === "task_created" && Date.parse(e.ts) >= start.getTime() && Date.parse(e.ts) < end.getTime()).map((e) => e.task_id);
+        const c = shadowCounts(created.flatMap((t) => readBlasts(runDir(home, t))));
+        out(`code graph (shadow): ${String(c.decisions)} decision(s), ${String(c.fresh)} fresh, ${String(c.stale)} stale, ${String(c.missing)} missing, ${String(c.error)} error; the rule matched ${String(c.matched)} and would have raised the tier ${String(c.raised)} time(s)`);
+        // Approval fatigue (§6): how often the operator opened the evidence drawer that week.
+        const d = drawerOpenCounts(readDrawerOpens(home), start, end);
+        out(`dashboard: ${String(d.opens)} drawer open(s) on ${String(d.tasks)} task(s), ${String(d.atGate)} at a human gate`);
         return;
       }
       case "slo": {
@@ -953,7 +1176,7 @@ async function main(): Promise<void> {
         return;
       }
       default:
-        fail("usage: factoryctl task create | run | resume | pause | takeover | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor | serve | drain | replica | restore | drill | slo");
+        fail("usage: factoryctl task create | run | resume | pause | takeover | status | cancel | approve | reject | report | budgets | eval | halt | unhalt | release | gate | doctor | serve | drain | replica | restore | drill | slo | prune | onboard | offboard | intake");
     }
   } finally {
     store.close();

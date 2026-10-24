@@ -2,10 +2,11 @@
 // committed artifact goes in before its commit event is written, keyed by the same sha256
 // digest the event records, and every run's evidence (its transcripts, manifest and the files
 // it committed) goes in at the run's end as a tree object, recorded by an `evidence_stored`
-// event. Nothing in it is ever changed or deleted, so the event log is its index: any version
-// of any artifact a task ever committed can be read back by the digest an event names, and a
-// replica copies only what it lacks.
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+// event. Nothing in it is ever changed, so the event log is its index: any version of any
+// artifact a task ever committed can be read back by the digest an event names, and a replica
+// copies only what it lacks. An object is deleted only by record (ADR 0003): a purge deletes
+// what its purged tasks referenced and no remaining task does.
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { PENDING, sha256, TMP, writeAtomic } from "../fsutil.ts";
 
@@ -35,6 +36,14 @@ export function readObject(root: string, digest: string): Buffer {
   const content = readFileSync(objectPath(root, digest));
   if (sha256(content) !== digest) throw new Error(`object ${digest} is damaged`);
   return content;
+}
+
+/** Deletes an object; returns whether it was there. Only a purge calls this (durable/purge.ts). */
+export function deleteObject(root: string, digest: string): boolean {
+  const path = objectPath(root, digest);
+  if (!existsSync(path)) return false;
+  rmSync(path, { force: true });
+  return true;
 }
 
 /** Every object's digest. */

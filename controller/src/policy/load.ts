@@ -57,6 +57,15 @@ export function withProfile(policy: RiskPolicy, profile: Profile): RiskPolicy {
   return { ...policy, rules: [...policy.rules.slice(0, at), ...extra, ...policy.rules.slice(at)] };
 }
 
+/**
+ * The paths the policy guards: every enforced rule's `any_path` that puts a change at R3, or at
+ * Restricted. The footprint's CODEOWNERS (P2-11) and the code graph's blast radius (P2-13) read them.
+ */
+export function protectedGlobs(risk: RiskPolicy): { r3: string[]; restricted: string[] } {
+  const of = (tier: Tier): string[] => [...new Set(risk.rules.filter((r) => r.minimum_risk === tier && r.mode !== "shadow").flatMap((r) => r.when.any_path ?? []))];
+  return { r3: of("R3"), restricted: of("Restricted") };
+}
+
 export function loadRiskPolicy(root: string = REPO_ROOT, profilePath?: string): RiskPolicy {
   const validator = createValidator();
   const policy = loadYaml(join(root, "policies/risk.yaml"), "risk-policy.schema.json", validator) as RiskPolicy;

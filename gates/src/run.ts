@@ -4,12 +4,18 @@
 // one step with a network, with lifecycle scripts and source builds off; then runs each command
 // gate with no network and the shared caches read-only. The host reads every exit code, so code
 // under test cannot forge a result.
+//
+// Beside the scans, and as offline as they are, graphifyy builds the candidate's code graph (P2-13).
+// It is advisory: it never fails the gates, and its record names the commit it describes, so a
+// reader can tell a graph of this candidate from an older one.
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import { createVolume, PROXY_ENV, removeVolume, runContainer, type ContainerSpec, type ExecResult } from "./container.ts";
 import { parseAddedLines } from "./diff.ts";
 import { judgeDependencies, judgeSast, judgeSecrets, type Outcome, type Sink } from "./findings.ts";
+import { graphifyTool } from "./image.ts";
 import { ADAPTERS, isLockfile, phaseEnv, planGates, RULE_PACKS, type GateProfile } from "./plan.ts";
 import { commitTime, listTree, writeTar, type TreeEntry } from "./tree.ts";
 
@@ -20,6 +26,22 @@ export interface GateEntry {
   summary: string;
 }
 
+/** The candidate's code graph (P2-13): built, or why not. The graph itself goes to RunOptions.graphOut. */
+export interface GraphRecord {
+  status: "built" | "error";
+  /** The extractor, as `graphifyy <version>`. */
+  tool: string;
+  /** The commit the graph describes: the candidate. A reader judging another commit treats it as stale. */
+  commit: string;
+  nodes?: number;
+  edges?: number;
+  /** Source files with at least one node. */
+  files?: number;
+  /** sha256 of graph.json as written to graphOut. */
+  sha256?: string;
+  detail?: string;
+}
+
 /** gates.json (schemas/gates.schema.json). */
 export interface GatesResult {
   schema_version: 1;
@@ -28,6 +50,7 @@ export interface GatesResult {
   passed: boolean;
   gates: GateEntry[];
   signals: { sink_added: Sink[]; secret_material: boolean };
+  graph?: GraphRecord;
 }
 
 export interface Timeouts {
@@ -56,6 +79,8 @@ export interface RunOptions {
   caFile?: string;
   timeoutsMs?: Partial<Timeouts>;
   log?: (line: string) => void;
+  /** Where to write the candidate's graph.json (P2-13); without it the graph is built and counted, not kept. */
+  graphOut?: string;
 }
 
 export class GateRunError extends Error {}
@@ -83,6 +108,34 @@ function tail(r: ExecResult): string {
 }
 
 const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
+
+/** A graph larger than this is not kept: it would cost more to store and replicate than it tells. */
+export const GRAPH_MAX_BYTES = 64 * 1024 * 1024;
+
+interface GraphJson {
+  nodes?: { id?: unknown; source_file?: unknown }[];
+  links?: unknown[];
+  edges?: unknown[];
+}
+
+/** The graph scan's record: its counts when the output is a graph, else why not. Writes it to `out` when given. */
+export function graphRecord(r: ExecResult, commit: string, tool: string, limitMs: number, out?: string): GraphRecord {
+  const failed = (detail: string): GraphRecord => ({ status: "error", tool, commit, detail });
+  if (r.timedOut) return failed(`timed out after ${seconds(limitMs)}`);
+  if (r.status !== 0) return failed(`exit ${String(r.status)}: ${tail({ ...r, stdout: "" }).split("\n").slice(-3).join(" | ")}`);
+  if (Buffer.byteLength(r.stdout) > GRAPH_MAX_BYTES) return failed(`graph.json is larger than ${String(GRAPH_MAX_BYTES / 1024 / 1024)} MiB`);
+  let g: GraphJson;
+  try {
+    g = JSON.parse(r.stdout) as GraphJson;
+  } catch {
+    return failed("the output is not JSON");
+  }
+  if (!Array.isArray(g.nodes)) return failed("the output has no nodes");
+  const edges = Array.isArray(g.links) ? g.links : Array.isArray(g.edges) ? g.edges : [];
+  const files = new Set(g.nodes.map((n) => n.source_file).filter((f): f is string => typeof f === "string" && f !== ""));
+  if (out !== undefined) writeFileSync(out, r.stdout, { mode: 0o600 });
+  return { status: "built", tool, commit, nodes: g.nodes.length, edges: edges.length, files: files.size, sha256: createHash("sha256").update(r.stdout).digest("hex") };
+}
 
 /** A command gate's entry. The summary names the command, so a judge can tell what a passing gate ran. */
 function commandEntry(name: string, command: string, r: ExecResult, limitMs: number): GateEntry {
@@ -188,10 +241,10 @@ export async function runGates(o: RunOptions): Promise<GatesResult> {
     if (baseLockfiles.length > 0) await load(base, baseLockfiles, BASE);
     await refreshOsv();
 
-    log("scanning: sast, secret-scan, dependency-audit");
+    log("scanning: sast, secret-scan, dependency-audit, code graph");
     const scanVolumes = [dataMount(true), osvMount(true)];
     const packs = plan.rulePacks.flatMap((p) => ["--config", `/opt/gates/rules/${RULE_PACKS[p]}`]);
-    const [sast, secrets, deps] = await Promise.all([
+    const [sast, secrets, deps, graph] = await Promise.all([
       container(
         "sast",
         {
@@ -212,7 +265,16 @@ export async function runGates(o: RunOptions): Promise<GatesResult> {
         { network: "none", volumes: scanVolumes, argv: ["osv-scanner", "scan", "source", "-r", "--no-ignore", "--offline", "--format", "json", CANDIDATE, BASE] },
         t.scan,
       ),
+      // Code only (`update` runs no LLM); deep mode is denied to sessions (policies/tools.yaml). The
+      // tree is read-only, so the graph goes to the container's tmpfs and comes back on stdout.
+      container(
+        "graph",
+        { network: "none", volumes: scanVolumes, env: { GRAPHIFY_OUT: "/tmp/graphify-out", GRAPHIFY_NO_TIPS: "1" }, argv: ["sh", "-c", 'graphify update "$0" --no-cluster >&2 && cat "$GRAPHIFY_OUT/graph.json"', CANDIDATE] },
+        t.scan,
+      ),
     ]);
+    const graphResult = graphRecord(graph, candidate, graphifyTool(), t.scan, o.graphOut);
+    log(graphResult.status === "built" ? `code graph: ${String(graphResult.nodes)} nodes, ${String(graphResult.edges)} edges, ${String(graphResult.files)} files` : `code graph not built: ${graphResult.detail ?? ""}`);
     const sastJudgement = judgeSast(sast.stdout, sast.status, added, CANDIDATE);
     const secretsJudgement = judgeSecrets(secrets.stdout, secrets.status, added, CANDIDATE);
     const gates: GateEntry[] = [
@@ -254,6 +316,7 @@ export async function runGates(o: RunOptions): Promise<GatesResult> {
       passed: gates.every((g) => g.status === "pass"),
       gates,
       signals: { sink_added: sastJudgement.sinks, secret_material: secretsJudgement.secretMaterial },
+      graph: graphResult,
     };
   } finally {
     removeVolume(data);

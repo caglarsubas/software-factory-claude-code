@@ -71,6 +71,79 @@
         "sink_added",
         "secret_material"
       ]
+    },
+    "graph": {
+      "description": "The candidate's code graph (P2-13), advisory: built, or why not. graph.json itself is a separate artifact.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "built",
+            "error"
+          ]
+        },
+        "tool": {
+          "type": "string",
+          "pattern": "^graphifyy [0-9][^ ]*$"
+        },
+        "commit": {
+          "$ref": "defs.schema.json#/$defs/gitSha"
+        },
+        "nodes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "edges": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "tool",
+        "commit"
+      ],
+      "if": {
+        "properties": {
+          "status": {
+            "const": "built"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "nodes",
+          "edges",
+          "files",
+          "sha256"
+        ],
+        "properties": {
+          "nodes": true,
+          "edges": true,
+          "files": true,
+          "sha256": true
+        }
+      },
+      "else": {
+        "required": [
+          "detail"
+        ],
+        "properties": {
+          "detail": true
+        }
+      }
     }
   },
   "required": [

@@ -70,28 +70,130 @@ Commands that move the pin refuse to run inside a Claude Code session; only the 
 A release is a version tag on `main` whose version equals `plugin/.claude-plugin/plugin.json` and has its own section in [`CHANGELOG.md`](../../CHANGELOG.md). `pnpm check:release` holds the two together on every PR.
 
 1. **Bump.** A PR sets the new version in `plugin.json`, moves the `[Unreleased]` notes into a dated section for it, adds its link reference, and states any **Breaking** change for you.
-2. **Tag**, once that PR is merged and `ci` is green on the merge commit:
+2. **Tag:** the `release` workflow does it when you merge the bump.
+   - **When:** on the push to `main` whose `plugin.json` version changed.
+   - **Checks:** the version against the changelog, then it waits for `ci` to pass on the merge commit.
+   - **Then:** it tags that commit `vX.Y.Z` and publishes the GitHub release, with the changelog section as its notes.
+   - **On a failure,** nothing is tagged. Once the cause is fixed, run the workflow by hand ("Run workflow" on the `release` workflow's Actions page) with the merge commit's full SHA. The same run tags a release whose merge the workflow missed.
+   - **A tag you push yourself** (`git tag -a vX.Y.Z -m vX.Y.Z` on the merge commit, then `git push origin vX.Y.Z`) is still checked and published the same way.
+3. **Install and pin** it on your machine, as in [Install a release](#install-a-release): `git fetch --tags`, then `pnpm factoryctl release install v0.2.0` from your checkout. `factoryctl doctor` must then show no `fail`.
+4. **Roll back** with `factoryctl release use v0.19.0`: any installed release can be pinned again, except across a store schema change. Since `v0.20.0` (store schema 4), earlier releases refuse the store. Tasks keep the event history they ran on, so check the changelog's **Breaking** notes before you roll back across them.
 
-   ```bash
-   git switch main && git pull --ff-only
-   git tag -a v0.2.0 -m "v0.2.0" && git push origin v0.2.0
+Install and pin only from your own terminal: `release install` and `release use` refuse to run inside a Claude Code session. Your merge of the version bump is the release decision; the workflow only records it.
+
+## Onboard a target
+
+From `v0.22.0` (P2-11, [ADR 0003](adr/0003-onboarding-retention-and-purge.md)) `factoryctl onboard` takes a repository on as a target. Admission accepts a repository only when it has all three of these:
+
+1. **Every command gate green in the gate image.** Passing in the repository's own CI is not enough: the gates run the profile's commands in the gate image on every task, so they must pass there.
+2. **CI of its own.** A workflow in `.github/workflows`, besides the factory's, that runs on every PR.
+3. **A protected default branch:** branch protection or a ruleset. For this repository, that protection is the ruleset in [`.github/rulesets/main.json`](../../.github/rulesets/main.json), imported under Settings → Rules → Rulesets.
+
+The profile must also be valid and name its approvers. Admission changes nothing on GitHub: agents never push or hold credentials, and `factoryctl` performs every GitHub side effect.
+
+`onboard` is operator-only: it refuses to run inside Claude Code. It needs two things set up first:
+
+- **The App.** See [GitHub App and verdicts](#github-app-and-verdicts).
+- **Your own `FACTORY_GITHUB_TOKEN`.** A fine-grained token on the target with Contents, Workflows, Pull requests and Administration: write. It needs more than the App's token because the footprint PR carries workflow files, and the rulesets need Administration, which the App never holds.
+
+Each run takes the target one step further, then stops where you act. You can run the same command again at any point, including after a crash.
+
+1. **Take the inventory and run admission.**
+
+   ```zsh
+   factoryctl onboard OWNER/NAME
    ```
 
-   The `release` workflow then checks the tag against `plugin.json` and the changelog, waits for `ci` to pass on the tagged commit, and publishes the GitHub release with the changelog section as its notes. A tag that does not match fails the workflow, and no release is published.
-3. **Install and pin** it on your machine, as in [Install a release](#install-a-release): `git fetch --tags`, then `pnpm factoryctl release install v0.2.0` from your checkout. `factoryctl doctor` must then show no `fail`.
-4. **Roll back** with `factoryctl release use v0.1.2`: any installed release can be pinned again. Tasks keep the event history they ran on, so check the changelog's **Breaking** notes before you roll back across them.
+   It does three things:
+   - reads the default branch;
+   - drafts `$FACTORY_HOME/targets/OWNER__NAME/profile.yaml` from what it finds, the first time only;
+   - runs admission: the commands in the gate image, then CI, then protection.
 
-Tag and pin only from your own terminal: `release install` and `release use` refuse to run inside a Claude Code session.
+   From then on the profile is yours, and no run writes it again. If something fails, the command exits 1 and names it: fix it in the target or the profile, then run the command again.
+2. **Stop and review the profile.**
+   - Approvers and intake maintainers start as your GitHub login.
+   - Its header lists the files the release already holds at R3, and what the inventory could not decide.
+   - Set `protected_paths`, `restricted`, `invariants`, the budget and retention.
 
-## Admit a target
+   After an edit, run step 1 again: what you confirm must be what admission passed.
+3. **Confirm.**
 
-A repository becomes a factory target only when it has all three of these:
+   ```zsh
+   factoryctl onboard OWNER/NAME --confirm
+   ```
 
-1. **A test command that passes inside the gate image.** Passing in the repository's own CI is not enough: the gates run the test command in the gate image, so it must pass there.
-2. **CI.** The repository has its own CI, which runs on every PR.
-3. **A protected default branch.** For this repository, that protection is the ruleset in [`.github/rulesets/main.json`](../../.github/rulesets/main.json), imported under Settings → Rules → Rulesets.
+   It builds one commit of the footprint ([Footprint](#footprint)) and the layer below, pushes it to `software-factory/onboard`, and opens the PR.
+4. **Review and merge the PR on GitHub.** The PR must pass its `gates` check. You opened it, so where the repository requires an approval yours does not count: another maintainer approves it, or you merge as an admin.
+5. **Finish.**
 
-Admitting a target changes nothing on GitHub by itself: agents never push or hold credentials, and `factoryctl` performs every GitHub side effect.
+   ```zsh
+   factoryctl onboard OWNER/NAME
+   ```
+
+   It checks that the default branch holds the footprint as proposed and that `gates` passed on it. Then it applies the `factory-main` and `factory-branches` rulesets, and checks that the App reaches the repository.
+
+   If the App does not, the command prints the installation's settings URL. Open it, go to Repository access → Only select repositories, add the repository, Save, and run the command again. The target is then active.
+
+The layer is what onboarding writes for the people and the sessions that work in the target, beside the footprint:
+
+- **A marked block in `CODEOWNERS`.** It goes in `.github/CODEOWNERS` if the repository has no CODEOWNERS file. The approvers own every R3 and Restricted path and the factory's files.
+- **A marked section in `CLAUDE.md`.** It covers the release, `factory/**`, the R3 and Restricted paths, and `spec_dir`.
+- **`.claude/rules/factory-invariants.md`:** the profile's invariants.
+- **The factory's marketplace and plugin in `.claude/settings.json`**, pinned to the release. The plugin's hooks need Node 24.
+
+The layer merges into what the target already has. `target.json` records exactly what it added, so offboarding takes that out and nothing else.
+
+Once the target is active:
+
+- **Tasks.** `factoryctl task create --repo OWNER/NAME --title … --body-file …` uses the confirmed profile and the target's remote.
+- **Intake.** `factoryctl intake` with no profiles polls every active target whose profile has an `intake:` block.
+- **Changing the profile.** Both commands refuse a profile changed since it was confirmed. To change it, or to move the target to a new release by setting `factory_release`, edit the profile and run:
+
+  ```zsh
+  factoryctl onboard OWNER/NAME --update
+  ```
+
+  It proposes the change on `software-factory/update`. After the merge, step 5 finishes it, and until then the target takes no new tasks. A closed update leaves the target as it was.
+- **Checking it again.** `factoryctl onboard OWNER/NAME` applies again a ruleset that drifted, and checks that the App still reaches the repository.
+- **`doctor`** checks every target in the store: its state, its profile, its rulesets and the App's access.
+
+From a development checkout, name the release the footprint pins with `--factory-ref vX.Y.Z`, adding `--source DIR` when the checkout is elsewhere.
+
+## Offboard a target
+
+From `v0.23.0` `factoryctl offboard` lets a target go. It takes the factory's access away first, then takes the factory's files out of the target, then purges the factory's own data about it, by record ([ADR 0003](adr/0003-onboarding-retention-and-purge.md)). It is operator-only, refuses while `serve` runs, and needs the same `FACTORY_GITHUB_TOKEN` as `onboard`.
+
+Each run takes it one step further and stops where you act. Run the same command again at any point:
+
+```zsh
+factoryctl offboard OWNER/NAME
+```
+
+1. **Stop new work.** It refuses while a task of the target is unfinished: cancel the task or let it finish first. It also refuses while the onboarding PR is still open: close it first. From then on the target is `offboarding`, and `task create` and `intake` refuse it.
+2. **The App.** If the App still reaches the repository, the command prints the installation's settings URL. Open it, go to Repository access → Only select repositories, remove the repository, Save, and run the command again. If the App is suspended or gone, add `--app-unavailable --reason "…"`.
+3. **The rulesets.** It deletes `factory-main` and `factory-branches`. This happens before the PR, because the PR deletes the `gates` workflow that `factory-main` requires.
+4. **The PR.** It opens a PR from `software-factory/offboard` that deletes the footprint and takes the layer out:
+   - the marked blocks in `CODEOWNERS` and `CLAUDE.md`;
+   - the factory's entries in `.claude/settings.json`;
+   - every file onboarding created.
+
+   Merge it on GitHub, then run the command again. It checks that the default branch holds nothing of the factory's. A PR closed without merging is proposed again on the next run.
+5. **The purge.** It needs an idle factory, and a reachable replica if one is set. It deletes the following, in the home and the replica:
+   - every task of the target: its events, kept as tombstones, its objects, and its run, worktree and session directories;
+   - its eval captures and its telemetry;
+   - the mirror and the gate cache volume. The container engine must be running.
+
+   It then recomputes `budgets/calibration.json` from the events that remain, without the target. The target's directory in the private store goes last.
+
+The report gives the counts, the tier budgets before and after, and a scan of the home, the replica and the remaining events for the target's name, its directory name and its tasks' titles. It exits 1 if anything is left. Hits in `gates/` and `drills/` are your own records, and are kept. The release's own files are not scanned. A run after that says the target is not registered.
+
+If the repository is gone or out of reach, run `factoryctl offboard OWNER/NAME --local-only --reason "…"`. It skips the App, the rulesets and the PR, and purges only the factory's own data.
+
+Offboarding does not reach:
+
+- GitHub's own copies: the target's PRs, comments, check runs and `factory/**` branches, and the App's installation logs. Delete branches and the repository yourself if they must go.
+- Backups of `$FACTORY_HOME` or of the replica kept anywhere else.
+- Your gate evidence and drill records, which keep their IDs and aggregates.
 
 ## Run a task
 
@@ -141,6 +243,7 @@ An admitted issue gets one comment from the App: the task's ID, its state and it
 - **Pause:** `factoryctl pause T-0001 [--reason …]`. The task stops before its next step, once the step in flight has committed. Nothing fails, and the task shows `(paused)` in `status`.
   - `run` refuses a paused task; `factoryctl resume T-0001` lifts the pause and continues.
   - To stop at once, use `cancel`, which ends the task, or `halt`, which stops everything.
+- **Priority:** `factoryctl priority T-0001 low|normal|high [--reason …]` changes the order in which `serve` starts waiting tasks (from `v0.27.0`). The task's record keeps the priority it was created with; the command is an event, and the latest one wins.
 - **Take over:** `factoryctl takeover T-0001` opens your own Claude Code in the task's worktree. It resumes the last live build session if there is one, and starts a new session if there isn't.
   - **What it runs under:** the walls of a build session.
     - Settings, plugin and guard come from the installed release; only the release's settings apply (`--setting-sources ""`).
@@ -171,12 +274,27 @@ Every run takes its task's lease first (P2-03), and everything it writes carries
 - **Commands:** while it runs, the CLI is its client.
   - `pause` and `resume` without a task stop and restart new work.
   - `factoryctl drain` lets running tasks finish, then stops `serve`.
-  - `pause`, `resume` and `cancel` with a task go through it.
+  - `pause`, `resume`, `cancel` and `priority` with a task go through it.
   - `run`, `takeover` and `reject` refuse until it stops.
 - **API:** it listens on `127.0.0.1:7317` (`--port`; `--host` takes a tailnet address only).
   - Every request needs the bearer token in `$FACTORY_HOME/secrets/serve.token`.
   - Every request also needs a `Host` header naming the bound address, and its own `Origin` if it sends one.
   - Every write needs a JSON body.
+
+### Dashboard
+
+From `v0.26.0`, `factoryctl dashboard [--port N]` serves the board, each task's evidence and a live stream to your browser (P2-10). It prints an address on `127.0.0.1:7318` with a token in it; open that address. Ctrl-C stops it.
+
+- **Board:** a column for each group of states: received, building, reviewing, needs human, merging, merged and ended. Each card shows the state and gate, the tier, `paused`, and the cost so far. The most recently changed card comes first.
+- **Evidence drawer:** click a card for the spec and its acceptance criteria, the tier and the rules that set it, the base and candidate commits, each stage's model, cost and cap against the tier's budget, the gate results, the reviewers' findings, the verdict, the human decisions, the code graph's shadow decisions and the event timeline.
+- **Live:** the board and an open drawer refresh within about a second of each event.
+- **Commands (from `v0.27.0`):** they go to `serve`, which checks each one and writes it, as it does for the CLI. While no `serve` runs, the buttons are off, and the CLI does the same work.
+  - **The header:** pause new work, resume it, or drain `serve`.
+  - **The drawer:** pause or resume the task, set its priority (low, normal or high), or cancel it, which asks you to confirm. Each takes an optional reason, recorded with the command and shown under human decisions.
+  - **Not here yet:** approving or rejecting, requesting changes, re-running a stage, extending a budget and raising a tier. Use `factoryctl approve`, `reject` and `cancel`, and your GitHub review. STATUS's deviations log says why.
+- **Reads only:** it opens `factory.db` read-only and never writes it; commands are `serve`'s writes. It runs beside `serve` or a run, and during a halt.
+- **Drawer opens:** each time you open a task's drawer, one line goes to `$FACTORY_HOME/dashboard/drawer-opens.ndjson`, with the time, the task, its state and gate. A refresh is not an opening. `factoryctl report --week` counts them, for approval fatigue (§6): the rate should fall as the evidence gets easier to trust.
+- **Exposure:** loopback only. The token is new for each launch and reaches the page in the address's fragment, which the browser never sends to a server. Every data request and command needs that token and a `Host` naming the bound address, and any `Origin` it sends must be its own. A command must also be a JSON `POST`, which a cross-site form cannot send. The page loads nothing from elsewhere, and it shows task titles, findings and other target text as text, never as markup.
 
 ## Approve
 
@@ -223,7 +341,7 @@ Every run takes its task's lease first (P2-03), and everything it writes carries
 |---|---|
 | `factoryctl` crashed, was killed, the host rebooted, or you pressed Ctrl-C | `factoryctl resume T-0001`. Every step commits its files through an event, so a crash leaves each step committed or not. The run continues from the first step that is not, a file half-written by the crash is rolled forward or removed, and a transition lost in the crash is repaired. A push or PR the crash interrupted is looked up before anything runs: it is recorded if it happened and made later if not, never twice. Session processes and gate containers the dead run left behind are stopped. |
 | You edited or removed a file in `runs/T-0001/` | Its step runs again on the next `resume`, and so does every step that read it. A spec that changes needs your approval again. |
-| "T-0001 was started by a factoryctl without the commit protocol" | The task began on v0.1.x. Finish it with that release (`factoryctl release use v0.1.2`), or create a new task. |
+| "T-0001 was started by a factoryctl without the commit protocol" | The task began on v0.1.x, and v0.1.x cannot open the store since `v0.20.0`. Cancel it and create a new task. |
 | "T-0001 is running (pid …)" | Another `factoryctl` holds the run lock. A lock whose process has died, or whose pid now belongs to another process, is cleared on the next run; `halt`, `cancel` and `reject` never signal such a pid. |
 | A task `FAILED` | `factoryctl report T-0001` gives its category, one of the ten in [the taxonomy](#failure-taxonomy-and-weekly-review), and the cost of each stage. A failed task is final: fix the cause, then create a new task. |
 | A task should stop for now | `factoryctl pause T-0001`; it holds before its next step until `factoryctl resume T-0001`. |
@@ -418,6 +536,21 @@ Every failed task carries exactly one category (P1-07):
 
 Once a week, run `factoryctl report --week 2026-W42` (the ISO week, in UTC) and add the row it prints to the weekly table in STATUS. It counts the live tasks created that week by outcome: aggregates only, which is all the public repository may hold. Replayed tasks never count.
 
+## Code graph (shadow)
+
+From `v0.24.0` every gate run also builds the candidate's code graph with graphifyy, offline and with no LLM, on the read-only tree (P2-13). It never fails the gates. The pipeline commits it as `graph.json` beside each round's `gates.json`, and as `drift/<k>/graph.json` for each re-verification.
+
+From `v0.25.0` the policy step reads that graph as the blast radius:
+
+- **The walk:** from the changed files (a rename's old path too) back through the files that depend on them, up to 4 hops, to the nearest R3 or Restricted path in the policy and the target's profile. The dependency relations are graphifyy's own: calls, imports, inheritance and the like.
+- **Freshness:** a graph counts only when it describes the commit being judged. A graph of another commit is `stale`, a run without one is `missing`, and a graph that failed to build or parse is `error`; none of them gives a hop count.
+- **Shadow mode:** the `graph_reaches_protected_within_hops: 2` rule in `policies/risk.yaml` raises nothing yet. P3-05 measures it before it is enforced. The provisional tier and `policy-check` do not use the graph.
+- **The log:** each round's `blast.json` and each re-verification's `drift/<k>/blast.json` record the graph's status, the hops, the nearest guarded file, and the rule: whether it matched, the tier it would give, and the tier enforced.
+
+`factoryctl report T-…` ends with a "code graph (shadow)" line for each decision. `factoryctl report --week` counts the week's decisions: fresh, stale, missing and error, how often the rule matched, and how often it would have raised the tier.
+
+The graph is the target's own data: only `factoryctl` reads it, with a size cap, and no agent sees it.
+
 ## Kill switch
 
 Use it the moment an agent does something you did not expect, or a credential may be exposed. Choose the lightest step that is enough, and escalate.
@@ -499,6 +632,34 @@ factoryctl drill restore
 ```
 
 It records the restore time (RTO, limit 1 hour), how far the replica was behind (RPO, limit 1 minute), and any file not restored intact, under `$FACTORY_HOME/drills/`.
+
+**Purging by record.** From `v0.20.0` ([ADR 0003](adr/0003-onboarding-retention-and-purge.md)), the factory deletes what it recorded in one way only: a purge, which `offboard` and `prune` will run. A purge:
+
+- writes a tombstone for each task first, deleting its events in the same transaction;
+- deletes the objects only those tasks referenced, their directories and their OTel lines;
+- compacts the store, so nothing deleted stays in its file;
+- has the replica complete the same purge from its own record.
+
+A purge that stops part-way leaves its journal in `$FACTORY_HOME/purges/`, and `factoryctl prune` finishes it. A restore never brings a purged task back, and the restore drill fails if one does. `v0.20.0` migrates `factory.db` and the replica to store schema 4, and an older `factoryctl` refuses them afterwards: install it only when you will not roll back.
+
+### Retention
+
+From `v0.21.0` ([ADR 0003](adr/0003-onboarding-retention-and-purge.md)), each target keeps its evidence for its profile's `retention_days`, never longer than `config/factory.yaml`'s: the shorter of the two applies. Only finished tasks expire, counted from their last activity:
+
+- **`transcripts`:** the run's transcripts and the session directory go.
+- **`bundles`:** the whole run directory goes but `task.json`, with the worktree, the session directory and the eval captures. The task's events stay, so `status`, `report`, `budgets` and the calibration still see it; `status` marks it `(evidence expired)`.
+- **`otel`:** its telemetry goes from `$FACTORY_HOME/otel/`.
+
+A task that has not finished is never pruned, since it can still resume; `prune` lists the ones past retention for you to cancel or resume. Nothing expires on its own: `doctor` warns when something is due, and you run:
+
+```bash
+factoryctl prune --dry-run
+factoryctl prune
+```
+
+`prune` runs only while nothing else runs: no run, no `serve`, no session and no container. It refuses inside a Claude Code session. Each expiry is recorded as an event before anything goes, the replica deletes the same from its own record, and a restore leaves expired files out. A purge that stopped part-way finishes first.
+
+Do not prune before G2 is signed: the fixtures keep their bundles 30 days, and those bundles are G0 and G1 evidence.
 
 ## Runner container
 
@@ -603,5 +764,8 @@ G2 closes Phase 2, on the frozen system. `factoryctl gate G2` checks its six aut
 | `tokens/` | each live session's gateway token while it runs; never readable by a session |
 | `objects/` | the write-once object store: artifacts, task files and run evidence by digest; never readable by a session |
 | `replica.json`, `drills/` | where the replica is, and the drill records |
+| `purges/` | the journal of a purge that has not finished; `factoryctl prune` finishes it |
+| `targets/<owner>__<name>/` | the private store: each onboarded target's `target.json`, `profile.yaml`, `inventory.json` and `journal.ndjson`; the replica copies it, and `offboard` deletes it last |
 | `gates/<gate>/` | gate snapshots and evidence |
 | `HALT`, `halt.log` | the kill switch and its audit trail |
+| `dashboard/drawer-opens.ndjson` | each opening of the dashboard's evidence drawer: time, task, state and gate (P2-10) |

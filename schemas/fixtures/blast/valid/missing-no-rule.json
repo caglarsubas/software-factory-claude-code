@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0001",
+  "candidate_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "round": 1,
+  "drift": null,
+  "graph": {
+    "status": "missing",
+    "commit": null,
+    "detail": "the gates kept no graph"
+  },
+  "hops": null,
+  "nearest": null,
+  "reached": null,
+  "rule": null
+}

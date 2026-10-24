@@ -1,11 +1,24 @@
 name: release
 
-# Publishes the GitHub release for a version tag (ROADMAP P1-09) once the tag matches
-# plugin.json, CHANGELOG.md has its section, and factory CI passed on the tagged commit. The
-# operator pushes the tag; nothing here installs or pins a release (`factoryctl release install`).
+# Publishes the GitHub release for a version (ROADMAP P1-09) once its tag matches plugin.json,
+# CHANGELOG.md has its section, and factory CI passed on the tagged commit. Nothing here installs
+# or pins a release (`factoryctl release install`).
+#
+# - A push to main that changes plugin.json's version tags that commit and publishes it: the
+#   operator's merge of the version bump is the release decision (operator's decision, 2026-10-23).
+# - A version tag the operator pushes is published as before.
+# - workflow_dispatch with a commit on main tags and publishes the version that commit carries,
+#   for a release whose merge was missed.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "A commit on main (full SHA) whose plugin.json version has no tag yet"
+        required: true
+        type: string
 
 permissions: {}
 
@@ -22,23 +35,71 @@ jobs:
       contents: write
       checks: read
     steps:
+      - name: Which release
+        id: which
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          BEFORE: ${{ github.event.before }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          version_at() {
+            gh api -H "Accept: application/vnd.github.raw+json" "repos/$REPO/contents/plugin/.claude-plugin/plugin.json?ref=$1" --jq .version
+          }
+          tagged() {
+            gh api "repos/$REPO/git/ref/tags/$1" >/dev/null 2>&1
+          }
+          if [ "$EVENT" = push ] && [ "$REF_TYPE" = tag ]; then
+            echo "operator's tag $REF_NAME on $SHA"
+            { echo "sha=$SHA"; echo "tag=$REF_NAME"; echo "create=false"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$EVENT" = workflow_dispatch ]; then
+            if ! printf '%s' "$COMMIT" | grep -Eq '^[0-9a-f]{40}$'; then echo "::error::commit must be a full SHA"; exit 1; fi
+            status="$(gh api "repos/$REPO/compare/$COMMIT...main" --jq .status)"
+            case "$status" in identical|ahead) ;; *) echo "::error::$COMMIT is not on main ($status)"; exit 1 ;; esac
+            target="$COMMIT"
+          else
+            if printf '%s' "$BEFORE" | grep -Eq '^0+$'; then echo "no earlier commit to compare"; exit 0; fi
+            before="$(version_at "$BEFORE")"
+            now="$(version_at "$SHA")"
+            if [ "$before" = "$now" ]; then echo "version $now unchanged: nothing to release"; exit 0; fi
+            target="$SHA"
+          fi
+          tag="v$(version_at "$target")"
+          if tagged "$tag"; then
+            if [ "$EVENT" = workflow_dispatch ]; then echo "::error::$tag is already tagged"; exit 1; fi
+            echo "$tag is already tagged"
+            exit 0
+          fi
+          echo "release $tag on $target"
+          { echo "sha=$target"; echo "tag=$tag"; echo "create=true"; } >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.which.outputs.tag != ''
         with:
+          ref: ${{ steps.which.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.which.outputs.tag != ''
         with:
           node-version-file: .node-version
           # A release never reads a cache another workflow could have written.
           package-manager-cache: false
       - name: The tag matches plugin.json and CHANGELOG.md
+        if: steps.which.outputs.tag != ''
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.which.outputs.tag }}
         run: node scripts/check-release.ts --tag "$TAG" --notes "$RUNNER_TEMP/notes.md"
-      - name: Factory CI passed on the tagged commit
+      - name: Factory CI passed on the commit
+        if: steps.which.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          SHA: ${{ github.sha }}
+          SHA: ${{ steps.which.outputs.sha }}
         run: |
           for _ in $(seq 1 40); do
             conclusion="$(gh api "repos/$REPO/commits/$SHA/check-runs?check_name=ci" --jq '.check_runs[0].conclusion // "pending"')"
@@ -51,7 +112,15 @@ jobs:
           echo "::error::ci did not finish on $SHA within 20 minutes"
           exit 1
       - name: Publish the GitHub release
+        if: steps.which.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          TAG: ${{ steps.which.outputs.tag }}
+          SHA: ${{ steps.which.outputs.sha }}
+          CREATE: ${{ steps.which.outputs.create }}
+        run: |
+          if [ "$CREATE" = true ]; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$SHA" --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi

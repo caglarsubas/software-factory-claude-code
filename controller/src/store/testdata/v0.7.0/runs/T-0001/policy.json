@@ -1,0 +1,125 @@
+{
+  "tier": "R1",
+  "action": "auto_merge",
+  "reviews": [],
+  "trace": [
+    {
+      "source": "baseline",
+      "note": "default",
+      "matched": true,
+      "shadow": false,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "proposed",
+      "note": "proposed R1",
+      "matched": true,
+      "shadow": false,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "rule",
+      "rule": 0,
+      "note": "agent and CI guardrails",
+      "matched": false,
+      "shadow": false,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "rule",
+      "rule": 1,
+      "note": "security-sensitive areas",
+      "matched": false,
+      "shadow": false,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "rule",
+      "rule": 2,
+      "note": "schema migrations",
+      "matched": false,
+      "shadow": false,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "rule",
+      "rule": 3,
+      "note": "new dynamic-execution sink (from the SAST gate)",
+      "matched": false,
+      "shadow": false,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "rule",
+      "rule": 4,
+      "note": "dependency manifest changed",
+      "matched": false,
+      "shadow": false,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "rule",
+      "rule": 5,
+      "note": "large change",
+      "matched": false,
+      "shadow": false,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "rule",
+      "rule": 6,
+      "note": "secret material in the diff",
+      "matched": false,
+      "shadow": false,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "rule",
+      "rule": 7,
+      "note": "legal or licence text",
+      "matched": false,
+      "shadow": false,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "rule",
+      "rule": 8,
+      "note": "the task asks the factory to execute an operation",
+      "matched": false,
+      "shadow": false,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "rule",
+      "rule": 9,
+      "note": "code-graph blast radius; enforced only after P3-05",
+      "matched": false,
+      "shadow": true,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "rule",
+      "rule": 10,
+      "note": "profile: authentication",
+      "matched": false,
+      "shadow": false,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "rule",
+      "rule": 11,
+      "note": "profile restricted: production apply",
+      "matched": false,
+      "shadow": false,
+      "tierAfter": "R1"
+    },
+    {
+      "source": "rule",
+      "rule": 12,
+      "note": "uncertainty raises scrutiny, never lowers it",
+      "matched": false,
+      "shadow": false,
+      "tierAfter": "R1"
+    }
+  ]
+}

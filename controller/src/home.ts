@@ -29,6 +29,10 @@ export interface Home {
   halt: string;
   /** Gate evidence drafted by `factoryctl gate` (`gates/<gate>/`). */
   gates: string;
+  /** Purge journals (ADR 0003): a purge that stopped part-way resumes from its journal here. */
+  purges: string;
+  /** The private store (ADR 0003): each onboarded target's profile and onboarding record. */
+  targets: string;
 }
 
 export function factoryHome(env: NodeJS.ProcessEnv = process.env): Home {
@@ -50,6 +54,8 @@ export function factoryHome(env: NodeJS.ProcessEnv = process.env): Home {
     lock: join(root, "run.lock"),
     halt: join(root, "HALT"),
     gates: join(root, "gates"),
+    purges: join(root, "purges"),
+    targets: join(root, "targets"),
   };
 }
 

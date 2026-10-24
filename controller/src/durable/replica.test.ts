@@ -13,7 +13,7 @@ import { REPO_ROOT } from "../policy/load.ts";
 import { commitArtifacts } from "../stages/commit.ts";
 import { EventStore } from "../store/events.ts";
 import { hasObject, listObjects, objectPath, putObject, readObject, readTree, storeTree } from "./objects.ts";
-import { initReplica, readReplicaState, replicaStatus, restore, syncReplica } from "./replica.ts";
+import { copyTargets, initReplica, readReplicaState, replicaStatus, restore, syncReplica } from "./replica.ts";
 
 const scratch = mkdtempSync(join(tmpdir(), "durable-"));
 afterAll(() => {
@@ -128,15 +128,18 @@ describe("the replica", () => {
     try {
       seedTask(home, store);
       syncReplica(home);
-      // As an earlier release left it: no merge leases (P2-06), at the schema before them.
+      // As an earlier release left it: no merge leases (P2-06) and no tombstones (ADR 0003), at the schema before them.
       const old = new DatabaseSync(join(dir, "factory.db"));
-      old.exec("DROP TABLE merge_leases; UPDATE meta SET value = '2' WHERE key = 'schema_version'");
+      old.exec(`DROP TABLE merge_leases; DROP TABLE tombstones; DROP TRIGGER events_after_tombstone; DROP TRIGGER events_append_only_delete;
+        CREATE TRIGGER events_append_only_delete BEFORE DELETE ON events BEGIN SELECT RAISE(ABORT, 'events are append-only'); END;
+        UPDATE meta SET value = '2' WHERE key = 'schema_version'`);
       old.close();
       expect(syncReplica(home)).toMatchObject({ events: 0 });
       const replica = new DatabaseSync(join(dir, "factory.db"), { readOnly: true });
       try {
         expect(replica.prepare("SELECT name FROM sqlite_master WHERE name = 'merge_leases'").get()).toBeDefined();
-        expect(replica.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()).toEqual({ value: "3" });
+        expect(replica.prepare("SELECT name FROM sqlite_master WHERE name = 'tombstones'").get()).toBeDefined();
+        expect(replica.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()).toEqual({ value: "4" });
       } finally {
         replica.close();
       }
@@ -168,6 +171,33 @@ describe("the replica", () => {
     } finally {
       store.close();
     }
+  });
+});
+
+describe("the private store", () => {
+  it("is copied as it changes, never pruned because the home lacks a file, and comes back on a restore", async () => {
+    const home = newHome();
+    const dir = join(scratch, `replica-${String(n)}`);
+    initReplica(home, dir, "op");
+    EventStore.open(home.db).close();
+    const t = join(home.targets, "example__app");
+    mkdirSync(t, { recursive: true });
+    writeFileSync(join(t, "target.json"), '{"state":"drafted"}\n');
+    writeFileSync(join(t, "profile.yaml"), "schema_version: 1\n");
+    writeFileSync(join(t, "target.json.tmp-123"), "torn");
+    syncReplica(home);
+    const copy = join(dir, "targets/example__app");
+    expect(readFileSync(join(copy, "target.json"), "utf8")).toBe('{"state":"drafted"}\n');
+    expect(existsSync(join(copy, "target.json.tmp-123"))).toBe(false);
+    expect(copyTargets(home.targets, join(dir, "targets"))).toBe(0);
+    writeFileSync(join(t, "target.json"), '{"state":"active"}\n');
+    rmSync(join(t, "profile.yaml"));
+    syncReplica(home);
+    expect(readFileSync(join(copy, "target.json"), "utf8")).toBe('{"state":"active"}\n');
+    expect(existsSync(join(copy, "profile.yaml"))).toBe(true);
+    const target = factoryHome({ FACTORY_HOME: join(scratch, "restored-targets") });
+    await restore(dir, target);
+    expect(readFileSync(join(target.targets, "example__app/target.json"), "utf8")).toBe('{"state":"active"}\n');
   });
 });
 

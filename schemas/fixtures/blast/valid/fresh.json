@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0001",
+  "candidate_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "round": 1,
+  "drift": null,
+  "graph": {
+    "status": "fresh",
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "hops": 2,
+  "nearest": "src/auth/login.ts",
+  "reached": 2,
+  "rule": {
+    "within": 2,
+    "matched": true,
+    "shadow_tier": "R2",
+    "enforced_tier": "R1"
+  }
+}

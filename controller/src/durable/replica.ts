@@ -13,13 +13,24 @@
 // restored task's clone is rebuilt on its next run from the target and its latest committed
 // candidate bundle (stages/pipeline.ts); the outbox finds on GitHub whatever it had already
 // pushed or opened.
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+//
+// A purge (ADR 0003) is the one deletion. The sync copies the home's tombstones, and the replica
+// then completes each purge from its own record: the objects only the purged tasks referenced in
+// it, then their events. Nothing is ever deleted from the replica because the home lacks it: a
+// home that lost files to a disk fault must not take the backup down with it. A restore finishes
+// any purge the replica had not completed.
+//
+// The private store (`targets/`, ADR 0003) is small and rewritten in place: each sync copies the
+// files whose bytes changed, and a restore brings them back. Only an offboarding purge deletes a
+// target's directory from the replica.
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { backup, DatabaseSync } from "node:sqlite";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { writeAtomic } from "../fsutil.ts";
+import { TMP, writeAtomic } from "../fsutil.ts";
 import { ensureHome, runDir, type Home } from "../home.ts";
 import { EventStore, type FactoryEvent } from "../store/events.ts";
-import { hasObject, listObjects, objectPath, readObject, readTree } from "./objects.ts";
+import { deleteObject, hasObject, listObjects, objectPath, readObject, readTree } from "./objects.ts";
+import { deletionSet, expiredScopes, expires } from "./refs.ts";
 
 export const REPLICA_MARKER = "REPLICA.json";
 
@@ -86,6 +97,28 @@ export interface SyncResult {
   objects: number;
   last_id: number;
   synced_at: string;
+  /** Tasks whose purge the replica completed on this sync. */
+  purged: string[];
+}
+
+/**
+ * Completes, in one store, every purge its tombstones record (ADR 0003): first the objects only
+ * the tombstoned tasks referenced, by this store's own record, then their events. Objects go
+ * first, so a crash between leaves the events, and the next call finds the work again.
+ */
+export function applyTombstones(store: EventStore, objects: string): { tasks: string[]; events: number; objects: string[] } {
+  if (store.pendingTombstones().length === 0) return { tasks: [], events: 0, objects: [] };
+  // Under the write lock: no other sync adds an event naming an object between the plan and the deletion.
+  const done = store.exclusive(() => {
+    const pending = store.pendingTombstones();
+    const ids = new Set(pending.map((t) => t.task_id));
+    const all = store.taskIds();
+    const gone = deletionSet(all.filter((id) => ids.has(id)).map((id) => store.events(id)), all.filter((id) => !ids.has(id)).map((id) => store.events(id)), objects);
+    for (const d of gone) deleteObject(objects, d);
+    return { tasks: [...ids].sort(), events: store.purgeTasks(pending), objects: gone };
+  });
+  store.compact();
+  return done;
 }
 
 /**
@@ -94,7 +127,7 @@ export interface SyncResult {
  * quietly put the replica back on the home's own disk. `cache` keeps the replica's object list
  * between syncs in one process, so a sync reads the replica's disk only for what it copies.
  */
-export function syncReplica(home: Home, now: Date = new Date(), cache: { objects?: Set<string> } = {}): SyncResult | null {
+export function syncReplica(home: Home, now: Date = new Date(), cache: { objects?: Set<string>; tombstones?: number } = {}): SyncResult | null {
   const config = readReplicaConfig(home);
   if (config === null || !existsSync(home.db)) return null;
   const dir = config.path;
@@ -104,7 +137,15 @@ export function syncReplica(home: Home, now: Date = new Date(), cache: { objects
   const dbPath = join(dir, "factory.db");
   // The replica's schema is the store's own: open it through the store, so its migrations run, a
   // new release's included, before rows and the schema version are copied into it.
-  EventStore.open(dbPath).close();
+  const store = EventStore.open(dbPath);
+  try {
+    return copyInto(home, dir, dbPath, store, now, cache);
+  } finally {
+    store.close();
+  }
+}
+
+function copyInto(home: Home, dir: string, dbPath: string, store: EventStore, now: Date, cache: { objects?: Set<string>; tombstones?: number }): SyncResult {
   // Several writers may sync at once (a serve and its workers): the replica's write lock orders
   // them, and each copies only the rows after the replica's last one, read under that lock.
   const primary = new DatabaseSync(home.db, { readOnly: true });
@@ -118,7 +159,8 @@ export function syncReplica(home: Home, now: Date = new Date(), cache: { objects
     primary.exec("PRAGMA busy_timeout = 5000;");
     replica.exec("BEGIN IMMEDIATE");
     try {
-      lastId = (replica.prepare("SELECT COALESCE(MAX(id), 0) AS id FROM events").get() as { id: number }).id;
+      // The highest row id ever copied: sqlite_sequence keeps it after a purge deleted the rows themselves.
+      lastId = (replica.prepare("SELECT MAX(COALESCE((SELECT MAX(id) FROM events), 0), COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'events'), 0)) AS id").get() as { id: number }).id;
       const rows = primary.prepare("SELECT id, task_id, seq, type, body FROM events WHERE id > ? ORDER BY id").all(lastId) as { id: number; task_id: string; seq: number; type: string; body: string }[];
       const leases = primary.prepare("SELECT task_id, holder, epoch, expires_at FROM leases").all() as { task_id: string; holder: string; epoch: number; expires_at: number }[];
       const version = primary.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string } | undefined;
@@ -131,6 +173,10 @@ export function syncReplica(home: Home, now: Date = new Date(), cache: { objects
       const lease = replica.prepare("INSERT INTO leases (task_id, holder, epoch, expires_at) VALUES (?, ?, ?, ?)");
       for (const l of leases) lease.run(l.task_id, l.holder, l.epoch, l.expires_at);
       if (version !== undefined) replica.prepare("UPDATE meta SET value = ? WHERE key = 'schema_version'").run(version.value);
+      const hasTombstones = primary.prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'tombstones'").get() !== undefined;
+      const tombstones = hasTombstones ? (primary.prepare("SELECT task_id, purged_at, events, files, objects FROM tombstones").all() as { task_id: string; purged_at: string; events: number; files: number; objects: number }[]) : [];
+      const tombstone = replica.prepare("INSERT INTO tombstones (task_id, purged_at, events, files, objects) VALUES (?, ?, ?, ?, ?) ON CONFLICT (task_id) DO NOTHING");
+      for (const t of tombstones) tombstone.run(t.task_id, t.purged_at, t.events, t.files, t.objects);
       total = (replica.prepare("SELECT COUNT(*) AS n FROM events").get() as { n: number }).n;
       replica.exec("COMMIT");
       events = rows.length;
@@ -142,8 +188,14 @@ export function syncReplica(home: Home, now: Date = new Date(), cache: { objects
     primary.close();
     replica.close();
   }
-  // Objects after events: an event can name an object the replica gets on the next sync, never the reverse order on disk.
   const target = join(dir, "objects");
+  const applied = applyTombstones(store, target);
+  total -= applied.events;
+  // A purge, here or by another process, deleted objects: the object list this process kept is stale.
+  const tombstoned = store.tombstones().length;
+  if (cache.tombstones !== tombstoned) delete cache.objects;
+  cache.tombstones = tombstoned;
+  // Objects after events: an event can name an object the replica gets on the next sync, never the reverse order on disk.
   const have = (cache.objects ??= new Set(listObjects(target)));
   let objects = 0;
   for (const digest of listObjects(home.objects)) {
@@ -152,9 +204,10 @@ export function syncReplica(home: Home, now: Date = new Date(), cache: { objects
     have.add(digest);
     objects++;
   }
+  copyTargets(home.targets, join(dir, "targets"));
   const state: ReplicaState = { schema_version: 1, source: home.root, last_id: lastId, events: total, objects: have.size, synced_at: now.toISOString() };
   writeAtomic(join(dir, REPLICA_MARKER), `${JSON.stringify(state, null, 2)}\n`);
-  return { events, objects, last_id: lastId, synced_at: state.synced_at };
+  return { events, objects, last_id: lastId, synced_at: state.synced_at, purged: applied.tasks };
 }
 
 function copyObject(from: string, to: string, digest: string): void {
@@ -164,11 +217,30 @@ function copyObject(from: string, to: string, digest: string): void {
   writeAtomic(path, content);
 }
 
+/** Copies each file of the private store whose bytes differ: `<slug>/<file>`, nothing deeper, no temporary files. */
+export function copyTargets(from: string, to: string): number {
+  if (!existsSync(from)) return 0;
+  let copied = 0;
+  for (const slug of readdirSync(from, { withFileTypes: true })) {
+    if (!slug.isDirectory()) continue;
+    for (const file of readdirSync(join(from, slug.name), { withFileTypes: true })) {
+      if (!file.isFile() || TMP.test(file.name)) continue;
+      const content = readFileSync(join(from, slug.name, file.name));
+      const dest = join(to, slug.name, file.name);
+      if (existsSync(dest) && readFileSync(dest).equals(content)) continue;
+      mkdirSync(join(to, slug.name), { recursive: true, mode: 0o700 });
+      writeAtomic(dest, content);
+      copied++;
+    }
+  }
+  return copied;
+}
+
 /** Syncs now and then every `ms` while the process lives; a failed sync is logged and retried. */
 export function keepReplica(home: Home, log: (line: string) => void, ms = 1000): { stop: () => void } {
   if (readReplicaConfig(home) === null) return { stop: () => undefined };
   let failing = false;
-  const cache: { objects?: Set<string> } = {};
+  const cache: { objects?: Set<string>; tombstones?: number } = {};
   const tick = (): void => {
     try {
       syncReplica(home, new Date(), cache);
@@ -227,7 +299,7 @@ export interface RestoreResult {
   synced_at: string | null;
 }
 
-/** What a task's run directory should hold, by path: the latest version of each file the record names. */
+/** What a task's run directory should hold, by path: the latest version of each file the record names and no expiry covers. */
 export function runFiles(events: readonly FactoryEvent[], objects: string): Map<string, string> {
   const files = new Map<string, string>();
   for (const e of events) {
@@ -240,6 +312,8 @@ export function runFiles(events: readonly FactoryEvent[], objects: string): Map<
       for (const a of (e.payload["artifacts"] ?? []) as { path: string; digest: string }[]) files.set(a.path, a.digest);
     }
   }
+  const scopes = expiredScopes(events);
+  for (const path of files.keys()) if (expires(scopes, path)) files.delete(path);
   return files;
 }
 
@@ -268,6 +342,8 @@ export async function restore(from: string, home: Home): Promise<RestoreResult> 
   let files = 0;
   let events = 0;
   try {
+    // A purge the replica had recorded but not completed is completed here, never undone.
+    applyTombstones(store, home.objects);
     const ids = store.taskIds();
     for (const id of ids) {
       const all = store.events(id);
@@ -284,6 +360,7 @@ export async function restore(from: string, home: Home): Promise<RestoreResult> 
         files++;
       }
     }
+    copyTargets(join(from, "targets"), home.targets);
     return { tasks: ids.length, events, objects, files, missing, last_id: state.last_id, synced_at: state.synced_at };
   } finally {
     store.close();

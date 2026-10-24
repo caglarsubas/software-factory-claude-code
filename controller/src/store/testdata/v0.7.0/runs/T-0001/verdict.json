@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0001",
+  "candidate_commit": "5eef30a9fe4fd4f8120458719c3cafcb5621b0b0",
+  "tier": "R1",
+  "decision": "approve",
+  "confidence": 90,
+  "criteria": [
+    {
+      "ac_id": "AC-1",
+      "met": true,
+      "evidence": "the test gate passes"
+    }
+  ],
+  "blocking_findings": [],
+  "rationale": "AC-1 is met."
+}

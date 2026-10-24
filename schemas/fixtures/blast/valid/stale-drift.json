@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "task_id": "T-0001",
+  "candidate_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "round": null,
+  "drift": 1,
+  "graph": {
+    "status": "stale",
+    "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "detail": "the graph describes bbbbbbbbbbbb, not aaaaaaaaaaaa"
+  },
+  "hops": null,
+  "nearest": null,
+  "reached": null,
+  "rule": {
+    "within": 2,
+    "matched": false,
+    "shadow_tier": "R1",
+    "enforced_tier": "R1"
+  }
+}

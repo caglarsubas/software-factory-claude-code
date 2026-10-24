@@ -4,6 +4,7 @@ The factory's control plane (ROADMAP §2). Version 0 (P0-07) runs one task at a 
 
 ```bash
 pnpm factoryctl task create --profile profile.yaml --title "…" --body-file task.md [--untrusted] [--remote URL]
+pnpm factoryctl task create --repo OWNER/NAME --title "…" --body-file task.md   # an onboarded target's confirmed profile and remote
 pnpm factoryctl run T-0001          # until the task needs a human or ends
 pnpm factoryctl resume T-0001       # the same, after a stop, an approval, a halt, a crash, or a merged or closed PR
 pnpm factoryctl run T-0001 --attach # the same, with each session's messages as they arrive
@@ -20,6 +21,10 @@ pnpm factoryctl halt [--reason "…"] # kill switch v0; lift with: unhalt --reas
 pnpm factoryctl release install v0.1.0 | use TAG | status
 pnpm factoryctl gate G0 --begin     # then the fixture dry runs, then: gate G0
 pnpm factoryctl gate G1 --begin     # then a counted task to its merge, then: budgets, gate G1
+pnpm factoryctl prune [--dry-run] # expire finished tasks' evidence past retention (ADR 0003)
+pnpm factoryctl onboard OWNER/NAME [--confirm | --update]   # inventory, profile, STOP, footprint PR, rulesets, App (P2-11)
+pnpm factoryctl offboard OWNER/NAME [--local-only | --app-unavailable] [--reason "…"]   # App, rulesets, PR, then purge (P2-11)
+pnpm factoryctl intake [PROFILE.yaml…]   # labelled issues as tasks; with none, every onboarded target's
 pnpm factoryctl doctor
 ```
 
@@ -27,7 +32,7 @@ In operation, factoryctl runs from an installed release through `$FACTORY_HOME/b
 
 A run goes checkout → triage → spec → rounds of build → gates → review (code and security) → policy → approve → summarize → publish, and stops at `NEEDS_HUMAN`. It stops at the spec gate when the spec or the provisional tier calls for a human. It always stops at the merge gate: in Phase 0 and Phase 1 a human merges every tier.
 
-- **State:** `factory.db` is SQLite with append-only events, guarded by triggers and validated against `schemas/event.schema.json`. A task's state is a fold over its events, and only `factoryctl` writes `state_changed`.
+- **State:** `factory.db` is SQLite with append-only events, guarded by triggers and validated against `schemas/event.schema.json`. Only a purge deletes events, and only a tombstoned task's ([ADR 0003](../docs/factory/adr/0003-onboarding-retention-and-purge.md)). A task's state is a fold over its events, and only `factoryctl` writes `state_changed`.
 - **Artifacts:** each step commits its artifacts into `runs/<id>/` through the commit protocol (`stages/commit.ts`, P1-02):
   1. The files are staged as `<name>.pending`, each written atomically.
   2. One `artifact_committed` event records their digests and the digests of the step's inputs. **The event is the commit point.**
@@ -77,7 +82,7 @@ A run goes checkout → triage → spec → rounds of build → gates → review
   - The controller checks the task budget before every step and after every session (`budget_exceeded`). A session that never reports is charged its cap.
   - It also checks the wall clock of active time (`wall_clock`, 90 minutes), counted from run start and end events and a heartbeat, so waits for a human do not count. A timer aborts a session in flight when the clock runs out.
   - It checks the target's monthly cap (`budgets.monthly_usd` in its profile): reaching it pauses the task, which resumes in a new month or under a raised cap.
-- **Older tasks:** a task that a `factoryctl` without the commit protocol (v0.1.x) started is refused; finish it on that release.
+- **Older tasks:** a task that a `factoryctl` without the commit protocol (v0.1.x) started is refused. v0.1.x cannot open the store after v0.20.0's migration, so cancel it and create a new task.
 - **Manifest:** `manifest.json` records:
   - every artifact's digest;
   - the base and candidate commits;

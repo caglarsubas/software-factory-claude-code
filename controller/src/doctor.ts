@@ -5,12 +5,19 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_PERMISSIONS, appConfig, appInfo, appTokens, permissionDiff, readAppKey, type AppConfig } from "./github/app.ts";
+import { pendingJournals } from "./durable/purge.ts";
 import { replicaStatus } from "./durable/replica.ts";
+import { planRetention, profilePolicy } from "./durable/retention.ts";
 import { describeHalt, readHalt } from "./halt.ts";
 import type { Home } from "./home.ts";
 import type { Release } from "./release.ts";
 import { checkReleaseFiles } from "./release/install.ts";
+import { footprintRulesets } from "./governance/footprint.ts";
+import { appAccess, installationSettings } from "./target/github.ts";
+import { listTargets, profileDigest } from "./target/registry.ts";
+import type { Validator } from "./schemas/validate.ts";
 import { managedSettingsJson } from "./runner/managed.ts";
+import { createValidator } from "./schemas/validate.ts";
 import { EventStore } from "./store/events.ts";
 import { describeAlarm, telemetryConfig, TelemetryError, type ModelAlarm } from "./telemetry.ts";
 
@@ -96,10 +103,16 @@ export function doctor(home: Home, release: Release, keyFile: string, env: NodeJ
     const since = new Date(Date.now() - ALARM_DAYS * 86_400_000).toISOString();
     const store = EventStore.open(home.db);
     const alarms = store.allEvents().filter((e) => e.type === "alarm" && e.ts >= since);
+    // Retention (ADR 0003): what `factoryctl prune` would expire now, and what stays because it has not finished.
+    const plan = planRetention({ store, config: release.config.retention_days, policyFor: profilePolicy(home, store, createValidator()), now: new Date() });
     store.close();
+    const past = plan.expire.length + plan.unfinished.length;
+    add("retention", past === 0, past === 0 ? "nothing past retention" : `${String(plan.expire.length)} finished task(s) past retention: factoryctl prune${plan.unfinished.length === 0 ? "" : `; ${String(plan.unfinished.length)} unfinished, past it: cancel or resume them`}`, "warn");
     const latest = alarms.reduce<(typeof alarms)[number] | undefined>((a, e) => (a === undefined || e.ts > a.ts ? e : a), undefined);
     add("model alarms", latest === undefined, latest === undefined ? `no alias alarm in ${String(ALARM_DAYS)} days` : `${String(alarms.length)} alias alarm(s) in ${String(ALARM_DAYS)} days; latest ${latest.task_id} ${String(latest.payload["label"])}: ${describeAlarm(latest.payload as unknown as ModelAlarm)}`, "warn");
   }
+  const purges = pendingJournals(home);
+  add("purges", purges.length === 0, purges.length === 0 ? "no purge left unfinished" : `${String(purges.length)} purge(s) stopped part-way (${purges.map((j) => j.id).join(", ")}): factoryctl prune finishes them`, "warn");
   // Managed settings (P2-08): the runner's file must be what this release's policies generate, so the image enforces this release.
   try {
     const shipped = readFileSync(join(release.root, "runner/managed-settings.json"), "utf8");
@@ -169,6 +182,59 @@ export async function rulesetCheck(o: { repo: string; expected: Ruleset; token: 
   } catch (e) {
     return { name, status: "warn", detail: `could not reach GitHub: ${e instanceof Error ? e.message : String(e)}` };
   }
+}
+
+/**
+ * Each onboarded target (P2-11): where its onboarding stands, its profile against the one the
+ * operator confirmed, and once it is active, its footprint rulesets and the App's access to it.
+ * `factoryctl onboard OWNER/NAME` takes a target further, or repairs what drifted.
+ */
+export async function targetChecks(o: { home: Home; validator: Validator; token: string | null; api: string; env?: NodeJS.ProcessEnv; fetchFn?: typeof fetch }): Promise<Check[]> {
+  let targets;
+  try {
+    targets = listTargets(o.home, o.validator);
+  } catch (e) {
+    return [{ name: "targets", status: "fail", detail: e instanceof Error ? e.message : String(e) }];
+  }
+  let app: AppConfig | null = null;
+  try {
+    app = appConfig(o.home, o.env ?? process.env);
+  } catch {
+    // appCheck reports it.
+  }
+  const checks: Check[] = [];
+  for (const t of targets) {
+    const name = `target ${t.repo}`;
+    const again = `factoryctl onboard ${t.repo}`;
+    if (t.state === "offboarding") {
+      checks.push({ name, status: "warn", detail: `offboarding${t.offboard?.pr === undefined ? "" : ` (${t.offboard.pr.url})`}: factoryctl offboard ${t.repo} takes it further` });
+      continue;
+    }
+    if (t.state !== "active") {
+      checks.push({ name, status: "warn", detail: `${t.state}${t.pr === undefined ? "" : ` (${t.pr.url})`}: ${again} takes it further` });
+      continue;
+    }
+    let digest: string;
+    try {
+      digest = profileDigest(o.home, t.repo);
+    } catch (e) {
+      checks.push({ name, status: "fail", detail: `its profile is unreadable: ${e instanceof Error ? e.message : String(e)}` });
+      continue;
+    }
+    const drift = t.confirmed?.profile_digest !== digest;
+    checks.push({ name, status: drift ? "warn" : "ok", detail: drift ? `its profile changed since it was confirmed, so task create and intake refuse it: ${again} --update proposes the change` : `active on ${t.confirmed?.release.tag ?? "?"} since ${t.active?.at ?? "?"}` });
+    const fetchFn = o.fetchFn === undefined ? {} : { fetchFn: o.fetchFn };
+    if (o.token !== null) for (const r of footprintRulesets()) checks.push(await rulesetCheck({ repo: t.repo, expected: r, token: o.token, api: o.api, hint: again, ...fetchFn }));
+    if (app !== null) {
+      try {
+        const access = await appAccess({ app, api: o.api, repo: t.repo, ...fetchFn });
+        checks.push({ name: `${name} app`, status: access.installed ? "ok" : "fail", detail: access.installed ? access.detail : `${access.detail}: add it at ${installationSettings(app)}, then ${again}` });
+      } catch (e) {
+        checks.push({ name: `${name} app`, status: "warn", detail: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  }
+  return checks;
 }
 
 /**

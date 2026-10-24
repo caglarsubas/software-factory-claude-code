@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "repo": "example/app",
+  "remote": "https://github.com/example/app.git",
+  "default_branch": "main",
+  "state": "proposed",
+  "created_at": "2026-10-22T09:00:00.000Z",
+  "updated_at": "2026-10-23T09:00:00.000Z",
+  "confirmed": {
+    "at": "2026-10-22T10:00:00.000Z",
+    "by": "op",
+    "profile_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "release": {
+      "repo": "example/factory",
+      "sha": "3333333333333333333333333333333333333333",
+      "tag": "v0.22.0"
+    },
+    "branch": "software-factory/update",
+    "base": "2222222222222222222222222222222222222222",
+    "commit": "4444444444444444444444444444444444444444",
+    "layer": {
+      "created": [
+        ".factory/policy.yaml",
+        ".claude/rules/factory-invariants.md"
+      ],
+      "blocks": [
+        "CLAUDE.md",
+        ".github/CODEOWNERS"
+      ],
+      "settings": [
+        "enabledPlugins:software-factory@software-factory"
+      ]
+    },
+    "replaces": {
+      "at": "2026-10-22T10:00:00.000Z",
+      "by": "op",
+      "profile_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "release": {
+        "repo": "example/factory",
+        "sha": "3333333333333333333333333333333333333333",
+        "tag": "v0.22.0"
+      },
+      "branch": "software-factory/onboard",
+      "base": "1111111111111111111111111111111111111111",
+      "commit": "2222222222222222222222222222222222222222"
+    }
+  },
+  "pr": {
+    "number": 2,
+    "url": "https://github.com/example/app/pull/2"
+  },
+  "active": {
+    "at": "2026-10-22T11:00:00.000Z",
+    "rulesets": [
+      "factory-main",
+      "factory-branches"
+    ]
+  }
+}

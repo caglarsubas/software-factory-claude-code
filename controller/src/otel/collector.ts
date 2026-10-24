@@ -12,6 +12,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { writeAtomic } from "../fsutil.ts";
 
 const MAX_BODY = 8 * 1024 * 1024;
 const SIGNALS: Record<string, "metrics" | "logs" | "traces"> = { "/v1/metrics": "metrics", "/v1/logs": "logs", "/v1/traces": "traces" };
@@ -109,6 +110,66 @@ export async function startCollector(o: { dir: string; retentionDays: number; lo
       });
     }),
   };
+}
+
+interface Resource {
+  resource?: { attributes?: { key: string; value: { stringValue?: string } }[] };
+}
+
+const RESOURCES = ["resourceLogs", "resourceMetrics", "resourceSpans"] as const;
+const TASK_ID = /T-[0-9]{4,}/g;
+
+const resourceTask = (r: Resource): string | null => r.resource?.attributes?.find((a) => a.key === "factory.task_id")?.value.stringValue ?? null;
+
+/**
+ * Removes every exported resource of the tasks `drop` names (a purge or a retention, ADR 0003),
+ * rewriting a day file atomically only when something in it changed. An export left with no
+ * resource goes; a line that does not parse (a torn append) goes only if it names such a task.
+ * Run it only while no collector writes: a purge and a prune refuse unless the factory is idle.
+ */
+export function filterOtel(dir: string, drop: (task: string) => boolean): { removed: number; files: number } {
+  let removed = 0;
+  let files = 0;
+  if (!existsSync(dir)) return { removed, files };
+  for (const f of readdirSync(dir).filter((x) => DAY_FILE.test(x) && statSync(join(dir, x)).isFile()).sort()) {
+    const path = join(dir, f);
+    const before = removed;
+    const kept = readFileSync(path, "utf8").split("\n").flatMap((line) => {
+      if (line === "") return [];
+      let record: OtelRecord;
+      try {
+        record = JSON.parse(line) as OtelRecord;
+      } catch {
+        if ([...line.matchAll(TASK_ID)].some((m) => drop(m[0]))) {
+          removed++;
+          return [];
+        }
+        return [line];
+      }
+      const body = (record.body ?? {}) as Partial<Record<(typeof RESOURCES)[number], Resource[]>>;
+      let any = false;
+      let left = 0;
+      for (const key of RESOURCES) {
+        const list = body[key];
+        if (!Array.isArray(list)) continue;
+        const keep = list.filter((r) => {
+          const task = resourceTask(r);
+          return task === null || !drop(task);
+        });
+        if (keep.length !== list.length) any = true;
+        body[key] = keep;
+        left += keep.length;
+      }
+      if (!any) return [line];
+      removed++;
+      return left === 0 ? [] : [JSON.stringify({ ...record, body })];
+    });
+    if (removed === before) continue;
+    files++;
+    if (kept.length === 0) rmSync(path, { force: true });
+    else writeAtomic(path, `${kept.join("\n")}\n`);
+  }
+  return { removed, files };
 }
 
 /** Every stored export, oldest day first; a torn last line (a crash mid-append) is skipped. */
