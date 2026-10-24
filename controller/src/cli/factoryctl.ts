@@ -10,6 +10,7 @@
 //   factoryctl resume T-0001 [--attach] [--replay DIR] [--runner host|container]  the same, after a stop, a pause, a halt or a crash
 //   factoryctl serve [--replay DIR] [--max-tasks N] [--port N]  schedule tasks unattended, every live session in the runner
 //   factoryctl pause T-0001 [--reason TEXT]  stop the task at its next step boundary, until resume
+//   factoryctl priority T-0001 low|normal|high [--reason TEXT]  change the order serve starts tasks in
 //   factoryctl takeover T-0001               open its build session yourself; the result goes back through the gates
 //   factoryctl status [T-0001]
 //   factoryctl cancel T-0001
@@ -24,7 +25,7 @@
 //   factoryctl gate G0|G1|G2 --begin [--checkout DIR]... | gate G0|G1|G2 [--repo OWNER/NAME]
 //   factoryctl drill kill-switch | restore | serve-kill
 //   factoryctl prune [--dry-run]             expire finished tasks' evidence past retention; finish a stopped purge (ADR 0003)
-//   factoryctl dashboard [--port N]          the board, the evidence drawer and a live stream, read-only, on loopback
+//   factoryctl dashboard [--port N]          the board, the evidence drawer and a live stream on loopback; commands go through serve
 //   factoryctl doctor
 //
 // FACTORY_HOME holds run state (default ~/.factory); FACTORY_RELEASE overrides the release the
@@ -61,6 +62,7 @@ import { footprintRulesets } from "../governance/footprint.ts";
 import { beginGate, evaluateG0, writeEvidence } from "../gate/g0.ts";
 import { evaluateG1 } from "../gate/g1.ts";
 import { evaluateG2 } from "../gate/g2.ts";
+import { drawerOpenCounts, readDrawerOpens } from "../dashboard/opens.ts";
 import { DEFAULT_DASHBOARD_PORT, startDashboard } from "../dashboard/server.ts";
 import { CANARY_ENV, plantCanary, readCanary } from "../gate/canary.ts";
 import { appConfig, AppConfigError, appConfigPath, appInfo, appTokens, type AppTokens } from "../github/app.ts";
@@ -87,7 +89,7 @@ import { specDigest } from "../stages/commit.ts";
 import { runTask } from "../stages/pipeline.ts";
 import { REVIEWERS } from "../stages/reviewers.ts";
 import { EventStore, LeaseHeldError, type FactoryEvent } from "../store/events.ts";
-import { currentState, currentStatePayload, isPaused, isTerminal, transition } from "../task/lifecycle.ts";
+import { currentPriority, currentState, currentStatePayload, isPaused, isPriority, isTerminal, transition } from "../task/lifecycle.ts";
 import { createTask, loadProfile, readTask, taskRecord } from "../task/task.ts";
 import { targetReads } from "../target/github.ts";
 import { LayerError } from "../target/layer.ts";
@@ -921,6 +923,26 @@ async function main(): Promise<void> {
         out(liveHolder(home)?.task_id === id ? `${id} pauses at its next step boundary; continue it with: factoryctl resume ${id}` : `${id} paused; continue it with: factoryctl resume ${id}`);
         return;
       }
+      case "priority": {
+        const id = taskArg(positionals, 1, store);
+        const priority = positionals[2];
+        if (!isPriority(priority)) fail("usage: factoryctl priority T-0001 low|normal|high [--reason TEXT]");
+        const reason = values.reason === undefined ? {} : { reason: values.reason };
+        if (served !== null) {
+          await viaServe(`/v1/tasks/${id}/priority`, { priority, ...reason });
+          return;
+        }
+        const events = store.events(id);
+        if (isTerminal(currentState(events))) fail(`${id} has already ended`);
+        const now = currentPriority(readTask(home, id).priority, events);
+        if (now === priority) {
+          out(`${id} is already at ${now} priority`);
+          return;
+        }
+        store.append({ task_id: id, actor: { kind: "operator", id: operator() }, type: "command", payload: { command: "priority", priority, from: now, ...reason } });
+        out(`${id}: priority ${now} → ${priority}`);
+        return;
+      }
       case "takeover":
         await takeover(home, store, taskArg(positionals, 1, store));
         return;
@@ -1040,6 +1062,9 @@ async function main(): Promise<void> {
         const created = all.filter((e) => e.type === "task_created" && Date.parse(e.ts) >= start.getTime() && Date.parse(e.ts) < end.getTime()).map((e) => e.task_id);
         const c = shadowCounts(created.flatMap((t) => readBlasts(runDir(home, t))));
         out(`code graph (shadow): ${String(c.decisions)} decision(s), ${String(c.fresh)} fresh, ${String(c.stale)} stale, ${String(c.missing)} missing, ${String(c.error)} error; the rule matched ${String(c.matched)} and would have raised the tier ${String(c.raised)} time(s)`);
+        // Approval fatigue (§6): how often the operator opened the evidence drawer that week.
+        const d = drawerOpenCounts(readDrawerOpens(home), start, end);
+        out(`dashboard: ${String(d.opens)} drawer open(s) on ${String(d.tasks)} task(s), ${String(d.atGate)} at a human gate`);
         return;
       }
       case "slo": {

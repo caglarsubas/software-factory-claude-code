@@ -53,6 +53,16 @@ describe("serve API", () => {
     expect(await call({ host: `localhost:${String(port)}`, origin: `http://localhost:${String(port)}` })).toBe(200);
     expect(await call({ method: "POST", path: "/v1/tasks/T-0007/pause", type: "application/json", body: '{"reason":"look"}' })).toBe(200);
     expect(commands.at(-1)).toEqual({ command: "task-pause", task: "T-0007", reason: "look" });
+    expect(await call({ method: "POST", path: "/v1/tasks/T-0007/priority", type: "application/json", body: '{"priority":"high","reason":"release"}' })).toBe(200);
+    expect(commands.at(-1)).toEqual({ command: "priority", task: "T-0007", priority: "high", reason: "release" });
+  });
+
+  it("refuses a priority that is not one", async () => {
+    const before = commands.length;
+    for (const body of ['{"priority":"urgent"}', "{}", '{"priority":2}']) {
+      expect(await call({ method: "POST", path: "/v1/tasks/T-0007/priority", type: "application/json", body }), body).toBe(400);
+    }
+    expect(commands.length).toBe(before);
   });
 
   it("refuses a rebinding Host, a foreign Origin, a missing or wrong token, and a form-encoded write", async () => {
