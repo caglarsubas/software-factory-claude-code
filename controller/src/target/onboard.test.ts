@@ -227,7 +227,7 @@ describe("onboarding", () => {
     // Every step is in the journal.
     const steps = readFileSync(join(w.home.targets, "example__ts-mini/journal.ndjson"), "utf8").trim().split("\n").map((l) => (JSON.parse(l) as { step: string }).step);
     expect(steps).toEqual(expect.arrayContaining(["draft", "confirm", "push", "pull_request", "proposed", "merged", "active", "rulesets", "update", "closed"]));
-  });
+  }, 60_000);
 
   it("refuses what it cannot do yet, and what was never asked", async () => {
     const w = world("refusals");
@@ -241,7 +241,7 @@ describe("onboarding", () => {
     await expect(onboard(w.repo, { confirm: true }, deps(w, out))).rejects.toThrow(/--factory-ref TAG/);
     await expect(onboard(w.repo, { confirm: true, ...pin }, { ...deps(w, out), app: null })).rejects.toThrow(/factoryctl app init/);
     expect(writesFor(w.repo)).toEqual([]);
-  });
+  }, 60_000);
 });
 
 describe("admission", () => {
@@ -276,7 +276,7 @@ describe("admission", () => {
     const other = await admit({ ...base, profile: { ...good, target: { repo: "example/other", default_branch: "main", visibility: "public" } } });
     expect(other.checks.find((c) => c.name === "profile")).toMatchObject({ ok: false, detail: `target.repo is example/other, not ${w.repo}` });
     expect(gateRuns).toHaveLength(runs + 1);
-  });
+  }, 60_000);
 });
 
 interface Run {

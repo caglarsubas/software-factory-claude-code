@@ -57,7 +57,8 @@ describe("writeTar", () => {
     expect(readFileSync(join(out, longPath), "utf8")).toBe("export {};\n");
     expect(readFileSync(join(out, "src/é ü.txt"), "utf8")).toBe("unicode name\n");
     expect(lstatSync(join(out, "run.sh")).mode & 0o111).not.toBe(0);
-    expect(readlinkSync(join(out, "link"))).toBe("src/é ü.txt");
+    // macOS's tar decomposes a link's target (NFD); the gates extract on Linux, which keeps it as written.
+    expect(readlinkSync(join(out, "link")).normalize("NFC")).toBe("src/é ü.txt".normalize("NFC"));
   });
   it("lists exactly the committed paths", () => {
     expect(listTree(repo, "HEAD").map((e) => e.path).sort()).toEqual(

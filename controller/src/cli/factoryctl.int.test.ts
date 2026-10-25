@@ -3,7 +3,7 @@
 // pushed from the mirror and stops at the human merge gate. Zero tokens.
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { afterAll, describe, expect, it } from "vitest";
@@ -43,6 +43,9 @@ describe("factoryctl run with container gates", () => {
       const v = process.env[k];
       if (v !== undefined) env[k] = v;
     }
+    // The run builds the gate image if it is missing. Docker Desktop keeps buildx under ~/.docker,
+    // which the test's HOME hides, and the legacy builder cannot build the image.
+    env["DOCKER_CONFIG"] = process.env["DOCKER_CONFIG"] ?? join(homedir(), ".docker");
     const factoryctl = (args: string[]) => spawnSync(process.execPath, ["--disable-warning=ExperimentalWarning", CLI, ...args], { encoding: "utf8", env });
 
     expect(factoryctl(["task", "create", "--profile", profilePath, "--title", "Add isEmpty", "--body-file", join(root, "task.md"), "--remote", remote]).stdout.trim()).toBe("T-0001");
