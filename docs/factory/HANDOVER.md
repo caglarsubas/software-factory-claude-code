@@ -24,17 +24,8 @@ The development work continues in Claude Code on the operator's Mac, in their ch
    - Node 24.21.0 (`.node-version`) and `corepack enable` for pnpm 12.6.0 (`packageManager`);
    - Docker Desktop, running; git; `gh`, signed in with access to this repository (`gh auth status`);
    - Claude Code, signed in to the new account. Its own version does not matter for development; `takeover` checks it against the pin.
-2. **The checkout:**
-
-   ```bash
-   cd ~/path/to/software-factory-claude-code
-   git checkout main
-   git pull --prune --tags
-   pnpm install --frozen-lockfile
-   ```
-
-3. **The cloud-only environment:** unset `FACTORY_GATES_CA_FILE`, `FACTORY_GATES_FETCH_NETWORK` and `FACTORY_EGRESS_UPSTREAM` if a profile sets them. They exist for a cloud container's proxy; on the Mac the gates and the runner reach the network directly.
-4. **The latest release,** outside Claude Code, since moving the pin refuses inside it:
+2. **The cloud-only environment:** unset `FACTORY_GATES_CA_FILE`, `FACTORY_GATES_FETCH_NETWORK` and `FACTORY_EGRESS_UPSTREAM` if a profile sets them. They exist for a cloud container's proxy; on the Mac the gates and the runner reach the network directly.
+3. **The latest release,** outside Claude Code, since moving the pin refuses inside it, once the agent has brought the checkout up to date (below):
 
    ```bash
    pnpm factoryctl release install v0.27.0
@@ -45,11 +36,12 @@ The development work continues in Claude Code on the operator's Mac, in their ch
 
 ### In the first local session, by the agent
 
-1. **A green baseline:** `pnpm check`, then `pnpm test:gates` and `pnpm test:runner`, one at a time. The full gate image (with graphifyy) builds here for the first time outside CI; the cloud could not build it.
-2. **GitHub through `gh`:** `gh pr create`, `gh pr checks <n> --watch`, and `gh pr merge <n> --merge --match-head-commit <sha>` under the "Who merges" rule below. If a GitHub MCP server is configured instead, it serves the same.
-3. **No scheduled check-ins:** a local session has no reminders or PR subscriptions. Dated work (the pin move on 2026-10-28) starts when the operator opens a session that day; a PR is watched with `gh pr checks --watch` while the session runs.
-4. **The operator's Mac items** (Waiting on the operator) become possible from this session: the agent can run `doctor`, the live runner task and the attended host run once the operator agrees, since live runs bill their account. The operator-only commands still refuse inside Claude Code, also through `!`: the agent writes the exact command, and the operator runs it in their own terminal.
-5. **Permissions:** never `bypassPermissions`. The project's `.claude/` is a protected path: a settings change there goes through a PR the operator reviews.
+1. **Bring the checkout up to date:** `git status` first, and stop to ask if anything is uncommitted or the checkout is on another branch. Then `git checkout main`, `git pull --prune --tags` and `pnpm install --frozen-lockfile`.
+2. **A green baseline:** `pnpm check`, then `pnpm test:gates` and `pnpm test:runner`, one at a time. The full gate image (with graphifyy) builds here for the first time outside CI; the cloud could not build it.
+3. **GitHub through `gh`:** `gh pr create`, `gh pr checks <n> --watch`, and `gh pr merge <n> --merge --match-head-commit <sha>` under the "Who merges" rule below. If a GitHub MCP server is configured instead, it serves the same.
+4. **No scheduled check-ins:** a local session has no reminders or PR subscriptions. Dated work (the pin move on 2026-10-28) starts when the operator opens a session that day; a PR is watched with `gh pr checks --watch` while the session runs.
+5. **The operator's Mac items** (Waiting on the operator) become possible from this session: the agent can run `doctor`, the live runner task and the attended host run once the operator agrees, since live runs bill their account. The operator-only commands still refuse inside Claude Code, also through `!`: the agent writes the exact command, and the operator runs it in their own terminal.
+6. **Permissions:** never `bypassPermissions`. The project's `.claude/` is a protected path: a settings change there goes through a PR the operator reviews.
 
 ### Retiring the cloud
 
