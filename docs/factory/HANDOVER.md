@@ -4,15 +4,51 @@ A new Claude Code session picks up the factory's development from here. Read thi
 
 ## Starting a new session
 
-The work moves between sessions and Claude accounts. Nothing but this repository carries over: no reminder, scheduled check-in, PR subscription or plan file from an earlier session reaches a new one.
+The work moves between sessions and Claude accounts, and from 2026-10-25 from cloud sessions to a Claude Code session on the operator's Mac. Nothing but this repository carries over: no reminder, scheduled check-in, PR subscription or plan file from an earlier session reaches a new one.
 
 1. Read [`CLAUDE.md`](../../CLAUDE.md), then this file to the end, then STATUS's Current phase row and the deviations log.
-2. Check GitHub: open PRs (none at the last handover, 2026-10-25), the latest release (`v0.27.0`), and `ci` on `main`.
+2. Check GitHub: open PRs, the latest release (`v0.27.0` at the handover) and `ci` on `main`. At the handover no factory PR was open; three old dependabot PRs were (#5, #22 and #34). They are the operator's to close or rebase; #34 changes `.github/workflows/`, a guardrail.
 3. Branches:
    - `claude/epic-cannon-akxfwy` holds the pin move (What comes next, step 1). Its PR opens on or after 2026-10-28 02:38 UTC.
-   - `claude/epic-cannon-akxfwy-p2-13` was the branch for P2-13, P2-10 and this handover; restart it from `main` before using it again.
-4. Set your own reminder for the pin move's date if your session can (the earlier session's reminder was deleted at the handover).
+   - Every other `claude/*` branch is merged into `main`. Start new work on a fresh branch from `main`.
+4. On the first local session, work through [Moving the work to the operator's Mac](#moving-the-work-to-the-operators-mac) before anything else.
 5. Ask the operator for the one open decision: the pin move's version (What comes next, step 1).
+
+## Moving the work to the operator's Mac
+
+The development work continues in Claude Code on the operator's Mac, in their checkout, under another Claude account. The factory's own runs already live there (`$FACTORY_HOME`, default `~/.factory`). The switch is complete when every step below is done; record each in STATUS (the Factory release row, the deviations log) only where it changes what STATUS says.
+
+### Once, by the operator, in their own terminal
+
+1. **The toolchain**, as the operator guide's Prerequisites list:
+   - Node 24.21.0 (`.node-version`) and `corepack enable` for pnpm 12.6.0 (`packageManager`);
+   - Docker Desktop, running; git; `gh`, signed in with access to this repository (`gh auth status`);
+   - Claude Code, signed in to the new account. Its own version does not matter for development; `takeover` checks it against the pin.
+2. **The cloud-only environment:** unset `FACTORY_GATES_CA_FILE`, `FACTORY_GATES_FETCH_NETWORK` and `FACTORY_EGRESS_UPSTREAM` if a profile sets them. They exist for a cloud container's proxy; on the Mac the gates and the runner reach the network directly.
+3. **The latest release,** outside Claude Code, since moving the pin refuses inside it, once the agent has brought the checkout up to date (below):
+
+   ```bash
+   pnpm factoryctl release install v0.27.0
+   factoryctl doctor
+   ```
+
+   `$FACTORY_HOME` keeps its secrets (the API key file, the GitHub App key, `serve.token`) and the replica; nothing moves. Give the agent `doctor`'s output for STATUS's Factory release row.
+
+### In the first local session, by the agent
+
+1. **Bring the checkout up to date:** `git status` first, and stop to ask if anything is uncommitted or the checkout is on another branch. Then `git checkout main`, `git pull --prune --tags` and `pnpm install --frozen-lockfile`.
+2. **A green baseline:** `pnpm check`, then `pnpm test:gates` and `pnpm test:runner`, one at a time. The full gate image (with graphifyy) builds here for the first time outside CI; the cloud could not build it.
+3. **GitHub through `gh`:** `gh pr create`, `gh pr checks <n> --watch`, and `gh pr merge <n> --merge --match-head-commit <sha>` under the "Who merges" rule below. If a GitHub MCP server is configured instead, it serves the same.
+4. **No scheduled check-ins:** a local session has no reminders or PR subscriptions. Dated work (the pin move on 2026-10-28) starts when the operator opens a session that day; a PR is watched with `gh pr checks --watch` while the session runs.
+5. **The operator's Mac items** (Waiting on the operator) become possible from this session: the agent can run `doctor`, the live runner task and the attended host run once the operator agrees, since live runs bill their account. The operator-only commands still refuse inside Claude Code, also through `!`: the agent writes the exact command, and the operator runs it in their own terminal.
+6. **Permissions:** never `bypassPermissions`. The project's `.claude/` is a protected path: a settings change there goes through a PR the operator reviews.
+
+### Retiring the cloud
+
+- **Cloud sessions:** nothing is left running in them (no reminder, no PR subscription). Archive them on claude.ai/code.
+- **Merged branches** the cloud sessions left: `claude/awesome-gates-v2vo3h`, `claude/epic-cannon-akxfwy-p2-11` and `claude/epic-cannon-akxfwy-p2-13`. Delete them once the operator agrees: `git push origin --delete <branch>`. Keep `claude/epic-cannon-akxfwy` until the pin move merges.
+- **`factory/T-0014` and `factory/T-0015`** are the factory's own task branches, merged; they are the operator's to keep or delete.
+- **Cloud-session notes** (the end of this file) stay, for a session that goes back to the cloud.
 
 ## Where the work stands (2026-10-25)
 
@@ -147,7 +183,7 @@ Every release up to `v0.27.0` is tagged and published; the operator's home has `
 
 ## Cloud-session notes
 
-These apply to a Claude Code session in a cloud container:
+These apply only to a Claude Code session in a cloud container; a local session on the Mac needs none of them:
 
 - **Docker:** if Docker has stopped, restart it, then wait for `docker info` to answer:
 
