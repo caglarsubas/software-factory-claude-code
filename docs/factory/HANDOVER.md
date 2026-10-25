@@ -18,6 +18,8 @@ The work moves between sessions and Claude accounts, and from 2026-10-25 from cl
 
 The development work continues in Claude Code on the operator's Mac, in their checkout, under another Claude account. The factory's own runs already live there (`$FACTORY_HOME`, default `~/.factory`). The switch is complete when every step below is done; record each in STATUS (the Factory release row, the deviations log) only where it changes what STATUS says.
 
+**Progress (2026-10-25, first local session):** the toolchain is in place and none of the cloud-only variables is set; `v0.27.0` is installed and pinned, `doctor` clean but for `SSH_AUTH_SOCK`. The checkout is up to date. `pnpm check` and `pnpm test:gates` pass on the Mac after #76, which fixed tests that failed on macOS only. `pnpm test:runner` has not run on the Mac yet: Docker's address pools were taken by unrelated networks. The cloud is not retired yet.
+
 ### Once, by the operator, in their own terminal
 
 1. **The toolchain**, as the operator guide's Prerequisites list:
@@ -105,7 +107,7 @@ Two PRs, each a release, on the same branch, restarted from `main` after each me
 
 ## Waiting on the operator
 
-Every release up to `v0.27.0` is tagged and published; the operator's home has `v0.19.0` installed and pinned (STATUS's Factory release row).
+Every release up to `v0.27.0` is tagged and published; the operator's home has `v0.27.0` installed and pinned since 2026-10-25 (STATUS's Factory release row).
 
 - **Tagging is no longer the operator's step:** the `release` workflow tags and publishes a version when its bump merges (operator guide, Releases).
 - **The backfill is done:** `v0.20.0` to `v0.25.0`, merged before the workflow existed, were tagged and published by running it by hand with each merge commit.
