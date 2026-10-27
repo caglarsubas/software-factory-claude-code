@@ -4,21 +4,26 @@ A new Claude Code session picks up the factory's development from here. Read thi
 
 ## Starting a new session
 
-The work moves between sessions and Claude accounts, and from 2026-10-25 from cloud sessions to a Claude Code session on the operator's Mac. Nothing but this repository carries over: no reminder, scheduled check-in, PR subscription or plan file from an earlier session reaches a new one.
+The work moves between sessions and Claude accounts. From 2026-10-25 it runs in a Claude Code session on the operator's Mac, in their checkout; on 2026-10-27 it moves to another Claude account on the same Mac and checkout. Nothing but this repository carries over: no reminder, scheduled check-in, PR subscription or plan file from an earlier session reaches a new one.
 
 1. Read [`CLAUDE.md`](../../CLAUDE.md), then this file to the end, then STATUS's Current phase row and the deviations log.
 2. Check GitHub: open PRs, the latest release (`v0.27.0` at the handover) and `ci` on `main`. At the handover no factory PR was open; three old dependabot PRs were (#5, #22 and #34). They are the operator's to close or rebase; #34 changes `.github/workflows/`, a guardrail.
 3. Branches:
-   - `claude/epic-cannon-akxfwy` holds the pin move (What comes next, step 1). Its PR opens on or after 2026-10-28 02:38 UTC.
-   - Every other `claude/*` branch is merged into `main`. Start new work on a fresh branch from `main`.
-4. On the first local session, work through [Moving the work to the operator's Mac](#moving-the-work-to-the-operators-mac) before anything else.
-5. Ask the operator for the one open decision: the pin move's version (What comes next, step 1).
+   - `claude/epic-cannon-akxfwy` holds the pin move (What comes next, step 1). Its PR opens on or after 2026-10-28 02:38 UTC (10:38 on the operator's clock, CST).
+   - No other `claude/*` branch is left: the merged ones were deleted on 2026-10-27. Start new work on a fresh branch from `main`.
+4. The move to the operator's Mac is done (the next section). On the same Mac and checkout, a new account only checks that `git status` is clean on `main`, pulls, and runs `pnpm install --frozen-lockfile`; on another machine, work through that section again.
+5. No decision is open: the operator chose 2.1.306 for the pin move on 2026-10-25. Start with the pin move on or after its date.
 
 ## Moving the work to the operator's Mac
 
 The development work continues in Claude Code on the operator's Mac, in their checkout, under another Claude account. The factory's own runs already live there (`$FACTORY_HOME`, default `~/.factory`). The switch is complete when every step below is done; record each in STATUS (the Factory release row, the deviations log) only where it changes what STATUS says.
 
-**Progress (2026-10-25, first local session):** the toolchain is in place and none of the cloud-only variables is set; `v0.27.0` is installed and pinned, `doctor` clean but for `SSH_AUTH_SOCK`. The checkout is up to date. `pnpm check` and `pnpm test:gates` pass on the Mac after #76, which fixed tests that failed on macOS only. `pnpm test:runner` has not run on the Mac yet: Docker's address pools were taken by unrelated networks. The cloud is not retired yet.
+**Done (2026-10-25 to 27, the first local session):**
+
+- The toolchain is in place and none of the cloud-only variables is set. `v0.27.0` is installed and pinned, `doctor` clean but for `SSH_AUTH_SOCK`.
+- The baseline is green on the Mac: `pnpm check` (880 tests), `pnpm test:gates` (88) and `pnpm test:runner` (12). #76 fixed tests that failed on macOS only (`/var` and `/private/var`, a symlink target's Unicode form, Docker Desktop's buildx hidden by a test's `HOME`). #77 gave the unit suite a 30 s timeout: under the full suite's load on the Mac, tests that take about 1 s alone ran past Vitest's 5 s default.
+- **Docker on the Mac:** the operator's other projects keep many networks. If `docker network create` fails with "all predefined address pools have been fully subnetted", the operator lists `docker network ls --filter dangling=true` and runs `docker network prune`; the factory recreates `sf-egress-out` on demand.
+- The merged cloud branches are deleted. Left for the operator: archiving the cloud sessions on claude.ai/code.
 
 ### Once, by the operator, in their own terminal
 
@@ -48,11 +53,11 @@ The development work continues in Claude Code on the operator's Mac, in their ch
 ### Retiring the cloud
 
 - **Cloud sessions:** nothing is left running in them (no reminder, no PR subscription). Archive them on claude.ai/code.
-- **Merged branches** the cloud sessions left: `claude/awesome-gates-v2vo3h`, `claude/epic-cannon-akxfwy-p2-11` and `claude/epic-cannon-akxfwy-p2-13`. Delete them once the operator agrees: `git push origin --delete <branch>`. Keep `claude/epic-cannon-akxfwy` until the pin move merges.
+- **Merged branches** the cloud sessions left were deleted on 2026-10-27, with the operator's agreement. Keep `claude/epic-cannon-akxfwy` until the pin move merges.
 - **`factory/T-0014` and `factory/T-0015`** are the factory's own task branches, merged; they are the operator's to keep or delete.
 - **Cloud-session notes** (the end of this file) stay, for a session that goes back to the cloud.
 
-## Where the work stands (2026-10-25)
+## Where the work stands (2026-10-27)
 
 - **Phase:** P2, Team-grade. G0 and G1 are signed (`gates/G0.md`, `gates/G1.md`).
 - **Phase 2 core:** every core item, P2-01 to P2-09, is done.
@@ -123,8 +128,8 @@ Every release up to `v0.27.0` is tagged and published; the operator's home has `
 
 1. **The pin move** (a core release of its own, `v0.28.0`), opening on or after 2026-10-28 02:38 UTC. The branch `claude/epic-cannon-akxfwy` holds it. It changes the Claude Code and SDK pin, a guardrail, so the operator clicks its merge.
    - **Version:** the newest npm `stable` at or above 2.1.305 that is at least 7 days old (`minimumReleaseAge`), with the SDK whose `claudeCodeVersion` matches. 2.1.304 fails behind the gateway when ToolSearch is outside a session's tools.
-   - **The open decision:** on 2026-10-24 npm's `stable` was 2.1.308 (published 2026-10-22) and `latest` 2.1.310. The branch pins 2.1.306 (published 2026-10-21), whose probes are done. On Oct 28 only 2.1.306 clears the age gate; 2.1.308 clears it from Oct 29 and would need the probes again. The agent recommended staying on 2.1.306 and taking newer versions at the next §11 re-check; ask the operator before choosing.
-   - **State of the branch (2026-10-24):** `main` at `v0.27.0` (31745df) is merged in as 8748d13, with no conflict and the lockfile untouched. Until the age gate opens, pnpm refuses every script on this branch (the lockfile names packages younger than 7 days), so checks run through `./node_modules/.bin/` against the old install: `tsc` and `eslint` pass, and Vitest fails only the doctor and runner tests that compare the installed SDK (0.3.286) with the new pin.
+   - **The decision (the operator's, 2026-10-25): 2.1.306 / 0.3.306,** as the branch pins it, with newer versions at the next §11 re-check. On 2026-10-25 npm's `stable` was 2.1.308 and `latest` 2.1.310; 2.1.306 (published 2026-10-21) is the only one past the age gate on Oct 28, and its probes are done. SDK 0.3.306's `claudeCodeVersion` was still 2.1.306.
+   - **State of the branch (2026-10-24):** `main` has moved since: #74 to #77 (HANDOVER and STATUS, test-only fixes and `vitest.config.ts`) are not in the branch, so step 1's merge is needed. `main` at `v0.27.0` (31745df) is merged in as 8748d13, with no conflict and the lockfile untouched. Until the age gate opens, pnpm refuses every script on this branch (the lockfile names packages younger than 7 days), so checks run through `./node_modules/.bin/` against the old install: `tsc` and `eslint` pass, and Vitest fails only the doctor and runner tests that compare the installed SDK (0.3.286) with the new pin.
    - **Bump the pin in:** `config/factory.yaml`, `controller/package.json` and the lockfile, `runner/Dockerfile` (URLs and checksums), the CI workflows' `npx` lines, and the `verify-tools` test fixture.
    - **Adapt to:**
      - tool search through the gateway;
