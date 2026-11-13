@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { ensureHome, factoryHome, sessionDir } from "../home.ts";
 import { loadRelease } from "../release.ts";
+import { pnpmLocks } from "../runner/container.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { foreignMods, modelSettings, prepareSession, sessionSandbox, sessionSettings, type StageSpec } from "./options.ts";
 
@@ -34,6 +35,8 @@ describe("where Claude Code loads plugins and mods from (Claude Code 2.1.286 and
   it("lets them write the task's tool cache, where the env points the tools, and nothing else beyond their directories", () => {
     const dir = sessionDir(home, "T-0001");
     expect(sessionSandbox(inputs).filesystem?.allowWrite).toEqual([join(dir, "cache")]);
+    const runner = { image: "i", network: "n", proxyUrl: "http://p:3128", seccomp: "/s", tokenFile: "/t" };
+    expect(sessionSandbox({ ...inputs, runner }).filesystem?.allowWrite).toEqual([join(dir, "cache"), pnpmLocks()]);
     const env = prepareSession(inputs, spec).env;
     expect(env.XDG_CACHE_HOME).toBe(join(dir, "cache", "xdg-cache"));
     expect(env.XDG_DATA_HOME).toBe(join(dir, "cache", "xdg-data"));

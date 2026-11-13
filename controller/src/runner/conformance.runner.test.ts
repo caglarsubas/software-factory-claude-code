@@ -56,10 +56,13 @@ const done = { text: "done" };
 const SANDBOX_WRITES = [
   "python3 - <<'PY'",
   "import os",
-  "for name in ('XDG_CACHE_HOME', 'XDG_DATA_HOME', 'HOME'):",
+  "dirs = {name: os.environ[name] for name in ('XDG_CACHE_HOME', 'XDG_DATA_HOME', 'HOME')}",
+  "dirs['PNPM_LOCKS'] = '/tmp/pnpm-store-operation-locks-%d' % os.getuid()",
+  "dirs['TMP'] = '/tmp'",
+  "for name, path in dirs.items():",
   "    try:",
-  "        os.makedirs(os.environ[name], exist_ok=True)",
-  "        with open(os.path.join(os.environ[name], 'sf-probe'), 'w') as f:",
+  "        os.makedirs(path, exist_ok=True)",
+  "        with open(os.path.join(path, 'sf-probe'), 'w') as f:",
   "            f.write('x')",
   "        print(name, 'WRITABLE')",
   "    except OSError as e:",
@@ -249,6 +252,9 @@ describe("runner conformance (P2-01)", () => {
     expect(writes).toContain("XDG_CACHE_HOME WRITABLE");
     expect(writes).toContain("XDG_DATA_HOME WRITABLE");
     expect(writes).toMatch(/^HOME DENIED/m);
+    // pnpm 12's lock directory, at the path it fixes; the rest of /tmp holds the CLI's sockets.
+    expect(writes).toContain("PNPM_LOCKS WRITABLE");
+    expect(writes).toMatch(/^TMP DENIED/m);
   }, 300_000);
 
   it.runIf(online)("installs and tests both fixture targets through the egress proxy, which they leave only for the registries", async () => {

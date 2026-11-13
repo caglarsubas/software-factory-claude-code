@@ -94,6 +94,14 @@ export function runnerUser(): string {
   return uid === 0 ? "10001:10001" : `${String(uid)}:${String(gid)}`;
 }
 
+/**
+ * Where pnpm 12 takes its store's operation locks, for the runner's uid: a path it fixes under
+ * /tmp (TMPDIR does not move it). The runner gives it a tmpfs of its own, and the sandbox lets
+ * commands write it (sessionSandbox); the rest of /tmp, where the CLI keeps its bridge sockets,
+ * stays closed to them.
+ */
+export const pnpmLocks = (): string => `/tmp/pnpm-store-operation-locks-${runnerUser().split(":")[0] ?? ""}`;
+
 /** The directories a worktree made with `git clone --shared` borrows its objects from. */
 export function alternates(worktree: string): string[] {
   const file = join(worktree, ".git/objects/info/alternates");
@@ -143,6 +151,7 @@ export function runArgs(i: RunArgsInput): string[] {
     "--security-opt", `seccomp=${s.seccomp}`,
     ...(s.apparmorUnconfined === true ? ["--security-opt", "apparmor=unconfined"] : []),
     "--user", runnerUser(),
+    "--tmpfs", `${pnpmLocks()}:rw,nosuid,nodev,noexec,size=16m`,
     "--network", s.network,
   ];
   for (const m of normalizeMounts(i.mounts)) args.push("--mount", `type=bind,src=${m.path},dst=${m.path}${m.readOnly ? ",readonly" : ""}`);

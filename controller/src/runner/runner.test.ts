@@ -13,7 +13,7 @@ import { loadRelease } from "../release.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { modelSettings, runnerMounts, type StageSpec } from "../session/options.ts";
 import { makeSpool, runPreflight, startBroker } from "./broker.ts";
-import { normalizeMounts, RUNNER_HARDENING, runArgs, runnerEnv, runnerUser, type RunnerSetup } from "./container.ts";
+import { normalizeMounts, pnpmLocks, RUNNER_HARDENING, runArgs, runnerEnv, runnerUser, type RunnerSetup } from "./container.ts";
 import { GENERATED, generated } from "./generate.ts";
 import { HOOKS_DIR, managedSettings, TOKEN_PATH, unionAllow } from "./managed.ts";
 import { NAMESPACE_SYSCALLS, UPSTREAM_SHA256 } from "./seccomp.ts";
@@ -107,6 +107,8 @@ describe("runner containers", () => {
     expect(line).toContain(RUNNER_HARDENING.join(" "));
     expect(line).toContain("--security-opt seccomp=/r/runner/seccomp/runner.json");
     expect(line).toContain(`--user ${runnerUser()}`);
+    expect(line).toContain(`--tmpfs ${pnpmLocks()}:rw,nosuid,nodev,noexec,size=16m`);
+    expect(pnpmLocks()).toBe(`/tmp/pnpm-store-operation-locks-${runnerUser().split(":")[0] ?? ""}`);
     expect(runnerUser()).not.toMatch(/^0:/);
     expect(line).toContain("--network sf-run-t-0001");
     expect(line).toContain("--mount type=bind,src=/h/worktrees/T-0001,dst=/h/worktrees/T-0001 ");

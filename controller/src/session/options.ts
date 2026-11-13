@@ -15,7 +15,7 @@ import { sessionSpawner } from "../proc.ts";
 import { readDefinition, toAgent } from "../plugin/agents.ts";
 import type { Release } from "../release.ts";
 import { makeSpool, type BrokerSpool } from "../runner/broker.ts";
-import { alternates, containerSpawner, type Mount, type RunnerSetup } from "../runner/container.ts";
+import { alternates, containerSpawner, pnpmLocks, type Mount, type RunnerSetup } from "../runner/container.ts";
 import type { Validator } from "../schemas/validate.ts";
 import { telemetryEnv, type Telemetry } from "../telemetry.ts";
 import { sessionEnv, type SessionEnv } from "./env.ts";
@@ -182,14 +182,16 @@ export function sessionSandbox(inputs: SessionInputs): SandboxSettings {
   // directory (dev-mods), its home's .claude, or the release's plugin (2.1.299 fixed sandboxed
   // writes into a --plugin-dir; the release is also read-only on disk). Besides its working and
   // additional directories, it may write only the task's tool cache (corepack, pnpm's store, uv;
-  // env.ts), never the session's home.
+  // env.ts) and, in the runner, pnpm's lock directory (its own tmpfs there; on the host it is
+  // the operator's), never the session's home.
   const dir = sessionDir(inputs.home, inputs.taskId);
+  const locks = inputs.runner === undefined ? [] : [pnpmLocks()];
   return {
     enabled: true,
     failIfUnavailable: true,
     allowUnsandboxedCommands: false,
     network: { allowedDomains: REGISTRIES },
-    filesystem: { allowWrite: [join(dir, "cache")], denyWrite: [".claude/**", join(dir, "claude"), join(dir, "home", ".claude"), inputs.release.pluginDir], denyRead: secretPaths(inputs.home) },
+    filesystem: { allowWrite: [join(dir, "cache"), ...locks], denyWrite: [".claude/**", join(dir, "claude"), join(dir, "home", ".claude"), inputs.release.pluginDir], denyRead: secretPaths(inputs.home) },
   };
 }
 
