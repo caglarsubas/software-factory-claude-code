@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { ensureHome, factoryHome, sessionDir } from "../home.ts";
 import { loadRelease } from "../release.ts";
+import { pnpmLocks } from "../runner/container.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { foreignMods, modelSettings, prepareSession, sessionSandbox, sessionSettings, type StageSpec } from "./options.ts";
 
@@ -29,6 +30,19 @@ describe("where Claude Code loads plugins and mods from (Claude Code 2.1.286 and
   it("keeps a session's sandboxed commands from writing there", () => {
     const dir = sessionDir(home, "T-0001");
     expect(sessionSandbox(inputs).filesystem?.denyWrite).toEqual([".claude/**", join(dir, "claude"), join(dir, "home", ".claude"), release.pluginDir]);
+  });
+
+  it("lets them write the task's tool cache, where the env points the tools, and nothing else beyond their directories", () => {
+    const dir = sessionDir(home, "T-0001");
+    expect(sessionSandbox(inputs).filesystem?.allowWrite).toEqual([join(dir, "cache")]);
+    const runner = { image: "i", network: "n", proxyUrl: "http://p:3128", seccomp: "/s", tokenFile: "/t" };
+    expect(sessionSandbox({ ...inputs, runner }).filesystem?.allowWrite).toEqual([join(dir, "cache"), pnpmLocks()]);
+    const env = prepareSession(inputs, spec).env;
+    expect(env.XDG_CACHE_HOME).toBe(join(dir, "cache", "xdg-cache"));
+    expect(env.XDG_DATA_HOME).toBe(join(dir, "cache", "xdg-data"));
+    expect(env.NODE_USE_ENV_PROXY).toBe("1");
+    expect(env.HOME).toBe(join(dir, "home"));
+    expect(existsSync(join(dir, "cache"))).toBe(true);
   });
 
   it("refuses to start a session whose config directory holds a mod the factory did not write", () => {

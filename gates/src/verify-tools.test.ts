@@ -120,10 +120,11 @@ describe("runner image pins (P2-01)", () => {
     },
   };
 
-  it("are read with the gate image's, one CLI binary per architecture, each with a registry check", () => {
+  it("are read with the gate image's: the CLI binary, with a registry check, and uv for each architecture", () => {
     expect(DOCKERFILES).toContain("../runner/Dockerfile");
-    expect(all.map((p) => p.url.split("/")[4])).toEqual(["claude-agent-sdk-linux-x64", "claude-agent-sdk-linux-arm64"]);
-    for (const pin of all) expect(verification(pin, "claude.tgz").check, pin.url).toBeTypeOf("function");
+    expect(all.map((p) => p.url.split("/")[4])).toEqual(["claude-agent-sdk-linux-x64", "uv", "claude-agent-sdk-linux-arm64", "uv"]);
+    for (const pin of all) expect(() => verification(pin, "file"), pin.url).not.toThrow();
+    for (const pin of all.filter((p) => p.url.startsWith("https://registry.npmjs.org/"))) expect(verification(pin, "claude.tgz").check, pin.url).toBeTypeOf("function");
   });
   it("pin base images by digest and Debian packages by version", () => {
     const stages = [...runner.matchAll(/^FROM \S+ AS (\S+)$/gm)].map((m) => m[1] ?? "");

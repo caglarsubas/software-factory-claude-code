@@ -29,14 +29,21 @@ updates:
         dependency-type: development
       runtime-dependencies:
         dependency-type: production
-  # Gate image base images (pinned by digest). Tool downloads are pinned in the same Dockerfile
-  # by SHA-256 and verified in CI; bump those by hand with gates/src/verify-tools.ts.
+  # The gate and runner images' base images (pinned by digest), bumped together in one PR: the
+  # runner runs a target's commands with the gates' toolchain, and runner.test.ts keeps the pins
+  # equal. Tool downloads are pinned in the same Dockerfiles by SHA-256 and verified in CI; bump
+  # those by hand with gates/src/verify-tools.ts.
   - package-ecosystem: docker
-    directory: /gates/image
+    directories:
+      - /gates/image
+      - /runner
     schedule:
       interval: weekly
     cooldown:
       default-days: 7
+    groups:
+      base-images:
+        patterns: ["*"]
     ignore:
       # The image runs Node 24 LTS, like the factory (.node-version).
       - dependency-name: node

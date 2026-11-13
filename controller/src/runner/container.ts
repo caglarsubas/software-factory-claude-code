@@ -14,7 +14,8 @@
 //   temp, and read-only the bundle, the release's plugin, the mirror the worktree borrows its
 //   objects from, and the guard config;
 // - the session's token at TOKEN_PATH, read-only, denied to every tool and to the sandbox;
-// - an env of exactly the session allowlist, plus the variables the SDK sets for its CLI.
+// - an env of exactly the session allowlist, plus the variables the SDK sets for its CLI and
+//   the image's own constants (IMAGE_ENV).
 // Never mounted: $FACTORY_HOME/secrets, the API key, the App key, the engine socket.
 //
 // Every runner container is named for its task and labelled with the factoryctl run that owns
@@ -38,6 +39,12 @@ export const RUNNER_CLAUDE = "/usr/local/bin/claude";
 export const RUNNER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 /** Variables the Agent SDK sets for its CLI, forwarded as they are. */
 export const SDK_ENV = ["CLAUDE_AGENT_SDK_VERSION", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SDK_READS_SESSION_STATE"];
+/**
+ * The only names the image itself sets besides PATH: its Python base's own constants. Docker
+ * cannot unset them; the runner suite checks the image sets exactly these, so nothing else
+ * reaches a session that way.
+ */
+export const IMAGE_ENV = ["PYTHON_SHA256", "PYTHON_VERSION"];
 
 export const RUNNER_HARDENING: readonly string[] = [
   "--cap-drop", "ALL",
@@ -85,6 +92,19 @@ export function runnerUser(): string {
   const uid = process.getuid?.() ?? 10001;
   const gid = process.getgid?.() ?? 10001;
   return uid === 0 ? "10001:10001" : `${String(uid)}:${String(gid)}`;
+}
+
+/**
+ * Where pnpm 12 takes its store's operation locks, for the runner's uid: a path it fixes under
+ * /tmp (TMPDIR does not move it), and a directory it requires that user to own. The runner gives
+ * it a tmpfs of its own, owned by that user, and the sandbox lets commands write it
+ * (sessionSandbox); the rest of /tmp, where the CLI keeps its bridge sockets, stays closed to them.
+ */
+export const pnpmLocks = (): string => `/tmp/pnpm-store-operation-locks-${runnerUser().split(":")[0] ?? ""}`;
+
+function pnpmLocksTmpfs(): string {
+  const [uid = "", gid = ""] = runnerUser().split(":");
+  return `${pnpmLocks()}:rw,nosuid,nodev,noexec,size=16m,uid=${uid},gid=${gid},mode=0700`;
 }
 
 /** The directories a worktree made with `git clone --shared` borrows its objects from. */
@@ -136,6 +156,7 @@ export function runArgs(i: RunArgsInput): string[] {
     "--security-opt", `seccomp=${s.seccomp}`,
     ...(s.apparmorUnconfined === true ? ["--security-opt", "apparmor=unconfined"] : []),
     "--user", runnerUser(),
+    "--tmpfs", pnpmLocksTmpfs(),
     "--network", s.network,
   ];
   for (const m of normalizeMounts(i.mounts)) args.push("--mount", `type=bind,src=${m.path},dst=${m.path}${m.readOnly ? ",readonly" : ""}`);
