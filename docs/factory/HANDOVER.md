@@ -7,12 +7,11 @@ A new Claude Code session picks up the factory's development from here. Read thi
 The work moves between sessions and Claude accounts. From 2026-10-25 it runs in a Claude Code session on the operator's Mac, in their checkout; on 2026-10-27 it moves to another Claude account on the same Mac and checkout. Nothing but this repository carries over: no reminder, scheduled check-in, PR subscription or plan file from an earlier session reaches a new one.
 
 1. Read [`CLAUDE.md`](../../CLAUDE.md), then this file to the end, then STATUS's Current phase row and the deviations log.
-2. Check GitHub: open PRs, the latest release (`v0.27.0` until the pin move merges, then `v0.28.0`) and `ci` on `main`. On 2026-11-13 the pin move's PR, #83, was open, with dependabot's #5, #34, #80, #81 and #82. The dependabot PRs are the operator's to close or rebase; #34 changes `.github/workflows/`, a guardrail, and #80 and #82 change the gate image.
+2. Check GitHub: open PRs, the latest release (`v0.28.0` at the handover) and `ci` on `main`. On 2026-11-13 no factory PR was open; dependabot's #5, #34, #80, #81 and #82 were. The dependabot PRs are the operator's to close or rebase; #34 changes `.github/workflows/`, a guardrail, and #80 and #82 change the gate image.
 3. Branches:
-   - `claude/epic-cannon-akxfwy` holds the pin move, whose PR #83 is open for the operator's merge (What comes next, step 1). Delete the branch once it merges.
-   - No other `claude/*` branch is left: the merged ones were deleted on 2026-10-27. Start new work on a fresh branch from `main`.
+   - No `claude/*` branch is left: the merged ones are deleted, the pin move's on 2026-11-13. Start new work on a fresh branch from `main`.
 4. The move to the operator's Mac is done (the next section). On the same Mac and checkout, a new account only checks that `git status` is clean on `main`, pulls, and runs `pnpm install --frozen-lockfile`; on another machine, work through that section again.
-5. No decision is open: the operator chose 2.1.306 for the pin move on 2026-10-25, and its PR is open. Start with What comes next.
+5. No decision is open. Start with What comes next.
 
 ## Moving the work to the operator's Mac
 
@@ -22,6 +21,7 @@ The development work continues in Claude Code on the operator's Mac, in their ch
 
 - The toolchain is in place and none of the cloud-only variables is set. `v0.27.0` is installed and pinned, `doctor` clean but for `SSH_AUTH_SOCK`.
 - The baseline is green on the Mac: `pnpm check` (880 tests), `pnpm test:gates` (88) and `pnpm test:runner` (12). #76 fixed tests that failed on macOS only (`/var` and `/private/var`, a symlink target's Unicode form, Docker Desktop's buildx hidden by a test's `HOME`). #77 gave the unit suite a 30 s timeout: under the full suite's load on the Mac, tests that take about 1 s alone ran past Vitest's 5 s default.
+- **Load on the Mac:** the operator's other workloads (a local model server, emulators, other projects' containers) can push the load average above 12. Then `pnpm check` runs about twice as long, and two tests can fail on timing alone: `pipeline.test.ts`'s cleanup hook (Vitest's 10 s hook timeout) and the replica's four-writer test (SQLite's 5 s busy timeout). Seen on 2026-11-13 and passed on a re-run; if one fails twice, look at it.
 - **Docker on the Mac:** the operator's other projects keep many networks. If `docker network create` fails with "all predefined address pools have been fully subnetted", the operator lists `docker network ls --filter dangling=true` and runs `docker network prune`; the factory recreates `sf-egress-out` on demand.
 - The merged cloud branches are deleted. Left for the operator: archiving the cloud sessions on claude.ai/code.
 
@@ -46,14 +46,14 @@ The development work continues in Claude Code on the operator's Mac, in their ch
 1. **Bring the checkout up to date:** `git status` first, and stop to ask if anything is uncommitted or the checkout is on another branch. Then `git checkout main`, `git pull --prune --tags` and `pnpm install --frozen-lockfile`.
 2. **A green baseline:** `pnpm check`, then `pnpm test:gates` and `pnpm test:runner`, one at a time. The full gate image (with graphifyy) builds here for the first time outside CI; the cloud could not build it.
 3. **GitHub through `gh`:** `gh pr create`, `gh pr checks <n> --watch`, and `gh pr merge <n> --merge --match-head-commit <sha>` under the "Who merges" rule below. If a GitHub MCP server is configured instead, it serves the same.
-4. **No scheduled check-ins:** a local session has no reminders or PR subscriptions. Dated work (the pin move on 2026-10-28) starts when the operator opens a session that day; a PR is watched with `gh pr checks --watch` while the session runs.
+4. **No scheduled check-ins:** a local session has no reminders or PR subscriptions. Dated work starts when the operator opens a session that day; a PR is watched with `gh pr checks --watch` while the session runs.
 5. **The operator's Mac items** (Waiting on the operator) become possible from this session: the agent can run `doctor`, the live runner task and the attended host run once the operator agrees, since live runs bill their account. The operator-only commands still refuse inside Claude Code, also through `!`: the agent writes the exact command, and the operator runs it in their own terminal.
 6. **Permissions:** never `bypassPermissions`. The project's `.claude/` is a protected path: a settings change there goes through a PR the operator reviews.
 
 ### Retiring the cloud
 
 - **Cloud sessions:** nothing is left running in them (no reminder, no PR subscription). Archive them on claude.ai/code.
-- **Merged branches** the cloud sessions left were deleted on 2026-10-27, with the operator's agreement. Keep `claude/epic-cannon-akxfwy` until the pin move merges.
+- **Merged branches** the cloud sessions left were deleted on 2026-10-27, with the operator's agreement, and the pin move's `claude/epic-cannon-akxfwy` on 2026-11-13 after it merged.
 - **`factory/T-0014` and `factory/T-0015`** are the factory's own task branches, merged; they are the operator's to keep or delete.
 - **Cloud-session notes** (the end of this file) stay, for a session that goes back to the cloud.
 
@@ -79,7 +79,7 @@ The development work continues in Claude Code on the operator's Mac, in their ch
   - #66 (`v0.21.0`): retention per profile, `prune`, and old-bundle migration tests.
   - #67 (`v0.22.0`): `onboard`, and the fix for the kill-point suite's "fetch failed" flake (the stub GitHub's keep-alive).
   - #68 (`v0.23.0`): `offboard` and the round-trip test (the done-when). The round trip ran offline only; a live one is for P3-08.
-- **The pin move** to 2.1.306 / 0.3.306 is `v0.28.0`, #83, open from `claude/epic-cannon-akxfwy` on 2026-11-13 with `main` merged in. It changes the pin, a guardrail, so the operator merges it.
+- **The pin move** to 2.1.306 / 0.3.306 is done: `v0.28.0` (#83, `5014b09`), merged by the operator and installed on their Mac on 2026-11-13. Newer versions wait for the next §11 re-check (the operator's decision of 2026-10-25).
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
 
 ## P2-13, the code graph in shadow mode (2026-10-23)
@@ -112,30 +112,25 @@ Two PRs, each a release, on the same branch, restarted from `main` after each me
 
 ## Waiting on the operator
 
-Every release up to `v0.27.0` is tagged and published; the operator's home has `v0.27.0` installed and pinned since 2026-10-25 (STATUS's Factory release row).
+Every release up to `v0.28.0` is tagged and published; the operator's home has `v0.28.0` installed and pinned since 2026-11-13 (STATUS's Factory release row).
 
 - **Tagging is no longer the operator's step:** the `release` workflow tags and publishes a version when its bump merges (operator guide, Releases).
 - **The backfill is done:** `v0.20.0` to `v0.25.0`, merged before the workflow existed, were tagged and published by running it by hand with each merge commit.
-- **Installing stays with the operator:** `factoryctl release install`, `release use` and `factoryctl doctor`, for the releases they will run: the latest one, `v0.27.0` or the pin move's once it is out, not each in turn. Record it in STATUS's Factory release row.
-- **The eval suite's spend:** the `software-factory-ci` Console workspace reached its monthly API usage limit on 2026-10-22, and every eval run failed from then until it reset on 2026-11-01. The pin move's eval runs and the G2 sample's month draw on the same limit: the operator checks it before the freeze.
+- **Installing stays with the operator:** `factoryctl release install`, `release use` and `factoryctl doctor`, for the releases they will run: the latest one, not each in turn. Record it in STATUS's Factory release row.
+- **The eval suite's spend:** the `software-factory-ci` Console workspace reached its monthly API usage limit on 2026-10-22, and every eval run failed from then until it reset on 2026-11-01. The G2 sample's month draws on the same limit: the operator checks it before the freeze.
 - **The operator's Mac:** a local session (the Claude Desktop app, or `claude remote-control` in their checkout) can run what needs their machine: `doctor`, the live checks below, T-0020 and the mirror reset. The operator-only commands still refuse inside any Claude Code session.
 
-1. **The pin move's PR, #83:** review and merge it; then, once the eval run on the merge commit passes, install and use `v0.28.0` (What comes next, step 1).
-2. **One live task in the runner.** This bills the operator's account. Run one `ts-mini` R0 task with `factoryctl run T-… --runner container --attach`, then check `$FACTORY_HOME/runs/T-…/egress/proxy.ndjson` for its requests on the gateway route. Once the pin move is installed, run one again on the new pin, before the G2 sample.
+1. **Retention:** `doctor` warned on 2026-11-13 of 2 finished tasks past retention (`factoryctl prune`, operator-only) and 4 unfinished ones past it, to cancel or resume. The unfinished tasks are T-0002, T-0004, T-0005, T-0006 and T-0020 (item 3).
+2. **One live task in the runner.** This bills the operator's account. Run one `ts-mini` R0 task with `factoryctl run T-… --runner container --attach`, then check `$FACTORY_HOME/runs/T-…/egress/proxy.ndjson` for its requests on the gateway route. The pin move is installed: run it on the new pin, before the G2 sample. It is also where 2.1.306's tighter Bash checks under `dontAsk` would show; a denial there is a finding for the next release.
 3. **T-0020** is admitted from an issue and still `RECEIVED`: run it or cancel it.
 4. **One attended host run** (`factoryctl run T-… --attach`, without `--runner container`) is the first check, on macOS, of `v0.18.0`'s sandbox rule that keeps a session's commands out of its config directory.
 5. **Before the G2 sample:** reset both fixture mirrors to the frozen release. `v0.15.0` changed both fixture bases. Use `node scripts/mirror-fixture.ts NAME --footprint --factory-ref TAG --push --reset --rulesets`.
 
 ## What comes next
 
-1. **The pin move** (`v0.28.0`): #83 is open from `claude/epic-cannon-akxfwy`. It changes the Claude Code and SDK pin, a guardrail, so the operator clicks its merge once CI is green.
-   - **Done on 2026-11-13:** `main` (through #78) merged into the branch; npm's tags and the SDK pairing re-checked (0.3.306's `claudeCodeVersion` is 2.1.306; `stable` is now 2.1.311); the advisory check (one new advisory, fixed in 2.1.251, affects neither pin); `pnpm install --frozen-lockfile` with the age gate on; every suite; CHANGELOG, STATUS, the threat model and this file. The PR body carries the probe results.
-   - **Newer versions** wait for the next §11 re-check (the operator's decision of 2026-10-25).
-   - **Live checks** that only a real session shows: tighter Bash checks in 2.1.306 that become denials under `dontAsk`. The live `ts-mini` R0 runner task and the attended host run (Waiting on the operator) are where they show; a denial there is a finding for the next release.
-   - **After the merge:** the `release` workflow tags and publishes `v0.28.0` once `ci` passes on the merge commit. The visible eval suite runs on that push too (the merge changes `config/`); it must pass before the operator installs the release. Then the operator installs and uses it, runs `doctor`, puts their own `claude` at 2.1.306 for `takeover`, and runs the live checks below. Record the install in STATUS's Factory release row.
-2. **A flaky holdout case:** since 2026-11-01 the nightly holdout suite fails `triage-ci-config-r3` about one run in three (score 0.33: the triager was dispatched, but the reply had no closing `RESULT:` line the regex accepts). The runs keep no transcript. Find out whether the reply's format or the tier is wrong, before the freeze, since the G2 sample runs on the frozen system.
-3. **Parallel items:** P2-10, P2-11, P2-13 and P2-14 are done; P2-12 stays stopped.
-4. **The freeze and G2.**
+1. **A flaky holdout case:** since 2026-11-01 the nightly holdout suite fails `triage-ci-config-r3` about one run in three (score 0.33: the triager was dispatched, but the reply had no closing `RESULT:` line the regex accepts). The runs keep no transcript. Find out whether the reply's format or the tier is wrong, before the freeze, since the G2 sample runs on the frozen system.
+2. **Parallel items:** P2-10, P2-11, P2-13 and P2-14 are done; P2-12 stays stopped.
+3. **The freeze and G2.**
    - Tag the frozen release. The operator then runs the G2 procedure in the operator guide's Gate G2 section:
      - `gate G2 --begin`;
      - the 15-attempt sample;
@@ -144,7 +139,7 @@ Every release up to `v0.27.0` is tagged and published; the operator's home has `
      - the drift, restore and kill-switch drills;
      - `factoryctl gate G2`.
    - Open the `gates/G2` evidence PR and STOP for the operator's signature (G2-7). R2 auto-merge stays off.
-5. **Phase 3** only after G2 is signed (Appendix A, Phase 3 kickoff).
+4. **Phase 3** only after G2 is signed (Appendix A, Phase 3 kickoff).
 
 ## How the operator and the agent work
 
