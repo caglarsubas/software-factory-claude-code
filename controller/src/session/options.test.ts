@@ -37,6 +37,7 @@ describe("where Claude Code loads plugins and mods from (Claude Code 2.1.286 and
     const env = prepareSession(inputs, spec).env;
     expect(env.XDG_CACHE_HOME).toBe(join(dir, "cache", "xdg-cache"));
     expect(env.XDG_DATA_HOME).toBe(join(dir, "cache", "xdg-data"));
+    expect(env.NODE_USE_ENV_PROXY).toBe("1");
     expect(env.HOME).toBe(join(dir, "home"));
     expect(existsSync(join(dir, "cache"))).toBe(true);
   });

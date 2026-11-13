@@ -5,6 +5,8 @@
 // A live session (P2-02) adds ANTHROPIC_BASE_URL, the credential gateway; its token is a file.
 // XDG_CACHE_HOME and XDG_DATA_HOME point the target's tools (corepack, pnpm's store, uv) at the
 // task's own cache directory, which the sandbox lets their commands write (the session's home it does not).
+// NODE_USE_ENV_PROXY makes Node's own fetch follow the sandbox's HTTPS_PROXY, as curl, uv and pnpm
+// already do: corepack downloads pnpm with it, and without it tries DNS the runner's network lacks.
 import { join } from "node:path";
 import { OTEL_ENV, type OtelEnv } from "../telemetry.ts";
 
@@ -28,6 +30,7 @@ export const ENV_ALLOWLIST = [
   "GIT_CONFIG_NOSYSTEM",
   "XDG_CACHE_HOME",
   "XDG_DATA_HOME",
+  "NODE_USE_ENV_PROXY",
 ] as const;
 
 /** A runner session's additions (P2-01): never a credential; the CLI's token is a mounted file. */
@@ -85,6 +88,7 @@ export function sessionEnv(i: EnvInputs): SessionEnv {
     GIT_CONFIG_NOSYSTEM: "1",
     XDG_CACHE_HOME: join(i.cacheDir, "xdg-cache"),
     XDG_DATA_HOME: join(i.cacheDir, "xdg-data"),
+    NODE_USE_ENV_PROXY: "1",
     ...i.telemetry,
   };
 }
