@@ -107,7 +107,7 @@ describe("runner containers", () => {
     expect(line).toContain(RUNNER_HARDENING.join(" "));
     expect(line).toContain("--security-opt seccomp=/r/runner/seccomp/runner.json");
     expect(line).toContain(`--user ${runnerUser()}`);
-    expect(line).toContain(`--tmpfs ${pnpmLocks()}:rw,nosuid,nodev,noexec,size=16m`);
+    expect(line).toContain(`--tmpfs ${pnpmLocks()}:rw,nosuid,nodev,noexec,size=16m,uid=${runnerUser().replace(":", ",gid=")},mode=0700`);
     expect(pnpmLocks()).toBe(`/tmp/pnpm-store-operation-locks-${runnerUser().split(":")[0] ?? ""}`);
     expect(runnerUser()).not.toMatch(/^0:/);
     expect(line).toContain("--network sf-run-t-0001");

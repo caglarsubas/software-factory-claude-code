@@ -65,6 +65,8 @@ const SANDBOX_WRITES = [
   "        with open(os.path.join(path, 'sf-probe'), 'w') as f:",
   "            f.write('x')",
   "        print(name, 'WRITABLE')",
+  "        if name == 'PNPM_LOCKS' and os.stat(path).st_uid == os.getuid() and os.stat(path).st_mode & 0o777 == 0o700:",
+  "            print(name, 'OWNED')",
   "    except OSError as e:",
   "        print(name, 'DENIED', e.errno)",
   "PY",
@@ -254,6 +256,7 @@ describe("runner conformance (P2-01)", () => {
     expect(writes).toMatch(/^HOME DENIED/m);
     // pnpm 12's lock directory, at the path it fixes; the rest of /tmp holds the CLI's sockets.
     expect(writes).toContain("PNPM_LOCKS WRITABLE");
+    expect(writes).toContain("PNPM_LOCKS OWNED");
     expect(writes).toMatch(/^TMP DENIED/m);
   }, 300_000);
 
