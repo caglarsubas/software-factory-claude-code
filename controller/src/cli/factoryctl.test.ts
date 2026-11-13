@@ -2,7 +2,7 @@
 // in place of a model. The run to a merge gate with real container gates is in
 // factoryctl.int.test.ts.
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
@@ -14,7 +14,8 @@ import { EventStore } from "../store/events.ts";
 import { answer, assistant, result, toolUse } from "../session/transcript.ts";
 
 const CLI = join(REPO_ROOT, "controller/src/cli/factoryctl.ts");
-const root = mkdtempSync(join(tmpdir(), "factoryctl-"));
+// The real path: macOS's temp directory is behind the /var symlink, and a session's cwd is resolved.
+const root = realpathSync(mkdtempSync(join(tmpdir(), "factoryctl-")));
 afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });

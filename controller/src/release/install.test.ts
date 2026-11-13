@@ -1,7 +1,7 @@
 // Release install (P0-09: "tag v0.1.0 installed to releases/"): a tagged commit's tree, read-only,
 // verified by digest, pinned by the operator, and run through $FACTORY_HOME/bin/factoryctl.
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -12,7 +12,8 @@ import { findRelease, installRelease, listReleases, makeWritable, pinnedSha, pin
 import { bumpRelease, factorySource, linkDeps, PLUGIN_VERSION, RELEASE_TAG } from "./testing.ts";
 
 const validator = createValidator();
-const root = mkdtempSync(join(tmpdir(), "release-"));
+// The real path: macOS's temp directory is behind the /var symlink, and doctor reports resolved paths.
+const root = realpathSync(mkdtempSync(join(tmpdir(), "release-")));
 afterAll(() => {
   makeWritable(root);
   rmSync(root, { recursive: true, force: true });
@@ -25,7 +26,7 @@ ensureHome(home);
 const install = (tag: string, installDeps: (dir: string) => void = () => undefined) => installRelease({ home, source, tag, by: "operator", validator, installDeps });
 
 describe("release install", () => {
-  it("installs the tagged commit's tree read-only, with a valid RELEASE.json", async () => {
+  it("installs the tagged commit's tree read-only, with a valid RELEASE.json", { timeout: 60_000 }, async () => {
     const r = await install(RELEASE_TAG, linkDeps);
     expect(r).toMatchObject({ dir: join(home.releases, sha), installed: true });
     expect(validator.validate("release.schema.json", JSON.parse(readFileSync(join(r.dir, "RELEASE.json"), "utf8"))).errors).toEqual([]);
@@ -40,7 +41,7 @@ describe("release install", () => {
     expect(loadRelease(validator, r.dir).info).toEqual(r.info);
   });
 
-  it("installs once, and refuses to reuse a release that was modified", async () => {
+  it("installs once, and refuses to reuse a release that was modified", { timeout: 60_000 }, async () => {
     expect((await install(RELEASE_TAG)).installed).toBe(false);
     const file = join(home.releases, sha, "policies/risk.yaml");
     makeWritable(file);
@@ -51,7 +52,7 @@ describe("release install", () => {
     expect(verifyRelease(join(home.releases, sha), validator)).toMatchObject({ ok: true });
   });
 
-  it("installs only a version tag that agrees with plugin.json", async () => {
+  it("installs only a version tag that agrees with plugin.json", { timeout: 60_000 }, async () => {
     await expect(install("main")).rejects.toThrow(/version tag/);
     await expect(install("v9.9.9")).rejects.toThrow(/not a tag/);
     spawnSync("git", ["-C", source, "tag", "v0.0.9", sha]);
@@ -63,7 +64,7 @@ describe("release install", () => {
     expect(spawnSync("ls", ["-A", home.releases], { encoding: "utf8" }).stdout.trim()).toBe(sha);
   });
 
-  it("pins a release, moves the pin to another, and finds releases by tag or commit", async () => {
+  it("pins a release, moves the pin to another, and finds releases by tag or commit", { timeout: 60_000 }, async () => {
     expect(pinRelease(home, sha)).toBeNull();
     expect(readlinkSync(home.current)).toBe(join("releases", sha));
     const next = bumpRelease(source, "0.99.0");

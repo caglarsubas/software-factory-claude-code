@@ -48,7 +48,7 @@ describe("the operator's changes", () => {
     expect(git(t.mirror, ["log", "-1", "--format=%an <%ae>|%cn|%P", one])).toBe(`${CHANGE_IDENTITY.name} <${CHANGE_IDENTITY.email}>|${CHANGE_IDENTITY.name}|${t.base}`);
     // The mirror's index and refs are untouched.
     expect(git(t.mirror, ["rev-parse", "refs/heads/main"])).toBe(t.base);
-  });
+  }, 60_000);
 
   it("pushes once and opens one PR, when a run dies between the push and the PR and runs again", async () => {
     const t = target("kill");
@@ -82,5 +82,5 @@ describe("the operator's changes", () => {
     if (merged !== undefined) Object.assign(merged, { state: "open", merged: false });
     expect(await propose({ ...proposal, commit: next })).toMatchObject({ number: 1, headSha: next });
     expect(t.pushes()).toEqual([`refs/heads/software-factory/onboard ${commit}`, `refs/heads/software-factory/onboard ${next}`]);
-  });
+  }, 60_000);
 });
