@@ -7,12 +7,12 @@ A new Claude Code session picks up the factory's development from here. Read thi
 The work moves between sessions and Claude accounts. From 2026-10-25 it runs in a Claude Code session on the operator's Mac, in their checkout; on 2026-10-27 it moves to another Claude account on the same Mac and checkout. Nothing but this repository carries over: no reminder, scheduled check-in, PR subscription or plan file from an earlier session reaches a new one.
 
 1. Read [`CLAUDE.md`](../../CLAUDE.md), then this file to the end, then STATUS's Current phase row and the deviations log.
-2. Check GitHub: open PRs, the latest release (`v0.27.0` at the handover) and `ci` on `main`. At the handover no factory PR was open; three old dependabot PRs were (#5, #22 and #34). They are the operator's to close or rebase; #34 changes `.github/workflows/`, a guardrail.
+2. Check GitHub: open PRs, the latest release (`v0.27.0` until the pin move merges, then `v0.28.0`) and `ci` on `main`. On 2026-11-13 the pin move's PR was open, with dependabot's #5, #34, #80, #81 and #82. The dependabot PRs are the operator's to close or rebase; #34 changes `.github/workflows/`, a guardrail, and #80 and #82 change the gate image.
 3. Branches:
-   - `claude/epic-cannon-akxfwy` holds the pin move (What comes next, step 1). Its PR opens on or after 2026-10-28 02:38 UTC (10:38 on the operator's clock, CST).
+   - `claude/epic-cannon-akxfwy` holds the pin move, whose PR is open for the operator's merge (What comes next, step 1). Delete the branch once it merges.
    - No other `claude/*` branch is left: the merged ones were deleted on 2026-10-27. Start new work on a fresh branch from `main`.
 4. The move to the operator's Mac is done (the next section). On the same Mac and checkout, a new account only checks that `git status` is clean on `main`, pulls, and runs `pnpm install --frozen-lockfile`; on another machine, work through that section again.
-5. No decision is open: the operator chose 2.1.306 for the pin move on 2026-10-25. Start with the pin move on or after its date.
+5. No decision is open: the operator chose 2.1.306 for the pin move on 2026-10-25, and its PR is open. Start with What comes next.
 
 ## Moving the work to the operator's Mac
 
@@ -57,7 +57,7 @@ The development work continues in Claude Code on the operator's Mac, in their ch
 - **`factory/T-0014` and `factory/T-0015`** are the factory's own task branches, merged; they are the operator's to keep or delete.
 - **Cloud-session notes** (the end of this file) stay, for a session that goes back to the cloud.
 
-## Where the work stands (2026-10-27)
+## Where the work stands (2026-11-13)
 
 - **Phase:** P2, Team-grade. G0 and G1 are signed (`gates/G0.md`, `gates/G1.md`).
 - **Phase 2 core:** every core item, P2-01 to P2-09, is done.
@@ -79,7 +79,7 @@ The development work continues in Claude Code on the operator's Mac, in their ch
   - #66 (`v0.21.0`): retention per profile, `prune`, and old-bundle migration tests.
   - #67 (`v0.22.0`): `onboard`, and the fix for the kill-point suite's "fetch failed" flake (the stub GitHub's keep-alive).
   - #68 (`v0.23.0`): `offboard` and the round-trip test (the done-when). The round trip ran offline only; a live one is for P3-08.
-- **The pin move** to 2.1.306 / 0.3.306 is built on `claude/epic-cannon-akxfwy` and opens on Oct 28, when pnpm's age gate accepts it. `main` at `v0.27.0` is already merged into it, so it takes `v0.28.0` unless another release comes first.
+- **The pin move** to 2.1.306 / 0.3.306 is `v0.28.0`, its PR open from `claude/epic-cannon-akxfwy` on 2026-11-13 with `main` merged in. It changes the pin, a guardrail, so the operator merges it.
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
 
 ## P2-13, the code graph in shadow mode (2026-10-23)
@@ -117,41 +117,25 @@ Every release up to `v0.27.0` is tagged and published; the operator's home has `
 - **Tagging is no longer the operator's step:** the `release` workflow tags and publishes a version when its bump merges (operator guide, Releases).
 - **The backfill is done:** `v0.20.0` to `v0.25.0`, merged before the workflow existed, were tagged and published by running it by hand with each merge commit.
 - **Installing stays with the operator:** `factoryctl release install`, `release use` and `factoryctl doctor`, for the releases they will run: the latest one, `v0.27.0` or the pin move's once it is out, not each in turn. Record it in STATUS's Factory release row.
+- **The eval suite's spend:** the `software-factory-ci` Console workspace reached its monthly API usage limit on 2026-10-22, and every eval run failed from then until it reset on 2026-11-01. The pin move's eval runs and the G2 sample's month draw on the same limit: the operator checks it before the freeze.
 - **The operator's Mac:** a local session (the Claude Desktop app, or `claude remote-control` in their checkout) can run what needs their machine: `doctor`, the live checks below, T-0020 and the mirror reset. The operator-only commands still refuse inside any Claude Code session.
 
-1. **One live task in the runner.** This bills the operator's account. Run one `ts-mini` R0 task with `factoryctl run T-… --runner container --attach`, then check `$FACTORY_HOME/runs/T-…/egress/proxy.ndjson` for its requests on the gateway route. Once the pin move is installed, run one again on the new pin, before the G2 sample.
-2. **T-0020** is admitted from an issue and still `RECEIVED`: run it or cancel it.
-3. **One attended host run** (`factoryctl run T-… --attach`, without `--runner container`) is the first check, on macOS, of `v0.18.0`'s sandbox rule that keeps a session's commands out of its config directory.
-4. **Before the G2 sample:** reset both fixture mirrors to the frozen release. `v0.15.0` changed both fixture bases. Use `node scripts/mirror-fixture.ts NAME --footprint --factory-ref TAG --push --reset --rulesets`.
+1. **The pin move's PR:** review and merge it; then, once the eval run on the merge commit passes, install and use `v0.28.0` (What comes next, step 1).
+2. **One live task in the runner.** This bills the operator's account. Run one `ts-mini` R0 task with `factoryctl run T-… --runner container --attach`, then check `$FACTORY_HOME/runs/T-…/egress/proxy.ndjson` for its requests on the gateway route. Once the pin move is installed, run one again on the new pin, before the G2 sample.
+3. **T-0020** is admitted from an issue and still `RECEIVED`: run it or cancel it.
+4. **One attended host run** (`factoryctl run T-… --attach`, without `--runner container`) is the first check, on macOS, of `v0.18.0`'s sandbox rule that keeps a session's commands out of its config directory.
+5. **Before the G2 sample:** reset both fixture mirrors to the frozen release. `v0.15.0` changed both fixture bases. Use `node scripts/mirror-fixture.ts NAME --footprint --factory-ref TAG --push --reset --rulesets`.
 
 ## What comes next
 
-1. **The pin move** (a core release of its own, `v0.28.0`), opening on or after 2026-10-28 02:38 UTC. The branch `claude/epic-cannon-akxfwy` holds it. It changes the Claude Code and SDK pin, a guardrail, so the operator clicks its merge.
-   - **Version:** the newest npm `stable` at or above 2.1.305 that is at least 7 days old (`minimumReleaseAge`), with the SDK whose `claudeCodeVersion` matches. 2.1.304 fails behind the gateway when ToolSearch is outside a session's tools.
-   - **The decision (the operator's, 2026-10-25): 2.1.306 / 0.3.306,** as the branch pins it, with newer versions at the next §11 re-check. On 2026-10-25 npm's `stable` was 2.1.308 and `latest` 2.1.310; 2.1.306 (published 2026-10-21) is the only one past the age gate on Oct 28, and its probes are done. SDK 0.3.306's `claudeCodeVersion` was still 2.1.306.
-   - **State of the branch (2026-10-24):** `main` has moved since: #74 to #77 (HANDOVER and STATUS, test-only fixes and `vitest.config.ts`) are not in the branch, so step 1's merge is needed. `main` at `v0.27.0` (31745df) is merged in as 8748d13, with no conflict and the lockfile untouched. Until the age gate opens, pnpm refuses every script on this branch (the lockfile names packages younger than 7 days), so checks run through `./node_modules/.bin/` against the old install: `tsc` and `eslint` pass, and Vitest fails only the doctor and runner tests that compare the installed SDK (0.3.286) with the new pin.
-   - **Bump the pin in:** `config/factory.yaml`, `controller/package.json` and the lockfile, `runner/Dockerfile` (URLs and checksums), the CI workflows' `npx` lines, and the `verify-tools` test fixture.
-   - **Adapt to:**
-     - tool search through the gateway;
-     - OTel's new `prompt_text`;
-     - the SDK's `--flag=value` argv;
-     - structured output on a refusal;
-     - tighter Bash checks that become denials under `dontAsk`.
-   - **Re-run:** every suite, then the eval suite on the release commit.
-   - **The branch** holds two commits on the old `main` 76c3033: 52476d1 moves the pin to 2.1.306 / 0.3.306, and 69c3534 keeps a flagged request on the session's pinned model (`availableModels` with `switchModelsOnFlag: false`, host and runner). Their messages carry the probe evidence.
-   - **The age gate** accepts every 0.3.306 package in the lockfile from 2026-10-28 02:37:47 UTC (win32-arm64 was published last).
-   - **Steps:**
-     1. If `main` moved since 31745df, merge it into the branch again with a merge commit, since the branch is pushed. Resolve the lockfile with pnpm, never by hand.
-     2. Re-check npm's dist-tags and that 0.3.306 is still the SDK for 2.1.306. Re-run the advisory check for anything newer than STATUS's pre-freeze row.
-     3. Run a plain `pnpm install --frozen-lockfile` with the gate on: it must pass. Then run `pnpm check` and `pnpm exec vitest run --config vitest.gates.config.ts controller/src/plugin/workflow.int.test.ts controller/src/session/models.int.test.ts`.
-     4. Release it:
-        - CHANGELOG: the pin move and the flagged-request rule;
-        - STATUS: the pin row, the platform log's action, and the release;
-        - the threat model: the ASI02 and ASI05 residuals that cite fixes missing from 2.1.286 now say 2.1.306 carries them, plus the model-fallback control;
-        - HANDOVER: the operator's steps (the eval suite passes on the release commit before the tag; then tag, install and use the release, run `doctor`, put their own `claude` at 2.1.306 for takeover, and run one live `ts-mini` R0 runner task and one attended host run).
-     5. Open the PR with the probe results in its body. CI's runner jobs and gates job are the first container runs of 2.1.306.
-2. **Parallel items:** P2-10, P2-11, P2-13 and P2-14 are done; P2-12 stays stopped.
-3. **The freeze and G2.**
+1. **The pin move** (`v0.28.0`): its PR is open from `claude/epic-cannon-akxfwy`. It changes the Claude Code and SDK pin, a guardrail, so the operator clicks its merge once CI is green.
+   - **Done on 2026-11-13:** `main` (through #78) merged into the branch; npm's tags and the SDK pairing re-checked (0.3.306's `claudeCodeVersion` is 2.1.306; `stable` is now 2.1.311); the advisory check (one new advisory, fixed in 2.1.251, affects neither pin); `pnpm install --frozen-lockfile` with the age gate on; every suite; CHANGELOG, STATUS, the threat model and this file. The PR body carries the probe results.
+   - **Newer versions** wait for the next §11 re-check (the operator's decision of 2026-10-25).
+   - **Live checks** that only a real session shows: tighter Bash checks in 2.1.306 that become denials under `dontAsk`. The live `ts-mini` R0 runner task and the attended host run (Waiting on the operator) are where they show; a denial there is a finding for the next release.
+   - **After the merge:** the `release` workflow tags and publishes `v0.28.0` once `ci` passes on the merge commit. The visible eval suite runs on that push too (the merge changes `config/`); it must pass before the operator installs the release. Then the operator installs and uses it, runs `doctor`, puts their own `claude` at 2.1.306 for `takeover`, and runs the live checks below. Record the install in STATUS's Factory release row.
+2. **A flaky holdout case:** since 2026-11-01 the nightly holdout suite fails `triage-ci-config-r3` about one run in three (score 0.33: the triager was dispatched, but the reply had no closing `RESULT:` line the regex accepts). The runs keep no transcript. Find out whether the reply's format or the tier is wrong, before the freeze, since the G2 sample runs on the frozen system.
+3. **Parallel items:** P2-10, P2-11, P2-13 and P2-14 are done; P2-12 stays stopped.
+4. **The freeze and G2.**
    - Tag the frozen release. The operator then runs the G2 procedure in the operator guide's Gate G2 section:
      - `gate G2 --begin`;
      - the 15-attempt sample;
@@ -160,7 +144,7 @@ Every release up to `v0.27.0` is tagged and published; the operator's home has `
      - the drift, restore and kill-switch drills;
      - `factoryctl gate G2`.
    - Open the `gates/G2` evidence PR and STOP for the operator's signature (G2-7). R2 auto-merge stays off.
-4. **Phase 3** only after G2 is signed (Appendix A, Phase 3 kickoff).
+5. **Phase 3** only after G2 is signed (Appendix A, Phase 3 kickoff).
 
 ## How the operator and the agent work
 
