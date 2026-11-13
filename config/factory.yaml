@@ -1,7 +1,7 @@
 # Operational configuration. Model IDs are pinned here and in the runner image only;
 # agent files use aliases. Changing a pin goes through the eval-replay gate (P3-01).
 schema_version: 1
-claude_code: {version: 2.1.286, agent_sdk: 0.3.286, minimum: 2.1.271}
+claude_code: {version: 2.1.306, agent_sdk: 0.3.306, minimum: 2.1.271}
 concurrency: {max_tasks: 2}
 model_pins:
   opus: claude-opus-5-5

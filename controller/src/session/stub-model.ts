@@ -3,8 +3,9 @@
 // answers from a script. It is stateless: the prompt names a case (`[case:<name>]`), and the
 // number of assistant turns already in the conversation picks the case's next turn, so a
 // retried request gets the same answer. Requests that carry no tools (the CLI's side calls)
-// get a short text answer. Any other route is refused and logged, so a call the suite did not
-// expect shows up as a failure rather than passing silently.
+// get a short text answer. A turn can also be a safety classifier's refusal. Any other route is
+// refused and logged, so a call the suite did not expect shows up as a failure rather than
+// passing silently.
 //
 // Every logged request also names which watched strings appear anywhere in its body, so a
 // suite can show that text planted in a target (an instruction file, say) never reached a model.
@@ -25,7 +26,8 @@ export interface StubUsage {
   cache_creation_input_tokens?: number;
 }
 
-export type Turn = ({ text: string } | { tool: string; input: Record<string, unknown> }) & { usage?: StubUsage };
+/** A refusal names the classifier's category (`cyber`, `bio`), or null for none. */
+export type Turn = ({ text: string } | { tool: string; input: Record<string, unknown> } | { refusal: string | null }) & { usage?: StubUsage };
 export type Script = Record<string, Turn[]>;
 
 interface Block {
@@ -78,10 +80,26 @@ export function nextTurn(script: Script, req: Request): { turn: Turn; case: stri
   return { turn: turns?.[index] ?? { text: "done" }, case: name, index };
 }
 
+function stream(res: ServerResponse, events: Record<string, unknown>[]): void {
+  res.writeHead(200, { "content-type": "text/event-stream" });
+  for (const e of events) res.write(`event: ${String(e["type"])}\ndata: ${JSON.stringify(e)}\n\n`);
+  res.end();
+}
+
 function answer(res: ServerResponse, req: Request, turn: Turn, id: string): void {
   const usage = { input_tokens: turn.usage?.input_tokens ?? 10, output_tokens: 1, cache_read_input_tokens: turn.usage?.cache_read_input_tokens ?? 0, cache_creation_input_tokens: turn.usage?.cache_creation_input_tokens ?? 0 };
   const output = turn.usage?.output_tokens ?? 5;
   const message = { id, type: "message", role: "assistant", model: req.model ?? "stub", content: [] as unknown[], stop_reason: null, stop_sequence: null, usage };
+  if ("refusal" in turn) {
+    // No content: the stream ends with stop_reason "refusal", and the category when there is one.
+    const delta = { stop_reason: "refusal", stop_sequence: null, ...(turn.refusal === null ? {} : { stop_details: { type: "refusal", category: turn.refusal, explanation: null } }) };
+    if (req.stream !== true) {
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ...message, usage: { ...usage, output_tokens: output }, ...delta }));
+      return;
+    }
+    stream(res, [{ type: "message_start", message }, { type: "message_delta", delta, usage: { output_tokens: output } }, { type: "message_stop" }]);
+    return;
+  }
   const tool = "tool" in turn;
   const block = tool ? { type: "tool_use", id: `toolu_${id}`, name: turn.tool, input: {} } : { type: "text", text: "" };
   const stop = tool ? "tool_use" : "end_turn";
@@ -91,17 +109,14 @@ function answer(res: ServerResponse, req: Request, turn: Turn, id: string): void
     return;
   }
   const delta = tool ? { type: "input_json_delta", partial_json: JSON.stringify(turn.input) } : { type: "text_delta", text: turn.text };
-  const events = [
+  stream(res, [
     { type: "message_start", message },
     { type: "content_block_start", index: 0, content_block: block },
     { type: "content_block_delta", index: 0, delta },
     { type: "content_block_stop", index: 0 },
     { type: "message_delta", delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: output } },
     { type: "message_stop" },
-  ];
-  res.writeHead(200, { "content-type": "text/event-stream" });
-  for (const e of events) res.write(`event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`);
-  res.end();
+  ]);
 }
 
 export function stubHandler(script: () => Script, log: (e: Record<string, unknown>) => void, watch: readonly string[] = []): (req: IncomingMessage, res: ServerResponse) => void {

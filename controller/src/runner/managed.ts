@@ -12,7 +12,7 @@
 // mounted at TOKEN_PATH and nothing under $FACTORY_HOME/secrets is mounted at all.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { INSTRUCTION_FILES, REGISTRIES, STRUCTURED_OUTPUT_TOOL } from "../session/options.ts";
+import { INSTRUCTION_FILES, modelSettings, REGISTRIES, STRUCTURED_OUTPUT_TOOL } from "../session/options.ts";
 import type { Release } from "../release.ts";
 
 /** Where the image installs its managed settings (the Linux managed-settings path). */
@@ -55,19 +55,6 @@ export function unionAllow(release: Release): string[] {
   return [...all].sort();
 }
 
-/** The models a routed stage may run on, by exact ID. */
-export function availableModels(release: Release): string[] {
-  const ids = new Set<string>();
-  for (const r of Object.values(release.config.routing)) {
-    for (const alias of [r.model, ...(r.escalate_to === undefined ? [] : [r.escalate_to])]) {
-      const pin = release.config.model_pins[alias];
-      if (pin === undefined) throw new Error(`config/factory.yaml pins no model for ${alias}`);
-      ids.add(pin);
-    }
-  }
-  return [...ids].sort();
-}
-
 export function managedSettings(release: Release): Record<string, unknown> {
   const pins = release.config.model_pins;
   return {
@@ -93,8 +80,7 @@ export function managedSettings(release: Release): Record<string, unknown> {
     allowManagedMcpServersOnly: true,
     allowedMcpServers: [],
     pluginConfigs: { ...INSTRUCTION_FILES, "cc-plugin-sec-default@builtin": { options: { allowManagedModsOnly: true } } },
-    availableModels: availableModels(release),
-    availableModelsMatch: "exact",
+    ...modelSettings(release),
     disableWorkflows: true,
     workflowKeywordTriggerEnabled: false,
     cleanupPeriodDays: release.config.retention_days.transcripts,

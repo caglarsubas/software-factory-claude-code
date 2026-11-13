@@ -4,6 +4,19 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-13
+
+### Changed
+
+- **Claude Code 2.1.306 and Agent SDK 0.3.306** (were 2.1.286 and 0.3.286), by the operator's decisions of 2026-10-21 and 2026-10-25. They carry about 25 permission-engine, hook and sandbox fixes released without an advisory, among them PreToolUse hooks skipped when matching them failed (2.1.288) and a sandboxed write into a `--plugin-dir` folder (2.1.299), and 2.1.305's fix for 2.1.304's failure behind a gateway. No advisory affects either version.
+  - `config/factory.yaml`, the controller's SDK dependency, the runner image (both platform tarballs and the CLI binary, by SHA-256) and the CI and eval workflows' `claude-code` move together; the floor stays at 2.1.271.
+  - **Breaking** for `takeover`: the operator's own `claude` must report 2.1.306.
+  - Checked on the new pin: the gateway sees only `POST /v1/messages`, a deferred tool-search placeholder passes through unchanged, OTel's new `prompt_text` is redacted like `prompt`, and the SDK's result subtypes are unchanged.
+
+### Security
+
+- **A flagged request stays on the session's pinned model.** By default Claude Code re-runs a request a safety classifier flags on a fallback model, one the factory neither pins nor prices, and the session stays there. Host sessions now carry the runner's model settings, from one function: `availableModels` (the routed pins, exact) and `switchModelsOnFlag: false`. A flagged request ends the session as a refusal on its pinned model, which the pipeline fails as before. `models.int.test.ts` runs the pinned CLI against the stub model, with a positive control.
+
 ## [0.27.0] - 2026-10-24
 
 ### Added
@@ -534,7 +547,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.27.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.24.0...v0.25.0

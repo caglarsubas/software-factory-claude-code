@@ -48,6 +48,7 @@
     "claude-sonnet-5-5"
   ],
   "availableModelsMatch": "exact",
+  "switchModelsOnFlag": false,
   "disableWorkflows": true,
   "workflowKeywordTriggerEnabled": false,
   "cleanupPeriodDays": 30,
