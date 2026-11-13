@@ -4,6 +4,16 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-13
+
+### Fixed
+
+- **The runner carries the target toolchain.** The live runner check on 2026-11-13 (T-0022) found that the runner image had `node` but no `pnpm`, and no Python or `uv` for `py-mini`. So a builder in the runner could not run the target's `setup`, `test`, `typecheck` or `lint`, and every failure cost a preflight round. `serve` runs every live session in the runner, the G2 sample's included.
+  - **The gate image's toolchain:** the runner now builds on the gate image's Python base (the same digest), with Node's npm and corepack (`pnpm` at the target's `packageManager` version) and uv, by the gate image's pins. A unit test keeps the two images' Node, Python and uv pins equal, and Dependabot bumps both images' bases in one PR.
+  - **A tool cache per task:** the sandbox lets a command write only to its working directory and the paths it allows, so each task gets `sessions/T-…/cache`. Sessions' env points `XDG_CACHE_HOME` and `XDG_DATA_HOME` there (corepack, pnpm's store and uv follow them). It is the sandbox's only `allowWrite` path, it is mounted in the runner, and retention and purge remove it with the session directory.
+  - **The env stays exact:** the image sets no variable of its own beyond its Python base's `PYTHON_VERSION` and `PYTHON_SHA256`, which the runner suite checks.
+  - The runner suite shows a sandboxed command in the runner running both fixture targets' setup and tests through the egress proxy, which they leave only for the registries.
+
 ## [0.28.0] - 2026-11-13
 
 ### Changed
@@ -547,7 +557,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.25.0...v0.26.0

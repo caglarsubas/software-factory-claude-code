@@ -14,7 +14,8 @@
 //   temp, and read-only the bundle, the release's plugin, the mirror the worktree borrows its
 //   objects from, and the guard config;
 // - the session's token at TOKEN_PATH, read-only, denied to every tool and to the sandbox;
-// - an env of exactly the session allowlist, plus the variables the SDK sets for its CLI.
+// - an env of exactly the session allowlist, plus the variables the SDK sets for its CLI and
+//   the image's own constants (IMAGE_ENV).
 // Never mounted: $FACTORY_HOME/secrets, the API key, the App key, the engine socket.
 //
 // Every runner container is named for its task and labelled with the factoryctl run that owns
@@ -38,6 +39,12 @@ export const RUNNER_CLAUDE = "/usr/local/bin/claude";
 export const RUNNER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 /** Variables the Agent SDK sets for its CLI, forwarded as they are. */
 export const SDK_ENV = ["CLAUDE_AGENT_SDK_VERSION", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SDK_READS_SESSION_STATE"];
+/**
+ * The only names the image itself sets besides PATH: its Python base's own constants. Docker
+ * cannot unset them; the runner suite checks the image sets exactly these, so nothing else
+ * reaches a session that way.
+ */
+export const IMAGE_ENV = ["PYTHON_SHA256", "PYTHON_VERSION"];
 
 export const RUNNER_HARDENING: readonly string[] = [
   "--cap-drop", "ALL",

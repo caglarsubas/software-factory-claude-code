@@ -3,6 +3,9 @@
 // Telemetry (P1-06) adds the OTEL_ENV names, and nothing else, when the operator turns it on.
 // A runner session (P2-01) adds RUNNER_ENV: the egress proxy, and the endpoint its CLI calls.
 // A live session (P2-02) adds ANTHROPIC_BASE_URL, the credential gateway; its token is a file.
+// XDG_CACHE_HOME and XDG_DATA_HOME point the target's tools (corepack, pnpm's store, uv) at the
+// task's own cache directory, which the sandbox lets their commands write (the session's home it does not).
+import { join } from "node:path";
 import { OTEL_ENV, type OtelEnv } from "../telemetry.ts";
 
 export const ENV_ALLOWLIST = [
@@ -23,6 +26,8 @@ export const ENV_ALLOWLIST = [
   "GIT_COMMITTER_NAME",
   "GIT_COMMITTER_EMAIL",
   "GIT_CONFIG_NOSYSTEM",
+  "XDG_CACHE_HOME",
+  "XDG_DATA_HOME",
 ] as const;
 
 /** A runner session's additions (P2-01): never a credential; the CLI's token is a mounted file. */
@@ -47,10 +52,11 @@ export function allowedEnvKeys(keys: unknown): boolean {
 export const FACTORY_IDENTITY = { name: "software-factory", email: "software-factory@users.noreply.github.com" };
 
 export interface EnvInputs {
-  /** The per-task home, config and temp directories (never the operator's). */
+  /** The per-task home, config, temp and tool cache directories (never the operator's). */
   home: string;
   configDir: string;
   tmpDir: string;
+  cacheDir: string;
   guardConfig: string;
   modelPins: Record<string, string>;
   path?: string;
@@ -77,6 +83,8 @@ export function sessionEnv(i: EnvInputs): SessionEnv {
     GIT_COMMITTER_NAME: FACTORY_IDENTITY.name,
     GIT_COMMITTER_EMAIL: FACTORY_IDENTITY.email,
     GIT_CONFIG_NOSYSTEM: "1",
+    XDG_CACHE_HOME: join(i.cacheDir, "xdg-cache"),
+    XDG_DATA_HOME: join(i.cacheDir, "xdg-data"),
     ...i.telemetry,
   };
 }

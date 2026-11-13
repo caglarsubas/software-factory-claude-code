@@ -8,12 +8,14 @@
 // P2-02 it also shows the model reached only through the proxy's route to the credential
 // gateway on the host, which holds the key, meters each turn and stops a session at its cap.
 // Since the switch-on, `startTaskRunner` sets a task up for live sessions the same way, and
-// removes its network and proxy when the run ends.
+// removes its network and proxy when the run ends. From v0.29.0 the runner carries the gate
+// image's toolchain: a sandboxed command runs both fixture targets' setup and tests, its caches
+// in the task's own cache directory, through the proxy to the registries alone (online only).
 //
 //   pnpm test:runner      (needs Docker; CI's runner job, on x64 and arm64)
 import { spawn, spawnSync } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,8 +28,9 @@ import { clearHalt, setHalt } from "../halt.ts";
 import { factoryHome, sessionDir } from "../home.ts";
 import { createValidator } from "../schemas/validate.ts";
 import { allowedEnvKeys } from "../session/env.ts";
+import { REGISTRIES } from "../session/options.ts";
 import type { Script } from "../session/stub-model.ts";
-import { listContainers, reapRunnerContainers, runArgs, runnerEnv, runnerUser, SDK_ENV, type RunnerSetup } from "./container.ts";
+import { IMAGE_ENV, listContainers, reapRunnerContainers, runArgs, runnerEnv, runnerUser, SDK_ENV, type RunnerSetup } from "./container.ts";
 import { ensureTaskNetwork, gatewayAddress, networkName, proxyName, removeTaskNetwork } from "./network.ts";
 import { startTaskRunner } from "./live.ts";
 import { buildWorld, CANARIES, destroyWorld, MOD_PROBE, own, plantMod, runCase, stubLog, type World } from "./suite.ts";
@@ -45,6 +48,26 @@ const root = mkdtempSync(join(tmpdir(), "runner-suite-"));
 
 const sh = (command: string): { tool: string; input: Record<string, unknown> } => ({ tool: "Bash", input: { command, description: "probe" } });
 const done = { text: "done" };
+/**
+ * Where a sandboxed command may write, tried from Python: the guard reads a command's text and
+ * refuses the writes it can see outside the worktree, while a package manager's are invisible to
+ * it, so only the sandbox stands between them and the session's home.
+ */
+const SANDBOX_WRITES = [
+  "python3 - <<'PY'",
+  "import os",
+  "for name in ('XDG_CACHE_HOME', 'XDG_DATA_HOME', 'HOME'):",
+  "    try:",
+  "        os.makedirs(os.environ[name], exist_ok=True)",
+  "        with open(os.path.join(os.environ[name], 'sf-probe'), 'w') as f:",
+  "            f.write('x')",
+  "        print(name, 'WRITABLE')",
+  "    except OSError as e:",
+  "        print(name, 'DENIED', e.errno)",
+  "PY",
+].join("\n");
+/** A Bash call that may take minutes: package installs, under load. */
+const slow = (command: string): { tool: string; input: Record<string, unknown> } => ({ tool: "Bash", input: { command, description: "probe", timeout: 600_000 } });
 
 let w: World;
 /** The suite's session config directory (prepareSession's), where a user's own plugins and mods would live. */
@@ -63,6 +86,18 @@ const script = (): Script => ({
     "grep -c 'docker.sock' /proc/self/mountinfo || true",
   ].join("; ")), done],
   "halted": [sh("echo still-running"), done],
+  "toolchain": [sh([
+    "echo PY=$(python3 --version)",
+    "echo UV=$(uv --version)",
+    "echo NPM=$(npm --version 2>/dev/null)",
+    "echo COREPACK=$(corepack --version)",
+    "command -v pnpm >/dev/null && echo PNPM-ON-PATH || echo PNPM-MISSING",
+  ].join("; ")), sh(SANDBOX_WRITES), done],
+  // The guard tracks cd and refuses writes it can see outside the worktree, so these only pipe.
+  "toolchain-online": [slow([
+    `cd '${join(w.worktree, "tc/ts-mini")}' && { pnpm install --frozen-lockfile && pnpm test && echo TS-EXIT=0 || echo TS-EXIT=1; } 2>&1 | tail -n 20`,
+    `cd '${join(w.worktree, "tc/py-mini")}' && { uv sync --frozen && uv run --frozen pytest -q && echo PY-EXIT=0 || echo PY-EXIT=1; } 2>&1 | tail -n 20`,
+  ].join("; ")), done],
   "egress": [sh([
     "NODE_USE_ENV_PROXY=1 node -e \"fetch('https://example.com/').then(r=>console.log('EXAMPLE',r.status),()=>console.log('EXAMPLE-BLOCKED'))\"",
     "NODE_USE_ENV_PROXY=1 node -e \"fetch('https://registry.npmjs.org/-/ping').then(r=>console.log('REGISTRY',r.status),e=>console.log('REGISTRY-FAILED',String(e.cause?.code ?? e)))\"",
@@ -91,6 +126,9 @@ const messages = (file: string): SDKMessage[] => readFileSync(file, "utf8").spli
 beforeAll(() => {
   // The script names paths in the world, so it is written once the world exists (the stub reads it per request).
   w = buildWorld(join(root, "world"), TASK, {});
+  // Both fixture targets' bases, for the toolchain cases (their CLAUDE.md files left out: no target instruction may load).
+  for (const name of ["ts-mini", "py-mini"]) cpSync(join(REPO_ROOT, "fixtures/targets", name, "repo"), join(w.worktree, "tc", name), { recursive: true, filter: (src) => !src.endsWith("CLAUDE.md") });
+  own(join(w.worktree, "tc"));
   writeFileSync(join(w.root, "stub/script.json"), JSON.stringify(script()));
   own(join(w.root, "stub"));
   writeFileSync(join(root, "world.json"), JSON.stringify(w));
@@ -114,7 +152,10 @@ describe("runner conformance (P2-01)", () => {
     const r = spawnSync(ENGINE, args, { encoding: "utf8", input: "" });
     expect(r.status, r.stderr).toBe(0);
     const keys = r.stdout.split("\n").filter((l) => l.includes("=")).map((l) => l.slice(0, l.indexOf("="))).filter((k) => k !== "HOSTNAME").sort();
-    expect(keys).toEqual(["CLAUDE_AGENT_SDK_VERSION", "FACTORY_GUARD_CONFIG", "HOME", "HTTPS_PROXY", "NO_PROXY", "PATH"]);
+    expect(keys).toEqual(["CLAUDE_AGENT_SDK_VERSION", "FACTORY_GUARD_CONFIG", "HOME", "HTTPS_PROXY", "NO_PROXY", "PATH", ...IMAGE_ENV].sort());
+    // The image sets nothing but PATH and its Python base's constants (IMAGE_ENV): Docker cannot unset those.
+    const imageEnv = spawnSync(ENGINE, ["image", "inspect", w.image, "--format", "{{json .Config.Env}}"], { encoding: "utf8" });
+    expect((JSON.parse(imageEnv.stdout) as string[]).map((e) => e.slice(0, e.indexOf("="))).sort()).toEqual(["PATH", ...IMAGE_ENV].sort());
     // A read-only root: only the mounts and /tmp are writable.
     const touch = spawnSync(ENGINE, runArgs({ name: `sf-runner-rocheck-${String(process.pid)}`, taskId: TASK, owner: self(), setup: w.setup, mounts: [], env: {}, cwd: "/", argv: ["sh", "-c", "touch /usr/local/bin/x 2>/dev/null && echo WRITABLE || echo READ-ONLY"] }), { encoding: "utf8", input: "" });
     expect(touch.stdout.trim()).toBe("READ-ONLY");
@@ -193,6 +234,34 @@ describe("runner conformance (P2-01)", () => {
       expect(log).toMatch(/"target":"registry\.npmjs\.org:443","decision":"allowed"/);
     }
   }, 300_000);
+
+  it("runs a target's tools from the gate image's toolchain, their caches in the task's own directory", async () => {
+    const r = await runCase(w, "toolchain", {}, validator);
+    expect(r.outcome.ok, r.outcome.errors.join("; ")).toBe(true);
+    // The last request carries every tool result of the case, in order.
+    const out = text(results("toolchain")[0]);
+    expect(out).toContain("PY=Python 3.14.8");
+    expect(out).toContain("UV=uv 0.12.21");
+    expect(out).toMatch(/NPM=\d+\.\d+\.\d+/);
+    expect(out).toMatch(/COREPACK=\d+\.\d+\.\d+/);
+    expect(out).toContain("PNPM-ON-PATH");
+    const writes = text(results("toolchain")[1]);
+    expect(writes).toContain("XDG_CACHE_HOME WRITABLE");
+    expect(writes).toContain("XDG_DATA_HOME WRITABLE");
+    expect(writes).toMatch(/^HOME DENIED/m);
+  }, 300_000);
+
+  it.runIf(online)("installs and tests both fixture targets through the egress proxy, which they leave only for the registries", async () => {
+    const before = existsSync(w.net.log) ? readFileSync(w.net.log, "utf8").length : 0;
+    const r = await runCase(w, "toolchain-online", {}, validator);
+    expect(r.outcome.ok, r.outcome.errors.join("; ")).toBe(true);
+    const out = text(results("toolchain-online")[0]);
+    expect(out).toContain("TS-EXIT=0");
+    expect(out).toContain("PY-EXIT=0");
+    const allowed = [...readFileSync(w.net.log, "utf8").slice(before).matchAll(/"target":"([^"]+)","decision":"allowed"/g)].map((m) => m[1]);
+    expect(allowed.length).toBeGreaterThan(0);
+    for (const t of new Set(allowed)) expect(REGISTRIES.map((h) => `${h}:443`)).toContain(t);
+  }, 1_200_000);
 
   it("gives the runner network no exit but the proxy, and the proxy refuses the host and non-public addresses", async () => {
     // A host service the runner must not reach, on every host address.

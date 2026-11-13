@@ -76,6 +76,21 @@ describe("runner image", () => {
     }
   });
 
+  it("carries the gate image's toolchain, by the same pins: Node, Python and uv", () => {
+    const gates = readFileSync(join(REPO_ROOT, "gates/image/Dockerfile"), "utf8");
+    const base = (file: string, image: string): string | undefined => new RegExp(`^FROM (${image}:\\S+@sha256:[0-9a-f]{64})`, "m").exec(file)?.[1];
+    for (const image of ["node", "python"]) {
+      expect(base(dockerfile, image), image).toBeDefined();
+      expect(base(dockerfile, image), image).toBe(base(gates, image));
+    }
+    const uv = (file: string): string[] => [...file.matchAll(/ADD --checksum=(sha256:[0-9a-f]{64}) \\\n\s+(https:\/\/github\.com\/astral-sh\/uv\/\S+)/g)].map((m) => `${m[2] ?? ""} ${m[1] ?? ""}`).sort();
+    expect(uv(dockerfile)).toHaveLength(2);
+    expect(uv(dockerfile)).toEqual(uv(gates));
+    expect(dockerfile).toContain("corepack enable pnpm");
+    // The only ENV lines set the SDK binary's expected hash, in the download stages: the session's env is the allowlist's.
+    expect([...dockerfile.matchAll(/^ENV (\w+)=/gm)].map((m) => m[1])).toEqual(["CLAUDE_SHA256", "CLAUDE_SHA256"]);
+  });
+
   it("copies every hook the plugin's hooks.json runs, and installs the managed settings where the CLI reads them", () => {
     const hooks = JSON.stringify(JSON.parse(readFileSync(join(REPO_ROOT, "plugin/hooks/hooks.json"), "utf8")));
     const used = [...hooks.matchAll(/hooks\/([a-z-]+\.ts)/g)].map((m) => m[1] ?? "");
@@ -123,6 +138,7 @@ describe("runner containers", () => {
       { path: "/h/runs/T-1/extra", readOnly: true },
       { path: "/h/runs/T-1/work/x", readOnly: false },
       { path: "/h/sessions/T-1/build.guard.json", readOnly: true },
+      { path: "/h/sessions/T-1/cache", readOnly: false },
       { path: "/h/sessions/T-1/build.preflight/requests", readOnly: false },
       { path: "/h/sessions/T-1/build.preflight/results", readOnly: true },
       { path: "/h/sessions/T-1/claude", readOnly: false },

@@ -41,7 +41,7 @@ export interface TakeoverLaunch {
 export function takeoverLaunch(i: TakeoverInputs): TakeoverLaunch {
   const { release } = i;
   const dir = sessionDir(i.home, i.taskId);
-  for (const d of ["home", "claude", "tmp"]) mkdirSync(join(dir, d), { recursive: true, mode: 0o700 });
+  for (const d of ["home", "claude", "tmp", "cache"]) mkdirSync(join(dir, d), { recursive: true, mode: 0o700 });
   // A takeover resumes the build session, with its id and config directory, where Claude Code
   // would load a mod that session left in dev-mods (options.ts, foreignMods).
   const mods = foreignMods(join(dir, "claude"));
@@ -76,7 +76,7 @@ export function takeoverLaunch(i: TakeoverInputs): TakeoverLaunch {
 
   const model = release.config.model_pins[release.config.routing["builder"]?.model ?? ""];
   const env: Record<string, string> = {
-    ...sessionEnv({ home: join(dir, "home"), configDir: join(dir, "claude"), tmpDir: join(dir, "tmp"), guardConfig: guardConfigPath, modelPins: release.config.model_pins }),
+    ...sessionEnv({ home: join(dir, "home"), configDir: join(dir, "claude"), tmpDir: join(dir, "tmp"), cacheDir: join(dir, "cache"), guardConfig: guardConfigPath, modelPins: release.config.model_pins }),
     // A person is at this terminal.
     TERM: i.term ?? "xterm-256color",
   };

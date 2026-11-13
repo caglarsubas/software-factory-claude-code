@@ -180,14 +180,16 @@ export function sessionSettings(inputs: SessionInputs, release: Release): Settin
 export function sessionSandbox(inputs: SessionInputs): SandboxSettings {
   // Nothing a session runs may write where Claude Code loads plugins and mods from: its config
   // directory (dev-mods), its home's .claude, or the release's plugin (2.1.299 fixed sandboxed
-  // writes into a --plugin-dir; the release is also read-only on disk).
+  // writes into a --plugin-dir; the release is also read-only on disk). Besides its working and
+  // additional directories, it may write only the task's tool cache (corepack, pnpm's store, uv;
+  // env.ts), never the session's home.
   const dir = sessionDir(inputs.home, inputs.taskId);
   return {
     enabled: true,
     failIfUnavailable: true,
     allowUnsandboxedCommands: false,
     network: { allowedDomains: REGISTRIES },
-    filesystem: { denyWrite: [".claude/**", join(dir, "claude"), join(dir, "home", ".claude"), inputs.release.pluginDir], denyRead: secretPaths(inputs.home) },
+    filesystem: { allowWrite: [join(dir, "cache")], denyWrite: [".claude/**", join(dir, "claude"), join(dir, "home", ".claude"), inputs.release.pluginDir], denyRead: secretPaths(inputs.home) },
   };
 }
 
@@ -207,7 +209,8 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
   const home = join(dir, "home");
   const configDir = join(dir, "claude");
   const tmpDir = join(dir, "tmp");
-  for (const d of [home, configDir, tmpDir]) mkdirSync(d, { recursive: true, mode: 0o700 });
+  const cacheDir = join(dir, "cache");
+  for (const d of [home, configDir, tmpDir, cacheDir]) mkdirSync(d, { recursive: true, mode: 0o700 });
   const mods = foreignMods(configDir);
   if (mods.length > 0) throw new ForeignModsError(`${spec.label}: the session's config directory holds mods the factory did not write; inspect and remove them before the task goes on: ${mods.join(", ")}`);
 
@@ -235,7 +238,7 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
 
   const t = inputs.telemetry;
   const telemetry = t === undefined ? undefined : telemetryEnv(t.config, { task: inputs.taskId, stage: spec.stage, label: spec.label, round: t.round, tier: t.tier, agent: spec.agent, release: release.info?.tag ?? "dev" });
-  const env = sessionEnv({ home, configDir, tmpDir, guardConfig: guardConfigPath, modelPins: release.config.model_pins, ...(telemetry === undefined ? {} : { telemetry }) });
+  const env = sessionEnv({ home, configDir, tmpDir, cacheDir, guardConfig: guardConfigPath, modelPins: release.config.model_pins, ...(telemetry === undefined ? {} : { telemetry }) });
   if (runner === undefined && inputs.gateway !== undefined) env.ANTHROPIC_BASE_URL = inputs.gateway.baseUrl;
   if (runner !== undefined) {
     env.HTTPS_PROXY = runner.proxyUrl;
@@ -289,11 +292,11 @@ export function prepareSession(inputs: SessionInputs, spec: StageSpec): Prepared
 
 /**
  * What a runner session sees of the host, at the same paths: its working directory (writable
- * for the build only), its task directory, the CLI's home and config directory, the bundle and
- * readable roots, the release's plugin, and the mirror its worktree borrows objects from. The
- * guard config and the broker's answers are read-only; only the broker's request spool is
- * writable besides. The rest of the session directory, where factoryctl writes the next
- * session's files, is not mounted at all.
+ * for the build only), its task directory, the CLI's home and config directory, the task's tool
+ * cache, the bundle and readable roots, the release's plugin, and the mirror its worktree
+ * borrows objects from. The guard config and the broker's answers are read-only; only the
+ * broker's request spool is writable besides. The rest of the session directory, where
+ * factoryctl writes the next session's files, is not mounted at all.
  */
 export function runnerMounts(o: { spec: Omit<StageSpec, "budgetUsd">; sessionDir: string; guardConfig: string; pluginDir: string; broker?: BrokerSpool }): Mount[] {
   const ro = (path: string): Mount => ({ path, readOnly: true });
@@ -302,6 +305,7 @@ export function runnerMounts(o: { spec: Omit<StageSpec, "budgetUsd">; sessionDir
     { path: o.spec.guard.task_dir, readOnly: false },
     { path: join(o.sessionDir, "home"), readOnly: false },
     { path: join(o.sessionDir, "claude"), readOnly: false },
+    { path: join(o.sessionDir, "cache"), readOnly: false },
     ...o.spec.extraDirs.map(ro),
     ...o.spec.guard.readable_roots.map(ro),
     ...alternates(o.spec.cwd).map(ro),
