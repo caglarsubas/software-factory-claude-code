@@ -7,7 +7,7 @@ A new Claude Code session picks up the factory's development from here. Read thi
 The work moves between sessions and Claude accounts. From 2026-10-25 it runs in a Claude Code session on the operator's Mac, in their checkout; on 2026-10-27 it moves to another Claude account on the same Mac and checkout. Nothing but this repository carries over: no reminder, scheduled check-in, PR subscription or plan file from an earlier session reaches a new one.
 
 1. Read [`CLAUDE.md`](../../CLAUDE.md), then this file to the end, then STATUS's Current phase row and the deviations log.
-2. Check GitHub: open PRs, the latest release (`v0.28.0` at the handover) and `ci` on `main`. On 2026-11-13 no factory PR was open; dependabot's #5, #34, #80, #81 and #82 were. The dependabot PRs are the operator's to close or rebase; #34 changes `.github/workflows/`, a guardrail, and #80 and #82 change the gate image.
+2. Check GitHub: open PRs, the latest release (`v0.28.0` at the handover) and `ci` on `main`. On 2026-11-13 no factory PR was open; dependabot's #5, #80, #81, #82 and #84 were (#84 replaced #34). The dependabot PRs are the operator's to close or rebase; #84 changes `.github/workflows/`, a guardrail, and #80 and #82 change the gate image.
 3. Branches:
    - No `claude/*` branch is left: the merged ones are deleted, the pin move's on 2026-11-13. Start new work on a fresh branch from `main`.
 4. The move to the operator's Mac is done (the next section). On the same Mac and checkout, a new account only checks that `git status` is clean on `main`, pulls, and runs `pnpm install --frozen-lockfile`; on another machine, work through that section again.
@@ -80,6 +80,7 @@ The development work continues in Claude Code on the operator's Mac, in their ch
   - #67 (`v0.22.0`): `onboard`, and the fix for the kill-point suite's "fetch failed" flake (the stub GitHub's keep-alive).
   - #68 (`v0.23.0`): `offboard` and the round-trip test (the done-when). The round trip ran offline only; a live one is for P3-08.
 - **The pin move** to 2.1.306 / 0.3.306 is done: `v0.28.0` (#83, `5014b09`), merged by the operator and installed on their Mac on 2026-11-13. Newer versions wait for the next §11 re-check (the operator's decision of 2026-10-25).
+- **The live runner check on the new pin** is done (2026-11-13, STATUS's platform log). T-0022, an R0 `ts-mini` task run attended with `--runner container`, passed every stage and gate, and `factoryctl` merged it as the App. No session had a permission denial, so 2.1.306's tighter Bash checks did not show, and every model request left the container by the gateway route. It found that the runner has no target toolchain (What comes next, item 2).
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
 
 ## P2-13, the code graph in shadow mode (2026-10-23)
@@ -118,19 +119,19 @@ Every release up to `v0.28.0` is tagged and published; the operator's home has `
 - **The backfill is done:** `v0.20.0` to `v0.25.0`, merged before the workflow existed, were tagged and published by running it by hand with each merge commit.
 - **Installing stays with the operator:** `factoryctl release install`, `release use` and `factoryctl doctor`, for the releases they will run: the latest one, not each in turn. Record it in STATUS's Factory release row.
 - **The eval suite's spend:** the `software-factory-ci` Console workspace reached its monthly API usage limit on 2026-10-22, and every eval run failed from then until it reset on 2026-11-01. The G2 sample's month draws on the same limit: the operator checks it before the freeze.
-- **The operator's Mac:** a local session (the Claude Desktop app, or `claude remote-control` in their checkout) can run what needs their machine: `doctor`, the live checks below, T-0020 and the mirror reset. The operator-only commands still refuse inside any Claude Code session.
+- **The operator's Mac:** a local session (the Claude Desktop app, or `claude remote-control` in their checkout) can run what needs their machine: `doctor`, the attended host run, T-0020 and the mirror reset. The operator-only commands still refuse inside any Claude Code session.
 
-1. **Retention:** `doctor` warned on 2026-11-13 of 2 finished tasks past retention (`factoryctl prune`, operator-only) and 4 unfinished ones past it, to cancel or resume. The unfinished tasks are T-0002, T-0004, T-0005, T-0006 and T-0020 (item 3).
-2. **One live task in the runner.** This bills the operator's account. Run one `ts-mini` R0 task with `factoryctl run T-… --runner container --attach`, then check `$FACTORY_HOME/runs/T-…/egress/proxy.ndjson` for its requests on the gateway route. The pin move is installed: run it on the new pin, before the G2 sample. It is also where 2.1.306's tighter Bash checks under `dontAsk` would show; a denial there is a finding for the next release.
-3. **T-0020** is admitted from an issue and still `RECEIVED`: run it or cancel it.
-4. **One attended host run** (`factoryctl run T-… --attach`, without `--runner container`) is the first check, on macOS, of `v0.18.0`'s sandbox rule that keeps a session's commands out of its config directory.
-5. **Before the G2 sample:** reset both fixture mirrors to the frozen release. `v0.15.0` changed both fixture bases. Use `node scripts/mirror-fixture.ts NAME --footprint --factory-ref TAG --push --reset --rulesets`.
+1. **Retention:** `doctor` warned on 2026-11-13 of 2 finished tasks past retention (`factoryctl prune`, operator-only) and 4 unfinished ones past it, to cancel or resume. The unfinished tasks are T-0002, T-0004, T-0005, T-0006 and T-0020 (item 2).
+2. **T-0020** is admitted from an issue and still `RECEIVED`: run it or cancel it.
+3. **One attended host run** (`factoryctl run T-… --attach`, without `--runner container`) is the first check, on macOS, of `v0.18.0`'s sandbox rule that keeps a session's commands out of its config directory.
+4. **Before the G2 sample:** reset both fixture mirrors to the frozen release. `v0.15.0` changed both fixture bases, and `ts-mini`'s mirror also carries the merges of T-0016, T-0017 and T-0022. A task whose change is already merged stops at the spec gate, as T-0021 did. Use `node scripts/mirror-fixture.ts NAME --footprint --factory-ref TAG --push --reset --rulesets`.
 
 ## What comes next
 
 1. **A flaky holdout case:** since 2026-11-01 the nightly holdout suite fails `triage-ci-config-r3` about one run in three (score 0.33: the triager was dispatched, but the reply had no closing `RESULT:` line the regex accepts). The runs keep no transcript. Find out whether the reply's format or the tier is wrong, before the freeze, since the G2 sample runs on the frozen system.
-2. **Parallel items:** P2-10, P2-11, P2-13 and P2-14 are done; P2-12 stays stopped.
-3. **The freeze and G2.**
+2. **The runner has no target toolchain:** found by the live runner check on 2026-11-13 (T-0022). The runner image carries `node`, `git` and `claude`, but no `pnpm`, and no Python for `py-mini`. So a builder in the runner cannot run the target's `setup`, `test`, `typecheck` or `lint`: T-0022's builder tried, got `pnpm: command not found`, and left them to the preflight. The build's Stop-hook preflight still ran every gate, and all passed, so nothing unchecked reached review. Every `serve` session runs in the runner, the G2 sample's included. Before the freeze, the operator decides: the runner gets each profile's toolchain (a change to the runner image, a guardrail), or the builder's prompt says the preflight is its test run.
+3. **Parallel items:** P2-10, P2-11, P2-13 and P2-14 are done; P2-12 stays stopped.
+4. **The freeze and G2.**
    - Tag the frozen release. The operator then runs the G2 procedure in the operator guide's Gate G2 section:
      - `gate G2 --begin`;
      - the 15-attempt sample;
@@ -139,7 +140,7 @@ Every release up to `v0.28.0` is tagged and published; the operator's home has `
      - the drift, restore and kill-switch drills;
      - `factoryctl gate G2`.
    - Open the `gates/G2` evidence PR and STOP for the operator's signature (G2-7). R2 auto-merge stays off.
-4. **Phase 3** only after G2 is signed (Appendix A, Phase 3 kickoff).
+5. **Phase 3** only after G2 is signed (Appendix A, Phase 3 kickoff).
 
 ## How the operator and the agent work
 
