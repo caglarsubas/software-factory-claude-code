@@ -61,6 +61,20 @@ jobs:
           if [ "$EVENT" != "schedule" ] || [ "$(date -u +%u)" = "1" ]; then suite evals 3 || status=1; summary evals; fi
           if [ "$EVENT" != "push" ]; then suite evals-holdout 1 || status=1; summary evals-holdout; fi
           exit "$status"
+      # Each case's whole reply and grader verdicts (the JSON result and the HTML report), which the
+      # annotations clip; the cases are fixture or self cases only (check-evals), so they may be public.
+      - name: Keep the results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eval-results
+          path: |
+            ${{ runner.temp }}/evals.json
+            ${{ runner.temp }}/evals-holdout.json
+            plugin/evals/results/
+            plugin/evals-holdout/results/
+          if-no-files-found: ignore
+          retention-days: 30
 
   # One live fixture task from a fresh FACTORY_HOME to the merge gate: real sessions, the real
   # guard and sandbox, container gates. The target is a local copy, so nothing is pushed.
