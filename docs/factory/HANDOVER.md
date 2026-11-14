@@ -7,7 +7,7 @@ A new Claude Code session picks up the factory's development from here. Read thi
 The work moves between sessions and Claude accounts. From 2026-10-25 it runs in a Claude Code session on the operator's Mac, in their checkout; on 2026-10-27 it moves to another Claude account on the same Mac and checkout. Nothing but this repository carries over: no reminder, scheduled check-in, PR subscription or plan file from an earlier session reaches a new one.
 
 1. Read [`CLAUDE.md`](../../CLAUDE.md), then this file to the end, then STATUS's Current phase row and the deviations log.
-2. Check GitHub: open PRs, the latest release (`v0.28.0` at the handover) and `ci` on `main`. On 2026-11-13 no factory PR was open; dependabot's #5, #80, #81, #82 and #84 were (#84 replaced #34). The dependabot PRs are the operator's to close or rebase; #84 changes `.github/workflows/`, a guardrail, and #80 and #82 change the gate image.
+2. Check GitHub: open PRs, the latest release (`v0.29.0` at the handover) and `ci` on `main`. On 2026-11-13 no factory PR was open; dependabot's #5, #80, #81, #82 and #84 were (#84 replaced #34). The dependabot PRs are the operator's to close or rebase; #84 changes `.github/workflows/`, a guardrail, and #80 and #82 change the gate image.
 3. Branches:
    - No `claude/*` branch is left: the merged ones are deleted, the pin move's on 2026-11-13. Start new work on a fresh branch from `main`.
 4. The move to the operator's Mac is done (the next section). On the same Mac and checkout, a new account only checks that `git status` is clean on `main`, pulls, and runs `pnpm install --frozen-lockfile`; on another machine, work through that section again.
@@ -113,7 +113,7 @@ Two PRs, each a release, on the same branch, restarted from `main` after each me
 
 ## Waiting on the operator
 
-Every release up to `v0.28.0` is tagged and published; the operator's home has `v0.28.0` installed and pinned since 2026-11-13 (STATUS's Factory release row).
+Every release up to `v0.29.0` is tagged and published; the operator's home has `v0.29.0` installed and pinned since 2026-11-14 (STATUS's Factory release row).
 
 - **Tagging is no longer the operator's step:** the `release` workflow tags and publishes a version when its bump merges (operator guide, Releases).
 - **The backfill is done:** `v0.20.0` to `v0.25.0`, merged before the workflow existed, were tagged and published by running it by hand with each merge commit.
@@ -129,8 +129,8 @@ Every release up to `v0.28.0` is tagged and published; the operator's home has `
 
 ## What comes next
 
-1. **A flaky holdout case:** since 2026-11-01 the nightly holdout suite fails `triage-ci-config-r3` about one run in three (score 0.33: the triager was dispatched, but the reply had no closing `RESULT:` line the regex accepts). The runs keep no transcript. Find out whether the reply's format or the tier is wrong, before the freeze, since the G2 sample runs on the frozen system. A related fix is in review (#90): the visible case `triage-injection-auth` failed a correct reply on 2026-11-13 because its judge asked for a reason the triager never returns. #91 makes each run upload its results (the `eval-results` artifact), so a failure shows the whole reply.
-2. **The runner toolchain** is fixed in `v0.29.0` (#87): the runner carries the gate image's Python, npm, corepack (pnpm) and uv, by the same pins, with each task's tool cache in `sessions/T-…/cache`. #87 is merged (2026-11-13); the operator installs `v0.29.0` once the `release` workflow tags it. Its runner suite's online case runs in CI only: this Mac's DNS sends the registries to fake IPs (item 4 of Waiting on the operator).
+1. **A flaky holdout case:** since 2026-11-01 the nightly holdout suite fails `triage-ci-config-r3` about one run in three (score 0.33: the triager was dispatched, but the reply had no closing `RESULT:` line the regex accepts). The runs keep no transcript. Find out whether the reply's format or the tier is wrong, before the freeze, since the G2 sample runs on the frozen system. A related fix is merged (#90): the visible case `triage-injection-auth` failed a correct reply on 2026-11-13 because its judge asked for a reason the triager never returns. #91 makes each run upload its results (the `eval-results` artifact), so a failure shows the whole reply.
+2. **The runner toolchain** is fixed in `v0.29.0` (#87): the runner carries the gate image's Python, npm, corepack (pnpm) and uv, by the same pins, with each task's tool cache in `sessions/T-…/cache`. The operator installed `v0.29.0` on 2026-11-14. A live runner task that runs a target's tests on it is still to do, with the operator's agreement since it bills their account. Its runner suite's online case runs in CI only: this Mac's DNS sends the registries to fake IPs (item 4 of Waiting on the operator).
 3. **Parallel items:** P2-10, P2-11, P2-13 and P2-14 are done; P2-12 stays stopped.
 4. **The freeze and G2.**
    - Tag the frozen release. The operator then runs the G2 procedure in the operator guide's Gate G2 section:
