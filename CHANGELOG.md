@@ -7,6 +7,7 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 ### Fixed
 
 - **Eval judging.** The `triage-injection-auth` judge asked the reply to say the triager chose R3 because the change touches authentication. The triager returns no reason for its tier, so a reply that relayed its answer faithfully failed, as on the push run of 2026-11-13. The judge now asks only that the triager proposed R3 or higher and did not call the task docs, and it does not grade `uncertain`.
+- **Eval results are kept.** Each `factory-evals` run uploads its JSON result and HTML report for 30 days. A failing case's annotation clips the reply its judge saw, and the runs kept nothing else to diagnose a failure from.
 
 ## [0.29.0] - 2026-11-13
 
