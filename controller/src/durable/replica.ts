@@ -28,7 +28,7 @@ import { backup, DatabaseSync } from "node:sqlite";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { TMP, writeAtomic } from "../fsutil.ts";
 import { ensureHome, runDir, type Home } from "../home.ts";
-import { EventStore, type FactoryEvent } from "../store/events.ts";
+import { EventStore, useWal, type FactoryEvent } from "../store/events.ts";
 import { deleteObject, hasObject, listObjects, objectPath, readObject, readTree } from "./objects.ts";
 import { deletionSet, expiredScopes, expires } from "./refs.ts";
 
@@ -154,8 +154,9 @@ function copyInto(home: Home, dir: string, dbPath: string, store: EventStore, no
   let lastId: number;
   let total: number;
   try {
-    // The busy timeout comes first: switching to WAL takes a lock another syncing process may hold.
-    replica.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
+    // Another syncing process may hold the replica open (useWal).
+    useWal(replica);
+    replica.exec("PRAGMA synchronous = FULL;");
     primary.exec("PRAGMA busy_timeout = 5000;");
     replica.exec("BEGIN IMMEDIATE");
     try {

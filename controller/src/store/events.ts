@@ -114,6 +114,33 @@ const MIGRATIONS: readonly string[] = [
      BEGIN SELECT RAISE(ABORT, 'the task was purged'); END;`,
 ];
 
+const BUSY_TIMEOUT_MS = 5000;
+const SQLITE_BUSY = 5;
+const pause = new Int32Array(new SharedArrayBuffer(4));
+
+/**
+ * Sets a connection's busy timeout, then switches its file to WAL. A new file's switch needs the
+ * file's exclusive lock, and while another process opening it at the same moment holds it open,
+ * SQLite may refuse at once, without waiting out the busy timeout, or leave the mode unchanged.
+ * So the switch is retried, after a short random pause, until the file is in WAL or the busy
+ * timeout has passed. A file already in WAL needs no lock to stay there.
+ */
+export function useWal(db: DatabaseSync): void {
+  db.exec(`PRAGMA busy_timeout = ${String(BUSY_TIMEOUT_MS)};`);
+  const deadline = Date.now() + BUSY_TIMEOUT_MS;
+  for (;;) {
+    let mode: string | undefined;
+    try {
+      mode = (db.prepare("PRAGMA journal_mode = WAL").get() as { journal_mode?: string } | undefined)?.journal_mode;
+    } catch (e) {
+      if (((e as { errcode?: number }).errcode ?? 0) % 256 !== SQLITE_BUSY || Date.now() >= deadline) throw e;
+    }
+    if (mode === "wal") return;
+    if (mode !== undefined && Date.now() >= deadline) throw new EventError(`could not switch the database to WAL: it stays in ${mode} mode`);
+    Atomics.wait(pause, 0, 0, 10 + Math.floor(Math.random() * 40));
+  }
+}
+
 export class EventError extends Error {}
 /** A write from a lease that is no longer the task's current one. */
 export class StaleEpochError extends EventError {}
@@ -136,8 +163,13 @@ export class EventStore {
 
   static open(path: string, opts: { validator?: Validator; now?: () => Date } = {}): EventStore {
     const db = new DatabaseSync(path);
-    // The busy timeout comes first: switching to WAL takes a lock another process may hold.
-    db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;");
+    try {
+      useWal(db);
+    } catch (e) {
+      db.close();
+      throw e;
+    }
+    db.exec("PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON; PRAGMA secure_delete = ON;");
     // The version is read under the write lock, so two processes opening a new store at once
     // (serve and a worker, or two replica syncs) migrate it once between them.
     db.exec("BEGIN IMMEDIATE");
