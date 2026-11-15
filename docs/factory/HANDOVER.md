@@ -7,7 +7,7 @@ A new Claude Code session picks up the factory's development from here. Read thi
 The work moves between sessions and Claude accounts. From 2026-10-25 it runs in a Claude Code session on the operator's Mac, in their checkout; on 2026-10-27 it moves to another Claude account on the same Mac and checkout. Nothing but this repository carries over: no reminder, scheduled check-in, PR subscription or plan file from an earlier session reaches a new one.
 
 1. Read [`CLAUDE.md`](../../CLAUDE.md), then this file to the end, then STATUS's Current phase row and the deviations log.
-2. Check GitHub: open PRs, the latest release (`v0.29.0` at the handover) and `ci` on `main`. On 2026-11-13 no factory PR was open; dependabot's #5, #80, #81, #82 and #84 were (#84 replaced #34). The dependabot PRs are the operator's to close or rebase; #84 changes `.github/workflows/`, a guardrail, and #80 and #82 change the gate image.
+2. Check GitHub: open PRs, the latest release (`v0.30.0` at the handover) and `ci` on `main`. On 2026-11-15 no factory PR was open; Dependabot's #5, #81 and #89 were. #89 is the grouped base-image bump for the gate and runner images, which replaced #80 and #82; #84 is merged. The Dependabot PRs are the operator's to merge, close or rebase; #89 changes both images, a guardrail.
 3. Branches:
    - No `claude/*` branch is left: the merged ones are deleted, the pin move's on 2026-11-13. Start new work on a fresh branch from `main`.
 4. The move to the operator's Mac is done (the next section). On the same Mac and checkout, a new account only checks that `git status` is clean on `main`, pulls, and runs `pnpm install --frozen-lockfile`; on another machine, work through that section again.
@@ -113,7 +113,7 @@ Two PRs, each a release, on the same branch, restarted from `main` after each me
 
 ## Waiting on the operator
 
-Every release up to `v0.29.0` is tagged and published; the operator's home has `v0.29.0` installed and pinned since 2026-11-14 (STATUS's Factory release row).
+Every release up to `v0.30.0` is tagged and published; the operator's home has `v0.30.0` installed and pinned since 2026-11-15 (STATUS's Factory release row).
 
 - **Tagging is no longer the operator's step:** the `release` workflow tags and publishes a version when its bump merges (operator guide, Releases).
 - **The backfill is done:** `v0.20.0` to `v0.25.0`, merged before the workflow existed, were tagged and published by running it by hand with each merge commit.
@@ -124,7 +124,7 @@ Every release up to `v0.29.0` is tagged and published; the operator's home has `
 1. **Retention:** `doctor` warned on 2026-11-13 of 2 finished tasks past retention (`factoryctl prune`, operator-only) and 4 unfinished ones past it, to cancel or resume. The unfinished tasks are T-0002, T-0004, T-0005, T-0006 and T-0020 (item 2).
 2. **T-0020** is admitted from an issue and still `RECEIVED`: run it or cancel it.
 3. **One attended host run** (`factoryctl run T-… --attach`, without `--runner container`) is the first check, on macOS, of `v0.18.0`'s sandbox rule that keeps a session's commands out of its config directory.
-4. **The runner's route to the registries on this Mac.** Found on 2026-11-13: the Mac resolves `registry.npmjs.org`, `pypi.org` and `files.pythonhosted.org` to fake-IP addresses in `198.18.0.0/15`, the range VPN and proxy apps use in fake-IP mode. The runner's egress proxy refuses them as non-public, as it should, so a runner session here reaches no registry: no `pnpm install` or `uv sync` in a live build, and the runner suite's online cases fail locally. The fake IPs come from the router (`192.168.0.1`, the Mac's only resolver), which answers queries sent to `1.1.1.1` and `8.8.8.8` the same way; the Mac runs no proxy app, and the router offers no proxy port. `FACTORY_EGRESS_UPSTREAM` does not help, as tried with T-0023 on 2026-11-15: the egress proxy resolves the name itself and refuses a non-public answer before it hands the connection to the upstream. The operator cannot change the router, and a container that connects to the fake address does reach npm. So `v0.30.0` (#95) adds an opt-in: once it is installed, set `FACTORY_EGRESS_FAKE_IP=198.18.0.0/15` in the shell that runs `factoryctl` and `serve`, and `doctor`'s `registry route` check turns `ok`. Needed before the G2 sample, whose builds run in the runner.
+4. **The runner's route to the registries on this Mac** is done (2026-11-15). The router (`192.168.0.1`, the Mac's only resolver) answers every DNS query with fake-IP addresses in `198.18.0.0/15` and cannot be changed, and `FACTORY_EGRESS_UPSTREAM` does not help. So `v0.30.0` (#95) added the opt-in `FACTORY_EGRESS_FAKE_IP`: the operator's `~/.zshrc` sets it to `198.18.0.0/15`, and `doctor`'s `registry route` check is `ok`. With it, the runner suite's online case passes on this Mac. A shell that runs `factoryctl` or `serve` without it gets a `doctor` warning, and its runner sessions reach no registry.
 5. **Before the G2 sample:** reset both fixture mirrors to the frozen release. `v0.15.0` changed both fixture bases, and `ts-mini`'s mirror also carries the merges of T-0016, T-0017 and T-0022. A task whose change is already merged stops at the spec gate, as T-0021 did. Use `node scripts/mirror-fixture.ts NAME --footprint --factory-ref TAG --push --reset --rulesets`.
 
 ## What comes next
