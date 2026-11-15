@@ -4,6 +4,16 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-11-15
+
+### Added
+
+- **Runner egress on a fake-IP network.** On the operator's Mac the router answers every DNS query, also those sent to public resolvers, with fake-IP addresses in `198.18.0.0/15`, and carries each connection on to the real host. The runner's egress proxy refuses a name that resolves to a non-public address, so a runner session there reached no registry: T-0023 could not download `pnpm`. `FACTORY_EGRESS_UPSTREAM` did not help, since the proxy refuses before it uses the upstream.
+  - **`FACTORY_EGRESS_FAKE_IP`**, set where `factoryctl` runs (for example `198.18.0.0/15`), lets an allowlisted registry name resolve into the ranges it names. The proxy connects to the address it checked and logs it as a fake-IP answer.
+  - **Nothing else opens:** each range must lie inside `198.18.0.0/15`, or `factoryctl` and the proxy refuse it. Names off the allowlist, every other non-public address, and an answer that mixes the two are still refused.
+  - **`doctor`** has a `registry route` check: it warns when `registry.npmjs.org` resolves to a fake-IP address and the setting is unset, and fails a range outside `198.18.0.0/15`.
+  - A task's proxy is restarted when its upstream or fake-IP settings change.
+
 ### Fixed
 
 - **Eval judging.** The `triage-injection-auth` judge asked the reply to say the triager chose R3 because the change touches authentication. The triager returns no reason for its tier, so a reply that relayed its answer faithfully failed, as on the push run of 2026-11-13. The judge now asks only that the triager proposed R3 or higher and did not call the task docs, and it does not grade `uncertain`.
@@ -563,7 +573,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.26.0...v0.27.0

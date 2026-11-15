@@ -5,7 +5,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { appCheck, doctor, rulesetCheck, rulesetDiff } from "./doctor.ts";
+import { appCheck, doctor, registryRoute, rulesetCheck, rulesetDiff } from "./doctor.ts";
 import { memoryGitHub, serveGitHub, type StubApp } from "./github/testing.ts";
 import { factoryHome } from "./home.ts";
 import { REPO_ROOT } from "./policy/load.ts";
@@ -89,5 +89,21 @@ describe("doctor's drift checks", () => {
     } finally {
       await api.close();
     }
+  });
+});
+
+describe("doctor's registry route", () => {
+  const fakeDns = (): string[] => ["198.18.1.7"];
+  const realDns = (): string[] => ["104.16.2.34", "104.16.3.34"];
+
+  it("warns when the registries resolve to fake-IP addresses and no range is set", () => {
+    expect(registryRoute({}, fakeDns)).toEqual({ name: "registry route", status: "warn", detail: expect.stringContaining("resolves to 198.18.1.7, a fake-IP address: runner sessions reach no registry until FACTORY_EGRESS_FAKE_IP=198.18.0.0/15 is set") as unknown });
+    expect(registryRoute({}, realDns)).toEqual({ name: "registry route", status: "ok", detail: "registry.npmjs.org resolves to 104.16.2.34, 104.16.3.34" });
+    expect(registryRoute({}, () => [])).toMatchObject({ status: "warn", detail: "registry.npmjs.org does not resolve here" });
+  });
+
+  it("reports the range once it is set, and fails one outside 198.18.0.0/15", () => {
+    expect(registryRoute({ FACTORY_EGRESS_FAKE_IP: "198.18.0.0/15" }, fakeDns)).toMatchObject({ status: "ok", detail: expect.stringContaining("in 198.18.0.0/15 (FACTORY_EGRESS_FAKE_IP)") as unknown });
+    expect(registryRoute({ FACTORY_EGRESS_FAKE_IP: "10.0.0.0/8" }, fakeDns)).toMatchObject({ status: "fail", detail: "FACTORY_EGRESS_FAKE_IP: 10.0.0.0/8 is not inside 198.18.0.0/15" });
   });
 });

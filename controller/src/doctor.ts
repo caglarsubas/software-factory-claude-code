@@ -17,6 +17,8 @@ import { appAccess, installationSettings } from "./target/github.ts";
 import { listTargets, profileDigest } from "./target/registry.ts";
 import type { Validator } from "./schemas/validate.ts";
 import { managedSettingsJson } from "./runner/managed.ts";
+import { egressSettings, type EgressSettings } from "./runner/network.ts";
+import { FAKE_IP_RANGE, fakeIpAddress } from "../../runner/egress/proxy.ts";
 import { createValidator } from "./schemas/validate.ts";
 import { EventStore } from "./store/events.ts";
 import { describeAlarm, telemetryConfig, TelemetryError, type ModelAlarm } from "./telemetry.ts";
@@ -30,6 +32,35 @@ export interface Check {
 }
 
 const which = (cmd: string): boolean => spawnSync("sh", ["-c", `command -v ${cmd}`], { stdio: "ignore" }).status === 0;
+
+/** The addresses a name resolves to here, as the runner's egress proxy would see them; none on failure. */
+function resolveHere(host: string): string[] {
+  const script = "require('node:dns').lookup(process.argv[1], { all: true }, (e, a) => { if (!e) process.stdout.write(a.map((x) => x.address).join(' ')); })";
+  const r = spawnSync(process.execPath, ["-e", script, host], { encoding: "utf8", timeout: 5000 });
+  return r.status === 0 ? r.stdout.trim().split(/\s+/).filter((a) => a !== "") : [];
+}
+
+/**
+ * Whether runner sessions can reach the registries from here. On a network whose DNS answers
+ * with fake-IP addresses, the egress proxy refuses the registries unless FACTORY_EGRESS_FAKE_IP
+ * names that range (runner/egress/proxy.ts).
+ */
+export function registryRoute(env: NodeJS.ProcessEnv, resolve: (host: string) => string[] = resolveHere): Check {
+  const name = "registry route";
+  let fakeIp: EgressSettings["fakeIp"];
+  try {
+    fakeIp = egressSettings(env).fakeIp;
+  } catch (e) {
+    return { name, status: "fail", detail: e instanceof Error ? e.message : String(e) };
+  }
+  if (fakeIp !== undefined) return { name, status: "ok", detail: `runner egress accepts the registries' fake-IP answers in ${fakeIp} (FACTORY_EGRESS_FAKE_IP)` };
+  const host = "registry.npmjs.org";
+  const addresses = resolve(host);
+  if (addresses.length === 0) return { name, status: "warn", detail: `${host} does not resolve here` };
+  const fake = addresses.find(fakeIpAddress);
+  if (fake === undefined) return { name, status: "ok", detail: `${host} resolves to ${addresses.join(", ")}` };
+  return { name, status: "warn", detail: `${host} resolves to ${fake}, a fake-IP address: runner sessions reach no registry until FACTORY_EGRESS_FAKE_IP=${FAKE_IP_RANGE.join("/")} is set where factoryctl runs` };
+}
 
 export function doctor(home: Home, release: Release, keyFile: string, env: NodeJS.ProcessEnv = process.env): Check[] {
   const checks: Check[] = [];
@@ -67,6 +98,7 @@ export function doctor(home: Home, release: Release, keyFile: string, env: NodeJ
   add("git", which("git"), "git is required");
   const docker = spawnSync(process.env["FACTORY_CONTAINER_ENGINE"] ?? "docker", ["info", "--format", "{{.ServerVersion}}"], { encoding: "utf8" });
   add("container engine", docker.status === 0, docker.status === 0 ? `server ${docker.stdout.trim()}` : "Docker or Podman must be running for the gates");
+  checks.push(registryRoute(env));
   if (process.platform === "linux") {
     add("sandbox (bubblewrap, socat)", which("bwrap") && which("socat"), "Claude Code's Bash sandbox on Linux needs bwrap and socat; sessions require it (failIfUnavailable)");
   } else if (process.platform === "darwin") {
