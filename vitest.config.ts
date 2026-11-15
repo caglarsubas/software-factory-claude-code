@@ -9,5 +9,8 @@ export default defineConfig({
     // Tests that spawn git and node run several times slower under the full suite's load on the
     // operator's Mac than alone; 5 s timed out tests that take about 1 s alone.
     testTimeout: 30_000,
+    // Four suites delete an installed release tree (about 9,000 files) in afterAll: about 1.5 s
+    // alone, and past the default 10 s under the full suite's load (g0, release install).
+    hookTimeout: 60_000,
   },
 });
