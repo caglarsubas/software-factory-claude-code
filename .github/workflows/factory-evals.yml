@@ -49,11 +49,12 @@ jobs:
           suite() {
             npx --yes @anthropic-ai/claude-code@2.1.306 plugin eval plugin --eval-dir "$1" \
               --ablation none --runs 1 --threshold 0.8 --max-cost-usd "$2" --judge-model sonnet \
-              --allow-tools Read --trust-plugin --no-publish -j 4 --json "$RUNNER_TEMP/$1.json"
+              --allow-tools Read --trust-plugin --no-publish -j 4 --keep-temp --json "$RUNNER_TEMP/$1.json"
           }
           summary() {
             node scripts/eval-summary.ts "$RUNNER_TEMP/$1.json" "$1" >> "$GITHUB_STEP_SUMMARY"
-            # Each failing case, its failed graders and why, in the log and on the check run.
+            # Each failing case, its failed graders and why, and the end of its reply (from the
+            # run's trace, which --keep-temp keeps), in the log and on the check run.
             node scripts/eval-summary.ts "$RUNNER_TEMP/$1.json" "$1" --failures
           }
           printf '| Suite | Cases passed | Score | Cost |\n|---|---|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
@@ -61,8 +62,10 @@ jobs:
           if [ "$EVENT" != "schedule" ] || [ "$(date -u +%u)" = "1" ]; then suite evals 3 || status=1; summary evals; fi
           if [ "$EVENT" != "push" ]; then suite evals-holdout 1 || status=1; summary evals-holdout; fi
           exit "$status"
-      # Each case's whole reply and grader verdicts (the JSON result and the HTML report), which the
-      # annotations clip; the cases are fixture or self cases only (check-evals), so they may be public.
+      # Each case's scores, prompt and grader verdicts (the JSON result and the HTML report), which
+      # the annotations clip; the cases are fixture or self cases only (check-evals), so they may be
+      # public. Neither holds the replies, and the traces stay off the public artifact: the
+      # annotations show the end of each failing run's reply.
       - name: Keep the results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
