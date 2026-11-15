@@ -4,6 +4,10 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+### Fixed
+
+- **A failing eval case shows its reply.** The `eval-results` artifact holds each case's scores, prompt and grader verdicts but not the reply, and `plugin eval` deletes each run's trace when it ends, so a regex grader's failure ("pattern not found in last_message") could not be diagnosed: the holdout case `triage-ci-config-r3` failed so in three nightly runs since 2026-11-01. The evals now run with `--keep-temp`, and each failing run's annotation ends with the last 600 characters of the reply the graders read. That reply is the trace's last assistant text, and a subagent's text counts, so when it is the subagent's the annotation says so and adds the session's own reply.
+
 ## [0.30.0] - 2026-11-15
 
 ### Added
