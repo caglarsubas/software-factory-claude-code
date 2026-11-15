@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,6 +52,33 @@ describe("EventStore", () => {
     const again = EventStore.open(path, { now: fixed });
     expect(again.events("T-0001")).toHaveLength(2);
     again.close();
+  });
+
+  it("opens a new database from several processes at once, as serve and its workers or replica syncs do", async () => {
+    // Switching a new file to WAL needs its exclusive lock, and SQLite may refuse it at once,
+    // without waiting out the busy timeout, while another process holds the file open.
+    const script = `import { EventStore } from ${JSON.stringify(join(import.meta.dirname, "events.ts"))}; EventStore.open(process.argv[1] ?? "").close();`;
+    const version = (p: string): unknown => {
+      const db = new DatabaseSync(p, { readOnly: true });
+      try {
+        return [db.prepare("PRAGMA journal_mode").get(), db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get()];
+      } finally {
+        db.close();
+      }
+    };
+    for (let round = 0; round < 5; round++) {
+      const fresh = join(dir, `at-once-${String(round)}.db`);
+      const runs = await Promise.all(Array.from({ length: 6 }, () => new Promise<string>((resolve) => {
+        const child = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "--input-type=module", "-e", script, fresh], { stdio: ["ignore", "ignore", "pipe"] });
+        let err = "";
+        child.stderr.on("data", (d: Buffer) => (err += d.toString()));
+        child.once("close", (code) => {
+          resolve(code === 0 ? "" : `exit ${String(code)}: ${err.split("\n").find((l) => l.startsWith("Error")) ?? err}`);
+        });
+      })));
+      expect(runs.filter((r) => r !== ""), fresh).toEqual([]);
+      expect(version(fresh)).toEqual(version(path));
+    }
   });
 });
 
