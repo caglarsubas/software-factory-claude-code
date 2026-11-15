@@ -7,6 +7,11 @@
 // reach. It resolves names itself and connects to the address it checked, so a name cannot
 // re-resolve to something else between the check and the connection. Every request is logged.
 //
+// One exception is opt-in (FACTORY_EGRESS_FAKE_IP): on a network whose DNS answers with fake-IP
+// addresses (198.18.0.0/15, the range proxy routers and VPN apps use) and carries each
+// connection on to the real host by name, an allowlisted name may resolve into the ranges the
+// operator names there, and only into those. No other non-public address is ever accepted.
+//
 // It also carries the one route to the host (P2-02): a second listener that forwards every
 // HTTP request, unchanged, to the credential gateway in factoryctl, where the runner's
 // ANTHROPIC_BASE_URL points. The gateway is a fixed address set at start, never a name a session
@@ -18,6 +23,7 @@
 //   FACTORY_EGRESS_PORT          listen port (default 3128)
 //   FACTORY_EGRESS_LOG           NDJSON log file (default: stdout only)
 //   FACTORY_EGRESS_UPSTREAM      http://host:port of an upstream proxy, when the host needs one
+//   FACTORY_EGRESS_FAKE_IP       comma-separated CIDRs inside 198.18.0.0/15 (none: no exception)
 //   FACTORY_EGRESS_GATEWAY       host:port of the credential gateway (none: no gateway route)
 //   FACTORY_EGRESS_GATEWAY_PORT  the gateway route's listen port (default 3129)
 import { appendFileSync } from "node:fs";
@@ -34,6 +40,8 @@ export interface ProxyOptions {
   /** Injected in tests; defaults to a TCP connection. */
   connect?: (host: string, port: number) => Socket;
   upstream?: { host: string; port: number };
+  /** Fake-IP ranges an allowlisted name may resolve into (fakeIpRanges). */
+  fakeIp?: readonly [string, number][];
 }
 
 const V4_BLOCKED: [string, number][] = [
@@ -43,12 +51,35 @@ const V4_BLOCKED: [string, number][] = [
 ];
 
 const v4 = (ip: string): number => ip.split(".").reduce((n, o) => (n << 8) + Number(o), 0) >>> 0;
+const within = (ip: string, [net, bits]: [string, number]): boolean => bits === 0 || (v4(ip) >>> (32 - bits)) === (v4(net) >>> (32 - bits));
+
+/** The only range FACTORY_EGRESS_FAKE_IP may name: RFC 2544's, which fake-IP DNS answers from. */
+export const FAKE_IP_RANGE: [string, number] = ["198.18.0.0", 15];
+
+/** Whether an address is in 198.18.0.0/15, where fake-IP DNS answers come from. */
+export const fakeIpAddress = (ip: string): boolean => isIP(ip) === 4 && within(ip, FAKE_IP_RANGE);
+
+/**
+ * Parses FACTORY_EGRESS_FAKE_IP: comma-separated IPv4 CIDRs, each inside 198.18.0.0/15. Anything
+ * else is refused, so the setting can never open a private, loopback or metadata address.
+ */
+export function fakeIpRanges(value: string | undefined): [string, number][] {
+  if (value === undefined || value.trim() === "") return [];
+  return value.split(",").map((part) => {
+    const cidr = part.trim();
+    const m = /^([0-9]{1,3}(?:\.[0-9]{1,3}){3})\/([0-9]{1,2})$/.exec(cidr);
+    const net = m?.[1] ?? "";
+    const bits = Number(m?.[2] ?? -1);
+    if (m === null || isIP(net) !== 4 || bits < 0 || bits > 32) throw new Error(`FACTORY_EGRESS_FAKE_IP: ${cidr} is not an IPv4 CIDR`);
+    if (bits < FAKE_IP_RANGE[1] || !within(net, FAKE_IP_RANGE)) throw new Error(`FACTORY_EGRESS_FAKE_IP: ${cidr} is not inside ${FAKE_IP_RANGE.join("/")}`);
+    return [net, bits];
+  });
+}
 
 /** Whether an address is anything but a public unicast address. */
 export function blockedAddress(ip: string): boolean {
   if (isIP(ip) === 4) {
-    const a = v4(ip);
-    return V4_BLOCKED.some(([net, bits]) => (a >>> (32 - bits)) === (v4(net) >>> (32 - bits)));
+    return V4_BLOCKED.some((range) => within(ip, range));
   }
   const s = ip.toLowerCase();
   if (s.startsWith("::ffff:")) return blockedAddress(s.slice(7));
@@ -114,7 +145,9 @@ export function createEgressProxy(o: ProxyOptions): Server {
         }
         addresses = [];
       }
-      const blocked = addresses.find(blockedAddress);
+      // A fake-IP answer stands for the name itself, which the network carries on to the real host.
+      const fake = (ip: string): boolean => isIP(ip) === 4 && (o.fakeIp ?? []).some((range) => within(ip, range));
+      const blocked = addresses.find((ip) => blockedAddress(ip) && !fake(ip));
       if (blocked !== undefined) {
         record(req, target, "refused", `${d.host} resolves to non-public ${blocked}`);
         refuse(client, "403 Forbidden");
@@ -122,6 +155,7 @@ export function createEgressProxy(o: ProxyOptions): Server {
       }
       const upstream = o.upstream;
       const address = addresses[0];
+      const via = upstream !== undefined ? "via upstream proxy" : `via ${address ?? d.host}${address !== undefined && fake(address) ? " (fake-IP range)" : ""}`;
       const server = upstream === undefined ? connect(address ?? d.host, d.port) : connect(upstream.host, upstream.port);
       server.on("error", () => {
         record(req, target, "failed", "upstream connection failed");
@@ -130,7 +164,7 @@ export function createEgressProxy(o: ProxyOptions): Server {
       server.once("connect", () => {
         if (upstream !== undefined) server.write(`CONNECT ${d.host}:${String(d.port)} HTTP/1.1\r\nHost: ${d.host}:${String(d.port)}\r\n\r\n`);
         else client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-        record(req, target, "allowed", upstream === undefined ? `via ${address ?? d.host}` : "via upstream proxy");
+        record(req, target, "allowed", via);
         if (head.length > 0) server.write(head);
         if (upstream === undefined) {
           server.pipe(client).pipe(server);
@@ -196,9 +230,11 @@ if (import.meta.main) {
   const allow = (process.env["FACTORY_EGRESS_ALLOW"] ?? "").split(",").map((h) => h.trim().toLowerCase()).filter((h) => h !== "");
   const file = process.env["FACTORY_EGRESS_LOG"];
   const upstream = upstreamFrom(process.env["FACTORY_EGRESS_UPSTREAM"]);
+  const fakeIp = fakeIpRanges(process.env["FACTORY_EGRESS_FAKE_IP"]);
   const server = createEgressProxy({
     allow,
     ...(upstream === undefined ? {} : { upstream }),
+    ...(fakeIp.length === 0 ? {} : { fakeIp }),
     log: (e) => {
       const line = `${JSON.stringify(e)}\n`;
       process.stdout.write(line);
@@ -206,7 +242,7 @@ if (import.meta.main) {
     },
   });
   server.listen(Number(process.env["FACTORY_EGRESS_PORT"] ?? "3128"), "0.0.0.0", () => {
-    process.stdout.write(`${JSON.stringify({ ts: new Date().toISOString(), event: "listening", allow })}\n`);
+    process.stdout.write(`${JSON.stringify({ ts: new Date().toISOString(), event: "listening", allow, ...(fakeIp.length === 0 ? {} : { fake_ip: fakeIp.map((r) => r.join("/")) }) })}\n`);
   });
   const gateway = gatewayFrom(process.env["FACTORY_EGRESS_GATEWAY"]);
   if (gateway !== undefined) {

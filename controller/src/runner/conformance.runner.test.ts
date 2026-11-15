@@ -31,7 +31,7 @@ import { allowedEnvKeys } from "../session/env.ts";
 import { REGISTRIES } from "../session/options.ts";
 import type { Script } from "../session/stub-model.ts";
 import { IMAGE_ENV, listContainers, reapRunnerContainers, runArgs, runnerEnv, runnerUser, SDK_ENV, type RunnerSetup } from "./container.ts";
-import { ensureTaskNetwork, gatewayAddress, networkName, proxyName, removeTaskNetwork } from "./network.ts";
+import { egressSettings, ensureTaskNetwork, gatewayAddress, networkName, proxyName, removeTaskNetwork } from "./network.ts";
 import { startTaskRunner } from "./live.ts";
 import { buildWorld, CANARIES, destroyWorld, MOD_PROBE, own, plantMod, runCase, stubLog, type World } from "./suite.ts";
 import { startGateway, writeTokenFile, type UsageEntry } from "../gateway/gateway.ts";
@@ -360,12 +360,11 @@ describe("runner conformance (P2-01)", () => {
     const usage: UsageEntry[] = [];
     const address = gatewayAddress();
     const gw = await startGateway({ prices: release.config.prices, keyFile, upstream: `http://127.0.0.1:${String((upstream.address() as AddressInfo).port)}`, hosts: [address.bind], halted: () => null, onUsage: (e) => usage.push(e), log: () => undefined });
-    const upstreamProxy = process.env["FACTORY_EGRESS_UPSTREAM"];
     // The proxy runs as the runner's user and writes its log here.
     const logDir = join(root, "egress-gateway");
     mkdirSync(logDir, { recursive: true, mode: 0o700 });
     own(logDir);
-    const net = ensureTaskNetwork({ taskId: GATEWAY_TASK, image: w.image, owner: self(), logDir, gateway: { host: address.reach, port: Number(new URL(gw.urls[0] ?? "").port) }, ...(upstreamProxy === undefined ? {} : { upstream: upstreamProxy }) });
+    const net = ensureTaskNetwork({ taskId: GATEWAY_TASK, image: w.image, owner: self(), logDir, gateway: { host: address.reach, port: Number(new URL(gw.urls[0] ?? "").port) }, ...egressSettings() });
     // $0.20 of hard budget: the first $0.15 turn fits, the second starts with $0.05 left and spends past it, the third is refused.
     const grant = gw.issue({ taskId: TASK, label: "gateway-cap", limitUsd: 0.2 });
     const token = writeTokenFile(join(root, "tokens"), grant.id, grant.token);

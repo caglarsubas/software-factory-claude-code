@@ -18,7 +18,7 @@ import type { Script } from "../session/stub-model.ts";
 import { runPreflight, startBroker } from "./broker.ts";
 import { engineHasAppArmor, seccompPath, type RunnerSetup } from "./container.ts";
 import { ensureRunnerImage } from "./image.ts";
-import { ensureTaskNetwork, removeTaskNetwork, type TaskNetwork } from "./network.ts";
+import { egressSettings, ensureTaskNetwork, removeTaskNetwork, type TaskNetwork } from "./network.ts";
 
 export const STUB_PORT = 8080;
 
@@ -116,9 +116,8 @@ export function buildWorld(root: string, taskId: string, script: Script): World 
   const tokenFile = join(root, "token");
   writeFileSync(tokenFile, "stub-key\n", { mode: 0o644 });
   own(root);
-  // Locally, the proxy may need the host's upstream proxy; CI reaches the internet directly.
-  const upstream = process.env["FACTORY_EGRESS_UPSTREAM"];
-  const net = ensureTaskNetwork({ taskId, image, owner: self(), logDir: egressLogs, ...(upstream === undefined ? {} : { upstream }) });
+  // Locally, the proxy may need the host's upstream proxy or fake-IP ranges; CI reaches the internet directly.
+  const net = ensureTaskNetwork({ taskId, image, owner: self(), logDir: egressLogs, ...egressSettings() });
   const stub = `sf-stub-${taskId.toLowerCase()}`;
   spawnSync(ENGINE, ["rm", "--force", stub], { stdio: "ignore" });
   run(ENGINE, [

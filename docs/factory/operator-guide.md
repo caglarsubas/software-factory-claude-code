@@ -669,6 +669,8 @@ What the container gets:
 
 - **Identity:** your uid (never root), no capabilities and a read-only root.
 - **Network:** an internal network whose only exit is the task's egress proxy. The proxy allows HTTPS to the package registries and refuses your machine, private addresses and everything else. It logs each request to `$FACTORY_HOME/runs/<task>/egress/proxy.ndjson`.
+  - **Behind a proxy:** set `FACTORY_EGRESS_UPSTREAM=http://host:port` where `factoryctl` runs, and the proxy hands each allowed connection to that upstream.
+  - **On a fake-IP network** (a router or VPN app that answers DNS with addresses in `198.18.0.0/15`), from `v0.30.0`: set `FACTORY_EGRESS_FAKE_IP=198.18.0.0/15` where `factoryctl` and `serve` run. An allowlisted registry name may then resolve into that range; nothing else opens, and a range outside `198.18.0.0/15` is refused. `factoryctl doctor`'s `registry route` check warns when you need it.
 - **Files:** its worktree, task and session directories at their host paths. Nothing under `$FACTORY_HOME/secrets` and no Docker socket is ever mounted.
 - **Tools:** from `v0.29.0`, the gate image's toolchain: Python, Node with npm and corepack (`pnpm` at the target's `packageManager` version), and uv, at the gate image's pins. A builder runs the target's `setup`, `test`, `typecheck` and `lint` there. Their caches go to the task's own `sessions/T-…/cache`, the only place besides the worktree and the task directory a sandboxed command may write (in the runner, also pnpm's lock directory under `/tmp`, on a tmpfs of its own); it goes when the task's session directory does.
 

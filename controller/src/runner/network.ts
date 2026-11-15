@@ -6,12 +6,15 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { ENGINE } from "../../../gates/src/container.ts";
+import { fakeIpRanges } from "../../../runner/egress/proxy.ts";
 import { REGISTRIES } from "../session/options.ts";
 import { isLive, type ProcRef } from "../proc.ts";
 import { runnerUser } from "./container.ts";
 
 export const EGRESS_LABEL = "software-factory.egress=1";
 const GATEWAY_LABEL = "software-factory.gateway";
+/** The proxy's other settings (upstream and fake-IP ranges): a proxy started with others is replaced. */
+const SETTINGS_LABEL = "software-factory.egress-settings";
 export const OUTBOUND_NETWORK = "sf-egress-out";
 export const PROXY_PORT = 3128;
 /** The proxy's gateway route (P2-02): a runner's ANTHROPIC_BASE_URL is http://<proxy>:GATEWAY_ROUTE_PORT. */
@@ -61,28 +64,48 @@ export function gatewayAddress(): { bind: string; reach: string } {
   return { bind: v4, reach: v4 };
 }
 
+/** The operator's egress settings, from the shell that runs factoryctl. */
+export interface EgressSettings {
+  /** http://host:port of an upstream proxy, when the host reaches the internet only through one. */
+  upstream?: string;
+  /** Fake-IP ranges an allowlisted name may resolve into, inside 198.18.0.0/15 (runner/egress/proxy.ts). */
+  fakeIp?: string;
+}
+
+/**
+ * Reads FACTORY_EGRESS_UPSTREAM and FACTORY_EGRESS_FAKE_IP. A fake-IP value outside
+ * 198.18.0.0/15 is refused here, before any proxy starts.
+ */
+export function egressSettings(env: NodeJS.ProcessEnv = process.env): EgressSettings {
+  const upstream = env["FACTORY_EGRESS_UPSTREAM"] ?? "";
+  const ranges = fakeIpRanges(env["FACTORY_EGRESS_FAKE_IP"]);
+  return { ...(upstream === "" ? {} : { upstream }), ...(ranges.length === 0 ? {} : { fakeIp: ranges.map((r) => r.join("/")).join(",") }) };
+}
+
 /**
  * Creates the task's network and starts its proxy, or reuses them. `allow` is the proxy's host
  * allowlist; an upstream proxy (FACTORY_EGRESS_UPSTREAM) is for hosts that only reach the
- * internet through one; `gateway` gives the proxy its route to the credential gateway. A proxy
- * left by an earlier run with another gateway address is replaced.
+ * internet through one; `fakeIp` names the fake-IP ranges an allowlisted name may resolve into;
+ * `gateway` gives the proxy its route to the credential gateway. A proxy left by an earlier run
+ * with another gateway address or other settings is replaced.
  */
-export function ensureTaskNetwork(o: { taskId: string; image: string; owner: ProcRef; logDir: string; allow?: readonly string[]; upstream?: string; gateway?: { host: string; port: number } }): TaskNetwork {
+export function ensureTaskNetwork(o: { taskId: string; image: string; owner: ProcRef; logDir: string; allow?: readonly string[]; gateway?: { host: string; port: number } } & EgressSettings): TaskNetwork {
   const network = networkName(o.taskId);
   const proxy = proxyName(o.taskId);
   const gateway = o.gateway === undefined ? "" : `${o.gateway.host}:${String(o.gateway.port)}`;
+  const settings = `upstream=${o.upstream ?? ""};fake-ip=${o.fakeIp ?? ""}`;
   const net: TaskNetwork = { network, proxy, proxyUrl: `http://${proxy}:${String(PROXY_PORT)}`, log: join(o.logDir, "proxy.ndjson"), ...(gateway === "" ? {} : { gatewayUrl: `http://${proxy}:${String(GATEWAY_ROUTE_PORT)}` }) };
   if (!exists("network", OUTBOUND_NETWORK)) must(["network", "create", "--label", EGRESS_LABEL, OUTBOUND_NETWORK]);
   if (!exists("network", network)) must(["network", "create", "--internal", "--label", EGRESS_LABEL, "--label", `software-factory.task=${o.taskId}`, network]);
   if (exists("container", proxy)) {
-    const label = engine(["inspect", "--format", `{{index .Config.Labels "${GATEWAY_LABEL}"}}`, proxy]);
-    if (label.ok && label.out === gateway) return net;
+    const label = engine(["inspect", "--format", `{{index .Config.Labels "${GATEWAY_LABEL}"}}\t{{index .Config.Labels "${SETTINGS_LABEL}"}}`, proxy]);
+    if (label.ok && label.out === `${gateway}\t${settings}`) return net;
     engine(["rm", "--force", proxy]);
   }
   mkdirSync(o.logDir, { recursive: true, mode: 0o700 });
   must([
     "run", "--detach", "--name", proxy,
-    "--label", EGRESS_LABEL, "--label", `software-factory.task=${o.taskId}`, "--label", `software-factory.owner=${String(o.owner.pid)}@${o.owner.start_time ?? ""}`, "--label", `${GATEWAY_LABEL}=${gateway}`,
+    "--label", EGRESS_LABEL, "--label", `software-factory.task=${o.taskId}`, "--label", `software-factory.owner=${String(o.owner.pid)}@${o.owner.start_time ?? ""}`, "--label", `${GATEWAY_LABEL}=${gateway}`, "--label", `${SETTINGS_LABEL}=${settings}`,
     "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--read-only", "--tmpfs", "/tmp:rw,nosuid,size=16m",
     "--pids-limit", "256", "--memory", "256m", "--cpus", "1", "--user", runnerUser(),
     "--network", network,
@@ -91,6 +114,7 @@ export function ensureTaskNetwork(o: { taskId: string; image: string; owner: Pro
     "--env", `FACTORY_EGRESS_PORT=${String(PROXY_PORT)}`,
     "--env", `FACTORY_EGRESS_LOG=${LOG_DIR}/proxy.ndjson`,
     ...(o.upstream === undefined || o.upstream === "" ? [] : ["--env", `FACTORY_EGRESS_UPSTREAM=${o.upstream}`]),
+    ...(o.fakeIp === undefined || o.fakeIp === "" ? [] : ["--env", `FACTORY_EGRESS_FAKE_IP=${o.fakeIp}`]),
     ...(gateway === "" ? [] : ["--env", `FACTORY_EGRESS_GATEWAY=${gateway}`, "--env", `FACTORY_EGRESS_GATEWAY_PORT=${String(GATEWAY_ROUTE_PORT)}`]),
     o.image, "node", "/opt/software-factory/egress/proxy.ts",
   ]);

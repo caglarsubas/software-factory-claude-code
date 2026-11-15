@@ -8,7 +8,7 @@ import type { Home } from "../home.ts";
 import { self } from "../proc.ts";
 import { engineHasAppArmor, seccompPath, type RunnerSetup } from "./container.ts";
 import { ensureRunnerImage } from "./image.ts";
-import { ensureTaskNetwork, gatewayAddress, removeTaskNetwork } from "./network.ts";
+import { egressSettings, ensureTaskNetwork, gatewayAddress, removeTaskNetwork } from "./network.ts";
 
 export interface TaskRunner {
   /** Each session's setup, with its own gateway token. */
@@ -26,8 +26,7 @@ export const runnerGatewayAddress = gatewayAddress;
  */
 export function startTaskRunner(o: { home: Home; releaseRoot: string; taskId: string; gateway: { host: string; port: number } }): TaskRunner {
   const image = ensureRunnerImage(o.releaseRoot);
-  const upstream = process.env["FACTORY_EGRESS_UPSTREAM"];
-  const net = ensureTaskNetwork({ taskId: o.taskId, image, owner: self(), logDir: join(o.home.runs, o.taskId, "egress"), gateway: o.gateway, ...(upstream === undefined || upstream === "" ? {} : { upstream }) });
+  const net = ensureTaskNetwork({ taskId: o.taskId, image, owner: self(), logDir: join(o.home.runs, o.taskId, "egress"), gateway: o.gateway, ...egressSettings() });
   const baseUrl = net.gatewayUrl;
   if (baseUrl === undefined) throw new Error(`${o.taskId}: the egress proxy has no gateway route`);
   const apparmorUnconfined = engineHasAppArmor();
