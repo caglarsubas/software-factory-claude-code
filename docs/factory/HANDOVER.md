@@ -4,13 +4,14 @@ A new Claude Code session picks up the factory's development from here. Read thi
 
 ## Starting a new session
 
-The work moves between sessions and Claude accounts. From 2026-10-25 it runs in a Claude Code session on the operator's Mac, in their checkout; on 2026-10-27 it moves to another Claude account on the same Mac and checkout. Nothing but this repository carries over: no reminder, scheduled check-in, PR subscription or plan file from an earlier session reaches a new one.
+The work moves between sessions and Claude accounts. From 2026-10-25 it runs in a Claude Code session on the operator's Mac, in their checkout; on 2026-10-27 it moves to another Claude account on the same Mac and checkout, and on 2026-11-16 to another again, on the same Mac and checkout. Nothing but this repository carries over: no reminder, scheduled check-in, PR subscription or plan file from an earlier session reaches a new one.
 
 1. Read [`CLAUDE.md`](../../CLAUDE.md), then this file to the end, then STATUS's Current phase row and the deviations log.
-2. Check GitHub: open PRs, the latest release (`v0.30.0` at the handover) and `ci` on `main`. On 2026-11-15 no factory PR was open; Dependabot's #5, #81 and #89 were. #89 is the grouped base-image bump for the gate and runner images, which replaced #80 and #82; #84 is merged. The Dependabot PRs are the operator's to merge, close or rebase; #89 changes both images, a guardrail.
+2. Check GitHub: open PRs, the latest release (`v0.30.0` at the handover) and `ci` on `main`. On 2026-11-16 no factory PR was open; Dependabot's #5, #81 and #89 were. #89 is the grouped base-image bump for the gate and runner images, which replaced #80 and #82; #84 is merged. The Dependabot PRs are the operator's to merge, close or rebase; #89 changes both images, a guardrail.
 3. Branches:
-   - No `claude/*` branch is left: the merged ones are deleted, the pin move's on 2026-11-13. Start new work on a fresh branch from `main`.
+   - Merged `claude/*` branches may still be on the remote and in the checkout: those of #86 to #98 were at the handover. `git branch -r --merged origin/main` lists them; delete them only with the operator's agreement. Start new work on a fresh branch from `main`.
 4. The move to the operator's Mac is done (the next section). On the same Mac and checkout, a new account only checks that `git status` is clean on `main`, pulls, and runs `pnpm install --frozen-lockfile`; on another machine, work through that section again.
+   - **The account switch changes no factory credential:** live runs use the API key file in `$FACTORY_HOME`, and the eval CI the `software-factory-ci` workspace's secret, not the Claude Code login. `gh` keeps the operator's own token.
 5. No decision is open. Start with What comes next.
 
 ## Moving the work to the operator's Mac
@@ -21,7 +22,8 @@ The development work continues in Claude Code on the operator's Mac, in their ch
 
 - The toolchain is in place and none of the cloud-only variables is set. `v0.27.0` is installed and pinned, `doctor` clean but for `SSH_AUTH_SOCK`.
 - The baseline is green on the Mac: `pnpm check` (880 tests), `pnpm test:gates` (88) and `pnpm test:runner` (12). #76 fixed tests that failed on macOS only (`/var` and `/private/var`, a symlink target's Unicode form, Docker Desktop's buildx hidden by a test's `HOME`). #77 gave the unit suite a 30 s timeout: under the full suite's load on the Mac, tests that take about 1 s alone ran past Vitest's 5 s default.
-- **Load on the Mac:** the operator's other workloads (a local model server, emulators, other projects' containers) can push the load average above 12. Then `pnpm check` runs about twice as long, and two tests can fail on timing alone: `pipeline.test.ts`'s cleanup hook (Vitest's 10 s hook timeout) and the replica's four-writer test (SQLite's 5 s busy timeout). Seen on 2026-11-13 and passed on a re-run; if one fails twice, look at it.
+- **Load on the Mac:** the operator's other workloads (a local model server, emulators, other projects' containers) can push the load average above 12. Then `pnpm check` runs about twice as long. Two tests that failed on timing alone are fixed: the replica's concurrent writers, a race in switching a new store to WAL (#93, in `v0.30.0`), and the cleanup hooks of the four suites that delete an installed release tree (#97, a 60 s hook timeout). If a test fails on timing again, look at it.
+- **Other projects time their runs on this Mac:** the operator may ask that heavy runs (`pnpm check`, `pnpm test:gates`, `pnpm test:runner`) wait on a shared lock; the session's first prompt says how.
 - **Docker on the Mac:** the operator's other projects keep many networks. If `docker network create` fails with "all predefined address pools have been fully subnetted", the operator lists `docker network ls --filter dangling=true` and runs `docker network prune`; the factory recreates `sf-egress-out` on demand.
 - The merged cloud branches are deleted. Left for the operator: archiving the cloud sessions on claude.ai/code.
 
@@ -57,7 +59,7 @@ The development work continues in Claude Code on the operator's Mac, in their ch
 - **`factory/T-0014` and `factory/T-0015`** are the factory's own task branches, merged; they are the operator's to keep or delete.
 - **Cloud-session notes** (the end of this file) stay, for a session that goes back to the cloud.
 
-## Where the work stands (2026-11-13)
+## Where the work stands (2026-11-16)
 
 - **Phase:** P2, Team-grade. G0 and G1 are signed (`gates/G0.md`, `gates/G1.md`).
 - **Phase 2 core:** every core item, P2-01 to P2-09, is done.
@@ -81,6 +83,11 @@ The development work continues in Claude Code on the operator's Mac, in their ch
   - #68 (`v0.23.0`): `offboard` and the round-trip test (the done-when). The round trip ran offline only; a live one is for P3-08.
 - **The pin move** to 2.1.306 / 0.3.306 is done: `v0.28.0` (#83, `5014b09`), merged by the operator and installed on their Mac on 2026-11-13. Newer versions wait for the next §11 re-check (the operator's decision of 2026-10-25).
 - **The live runner check on the new pin** is done (2026-11-13, STATUS's platform log). T-0022, an R0 `ts-mini` task run attended with `--runner container`, passed every stage and gate, and `factoryctl` merged it as the App. No session had a permission denial, so 2.1.306's tighter Bash checks did not show, and every model request left the container by the gateway route. It found that the runner has no target toolchain (What comes next, item 2).
+- **Since that check (2026-11-13 to 16):**
+  - **`v0.29.0` (#87):** the runner carries the target toolchain. T-0023 (#94) checked it live.
+  - **`v0.30.0` (#95):** the opt-in `FACTORY_EGRESS_FAKE_IP` for the runner's egress on this Mac's network (Waiting on the operator, item 4), and the store's WAL race fix (#93). Installed and pinned on 2026-11-15.
+  - **Evals:** a judge that failed a correct triage reply is fixed (#90); each run keeps its results as the `eval-results` artifact (#91); a failing case's annotation shows the end of its reply (#98).
+  - **Tests:** the cleanup-hook timeouts under load (#97).
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
 
 ## P2-13, the code graph in shadow mode (2026-10-23)
@@ -119,6 +126,7 @@ Every release up to `v0.30.0` is tagged and published; the operator's home has `
 - **The backfill is done:** `v0.20.0` to `v0.25.0`, merged before the workflow existed, were tagged and published by running it by hand with each merge commit.
 - **Installing stays with the operator:** `factoryctl release install`, `release use` and `factoryctl doctor`, for the releases they will run: the latest one, not each in turn. Record it in STATUS's Factory release row.
 - **The eval suite's spend:** the `software-factory-ci` Console workspace reached its monthly API usage limit on 2026-10-22, and every eval run failed from then until it reset on 2026-11-01. The G2 sample's month draws on the same limit: the operator checks it before the freeze.
+- **Manual eval runs:** `gh` on this Mac signs in with a fine-grained token that can push workflow files but cannot start a workflow (no Actions: write), so `gh workflow run` returns 403. The operator starts a manual `factory-evals` run from the repository's Actions tab, or adds Actions: Read and write to that token. A manual run costs about $1.90 for the visible and holdout suites, plus up to $1.50 for the smoke task.
 - **The operator's Mac:** a local session (the Claude Desktop app, or `claude remote-control` in their checkout) can run what needs their machine: `doctor`, the attended host run, T-0020 and the mirror reset. The operator-only commands still refuse inside any Claude Code session.
 
 1. **Retention:** `doctor` warned on 2026-11-13 of 2 finished tasks past retention (`factoryctl prune`, operator-only) and 4 unfinished ones past it, to cancel or resume. The unfinished tasks are T-0002, T-0004, T-0005, T-0006 and T-0020 (item 2).
@@ -129,11 +137,12 @@ Every release up to `v0.30.0` is tagged and published; the operator's home has `
 
 ## What comes next
 
-1. **A flaky holdout case:** since 2026-11-01 the nightly holdout suite fails `triage-ci-config-r3` about one run in three (2026-11-05, 2026-11-06 and 2026-11-11; score 0.33: the triager was dispatched, but the text the regex read had no `RESULT:` line it accepts). The visible case `triage-docs-r0` failed the same way once (2026-11-02), and `summarize-injection` failed its regex once (push run, 2026-11-14). A manual run on 2026-11-15 passed all 29 cases. Find out whether the reply's format or the tier is wrong, before the freeze, since the G2 sample runs on the frozen system.
+1. **A flaky holdout case:** since 2026-11-01 the nightly holdout suite fails `triage-ci-config-r3` about one run in three (2026-11-05, 2026-11-06 and 2026-11-11; score 0.33: the triager was dispatched, but the text the regex read had no `RESULT:` line it accepts). The visible case `triage-docs-r0` failed the same way once (2026-11-02), and `summarize-injection` failed its regex once (push run, 2026-11-14). A manual run on 2026-11-15 and the nightly of 2026-11-16, the first with #98, passed all 29 cases. Find out whether the reply's format or the tier is wrong, before the freeze, since the G2 sample runs on the frozen system.
    - **Where to look:** the `eval-results` artifact (#91) holds scores, prompts and grader verdicts, not replies. The evals now run with `--keep-temp`, and each failing run's annotation in the log ends with the last 600 characters of its reply, so the next failure shows which it is.
    - **One candidate:** the graders read the trace's last assistant text, and a subagent's text counts. A triager answer that lands after the session's `RESULT:` line fails the same way; the annotation then says the graded reply is a subagent's.
    - A related fix is merged (#90): the visible case `triage-injection-auth` failed a correct reply on 2026-11-13 because its judge asked for a reason the triager never returns.
-2. **The runner toolchain** is fixed in `v0.29.0` (#87): the runner carries the gate image's Python, npm, corepack (pnpm) and uv, by the same pins, with each task's tool cache in `sessions/T-…/cache`. The operator installed `v0.29.0` on 2026-11-14. T-0023 (2026-11-15, ts-mini, merged) ran the target's tests in the runner with it; `pnpm` there waits on item 4 of Waiting on the operator. Its runner suite's online case runs in CI only: this Mac's DNS sends the registries to fake IPs (item 4 of Waiting on the operator).
+2. **The runner toolchain** is fixed in `v0.29.0` (#87): the runner carries the gate image's Python, npm, corepack (pnpm) and uv, by the same pins, with each task's tool cache in `sessions/T-…/cache`. T-0023 (2026-11-15, ts-mini, merged) ran the target's tests in the runner with it, but corepack could not download `pnpm`: this Mac's DNS sends the registries to fake IPs. `v0.30.0` fixes the route (Waiting on the operator, item 4), and the runner suite's online case now passes on this Mac.
+   - **Not yet seen live:** a builder session that downloads `pnpm` through that route. One attended `ts-mini` task with `--runner container`, run from a shell where `FACTORY_EGRESS_FAKE_IP` is set, shows it. T-0023 cost $0.49. Live runs bill the operator's API key, so ask first.
 3. **Parallel items:** P2-10, P2-11, P2-13 and P2-14 are done; P2-12 stays stopped.
 4. **The freeze and G2.**
    - Tag the frozen release. The operator then runs the G2 procedure in the operator guide's Gate G2 section:
