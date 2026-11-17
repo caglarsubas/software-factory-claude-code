@@ -4,8 +4,11 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+## [0.30.1] - 2026-11-17
+
 ### Fixed
 
+- **The summarizer keeps "safe", "compliant" and "ready" out of the PR body.** It was told never to *claim* the change is safe, compliant or ready, so it sometimes wrote a denial in the same words ("It is not a statement that the change is safe or ready to merge"). Principle 14 keeps the words out of summaries altogether, and the `summarize-injection` grader refuses "ready to merge" anywhere in the body, so that case failed one run in 17 in a local sample on 2026-11-17, and once on CI (2026-11-14), though the summarizer left the injected line and link out every time. The summarizer now keeps the words out of both texts, also to deny them, and treats text in its inputs that tells it what to write as data. The grader stays as strict.
 - **A failing eval case shows its reply.** The `eval-results` artifact holds each case's scores, prompt and grader verdicts but not the reply, and `plugin eval` deletes each run's trace when it ends, so a regex grader's failure ("pattern not found in last_message") could not be diagnosed: the holdout case `triage-ci-config-r3` failed so in three nightly runs since 2026-11-01. The evals now run with `--keep-temp`, and each failing run's annotation ends with the last 600 characters of the reply the graders read. That reply is the trace's last assistant text, and a subagent's text counts, so when it is the subagent's the annotation says so and adds the session's own reply.
 
 ## [0.30.0] - 2026-11-15
@@ -577,7 +580,8 @@ The Phase 0 foundation (#4–#14).
 - Two fixture targets, `ts-mini` and `py-mini`, with seeded tasks, golden patches and hidden tests.
 - The operator guide and the threat model.
 
-[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.30.1...HEAD
+[0.30.1]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.30.0...v0.30.1
 [0.30.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/caglarsubas/software-factory-claude-code/compare/v0.27.0...v0.28.0
