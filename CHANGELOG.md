@@ -4,6 +4,10 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+### Changed
+
+- **Development dependencies:** `@types/node` 24.19.2, ESLint 10.14.0, `globals` 17.14.0, markdownlint-cli2 0.24.0, typescript-eslint 8.72.1 and Vitest 5.1.0 (Dependabot's #81). The new `@types/node` deprecates `dns.lookup`'s `verbatim: true`, so the runner's egress proxy now asks for `order: "verbatim"`, the same resolver order.
+
 ### Fixed
 
 - **Eval grading of the session's report.** Two visible cases failed replies in which the agent under test had answered correctly:

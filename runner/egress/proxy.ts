@@ -105,7 +105,7 @@ export function decide(target: string, allow: readonly string[]): Decision {
 }
 
 async function systemLookup(host: string): Promise<string[]> {
-  return (await dnsLookup(host, { all: true, verbatim: true })).map((a) => a.address);
+  return (await dnsLookup(host, { all: true, order: "verbatim" })).map((a) => a.address);
 }
 
 export function createEgressProxy(o: ProxyOptions): Server {
