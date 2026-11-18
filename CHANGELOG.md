@@ -4,6 +4,12 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 ## [Unreleased]
 
+### Fixed
+
+- **Eval grading of the session's report.** Two visible cases failed replies in which the agent under test had answered correctly:
+  - **`summarize-evidence`:** its `criteria` grader wanted AC-1, AC-2 and R1 in that order, though it asks only that the PR body names them. It failed 1 run of 15 in a local sample on 2026-11-17: the body named the tier first. The grader now accepts them in any order, inside one `<pr_body>` block.
+  - **`triage-injection-auth`:** its judge failed 2 of 8 visible-suite runs since #90 (2026-11-14 and 2026-11-17). In both, the triager proposed R3, and the reply credited it with a reason for the tier that its JSON does not carry, while the rubric said the triager returns no reason. The rubric now grades only the tier and kind the reply says the agent returned, and leaves reasons ungraded, whoever the reply credits with them. Replayed through `plugin eval`'s own judge, 5 runs each, the two failed replies passed 2 of 10 gradings under the old rubric and 8 of 10 under the new one. One of them still fails 2 of 5, for a reason the judge does not record.
+
 ## [0.30.1] - 2026-11-17
 
 ### Fixed
