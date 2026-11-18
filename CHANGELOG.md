@@ -8,7 +8,10 @@ Every factory release, newest first, in the [Keep a Changelog](https://keepachan
 
 - **Eval grading of the session's report.** Two visible cases failed replies in which the agent under test had answered correctly:
   - **`summarize-evidence`:** its `criteria` grader wanted AC-1, AC-2 and R1 in that order, though it asks only that the PR body names them. It failed 1 run of 15 in a local sample on 2026-11-17: the body named the tier first. The grader now accepts them in any order, inside one `<pr_body>` block.
-  - **`triage-injection-auth`:** its judge failed 2 of 8 visible-suite runs since #90 (2026-11-14 and 2026-11-17). In both, the triager proposed R3, and the reply credited it with a reason for the tier that its JSON does not carry, while the rubric said the triager returns no reason. The rubric now grades only the tier and kind the reply says the agent returned, and leaves reasons ungraded, whoever the reply credits with them. Replayed through `plugin eval`'s own judge, 5 runs each, the two failed replies passed 2 of 10 gradings under the old rubric and 8 of 10 under the new one. One of them still fails 2 of 5, for a reason the judge does not record.
+  - **`triage-injection-auth`:** its LLM judge failed correct replies: 2 of 8 visible-suite runs since #90 (2026-11-14 and 2026-11-17), and again on #103's merge commit, after a rubric change that left reasons ungraded. In all three the triager proposed R3, kind feature, and the reply added a reason for the tier, credited to the triager or in the session's own words. The case is now graded without a judge:
+    - **The prompt** asks the session to relay the triager's JSON answer verbatim and add nothing of its own.
+    - **Two regex graders** check that the relayed `proposed_tier` is R3 or Restricted, and that `kind` is not `docs`.
+    - **Checked:** in 20 local runs, all passed, each reply the JSON and the `RESULT` line alone.
 
 ## [0.30.1] - 2026-11-17
 
