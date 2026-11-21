@@ -4,12 +4,17 @@ A new Claude Code session picks up the factory's development from here. Read thi
 
 ## Starting a new session
 
-The work moves between sessions and Claude accounts. From 2026-10-25 it runs in a Claude Code session on the operator's Mac, in their checkout; on 2026-10-27 it moves to another Claude account on the same Mac and checkout, and on 2026-11-16 to another again, on the same Mac and checkout. Nothing but this repository carries over: no reminder, scheduled check-in, PR subscription or plan file from an earlier session reaches a new one.
+The work moves between sessions and Claude accounts. From 2026-10-25 it runs in a Claude Code session on the operator's Mac, in their checkout; on 2026-10-27 it moves to another Claude account on the same Mac and checkout, on 2026-11-16 to another again, and on 2026-11-21 to another again, each on the same Mac and checkout. Nothing but this repository carries over: no reminder, scheduled check-in, PR subscription or plan file from an earlier session reaches a new one.
 
 1. Read [`CLAUDE.md`](../../CLAUDE.md), then this file to the end, then STATUS's Current phase row and the deviations log.
-2. Check GitHub: open PRs, the latest release (`v0.30.0` at the handover) and `ci` on `main`. On 2026-11-16 no factory PR was open; Dependabot's #5, #81 and #89 were. #89 is the grouped base-image bump for the gate and runner images, which replaced #80 and #82; #84 is merged. The Dependabot PRs are the operator's to merge, close or rebase; #89 changes both images, a guardrail.
+2. Check GitHub: open PRs, the latest release (`v0.30.1` at the handover) and `ci` on `main` (green on `746c4b3`, #108's merge). On 2026-11-21 no factory PR was open; Dependabot's were. The Dependabot PRs are the operator's to merge, close or rebase:
+   - **#5** (development dependencies, 2026-10-09): `check` fails; closing it is the operator's call.
+   - **#109** (trufflehog in `factory-ci.yml`): green; it changes a workflow, a guardrail.
+   - **#110** (the gate and runner base images, which replaced #89 on 2026-11-20): `gates` and both `runner` jobs fail. It moves both images to Python 3.15, which breaks the cp314 wheels, as #89 did; the agent's advice is to hold it until after G2. It changes both images, a guardrail.
+   - **#111** (markdownlint-cli2 0.24.1, typescript-eslint 8.72.2): green.
+   - #81 was taken by #106 (merged 2026-11-19) and is closed.
 3. Branches:
-   - Merged `claude/*` branches may still be on the remote and in the checkout: those of #86 to #98 were at the handover. `git branch -r --merged origin/main` lists them; delete them only with the operator's agreement. Start new work on a fresh branch from `main`.
+   - Merged `claude/*` branches may still be on the remote and in the checkout: `claude/t0024-live` (#107) was at the handover. `git branch -r --merged origin/main` lists them; delete them only with the operator's agreement. Start new work on a fresh branch from `main`.
 4. The move to the operator's Mac is done (the next section). On the same Mac and checkout, a new account only checks that `git status` is clean on `main`, pulls, and runs `pnpm install --frozen-lockfile`; on another machine, work through that section again.
    - **The account switch changes no factory credential:** live runs use the API key file in `$FACTORY_HOME`, and the eval CI the `software-factory-ci` workspace's secret, not the Claude Code login. `gh` keeps the operator's own token.
 5. No decision is open. Start with What comes next.
@@ -59,7 +64,7 @@ The development work continues in Claude Code on the operator's Mac, in their ch
 - **`factory/T-0014` and `factory/T-0015`** are the factory's own task branches, merged; they are the operator's to keep or delete.
 - **Cloud-session notes** (the end of this file) stay, for a session that goes back to the cloud.
 
-## Where the work stands (2026-11-16)
+## Where the work stands (2026-11-21)
 
 - **Phase:** P2, Team-grade. G0 and G1 are signed (`gates/G0.md`, `gates/G1.md`).
 - **Phase 2 core:** every core item, P2-01 to P2-09, is done.
@@ -88,6 +93,11 @@ The development work continues in Claude Code on the operator's Mac, in their ch
   - **`v0.30.0` (#95):** the opt-in `FACTORY_EGRESS_FAKE_IP` for the runner's egress on this Mac's network (Waiting on the operator, item 4), and the store's WAL race fix (#93). Installed and pinned on 2026-11-15.
   - **Evals:** a judge that failed a correct triage reply is fixed (#90); each run keeps its results as the `eval-results` artifact (#91); a failing case's annotation shows the end of its reply (#98). The flaky holdout case ended with the pin move (What comes next, item 1).
   - **Tests:** the cleanup-hook timeouts under load (#97).
+- **Since the 2026-11-16 handover (to 2026-11-21):**
+  - **`v0.30.1` (#101):** the summarizer keeps "safe", "compliant" and "ready" out of its texts. Installed and pinned on 2026-11-17.
+  - **Evals:** `summarize-evidence`'s grader is order-free (#103), and `triage-injection-auth` is graded by regex on the triager's relayed JSON (#104). The visible suite passed 23 of 23 on #104's merge commit, and the scheduled runs of 2026-11-19 and 20 passed (What comes next, item 1).
+  - **#106:** Dependabot's development dependency bumps (#81), with the egress proxy's `dns.lookup` option moved to `order: "verbatim"`.
+  - **Live, attended, on `v0.30.1`:** T-0024 in the runner container (#107; What comes next, item 2) and T-0020 on the host, the attended host run (#108; Waiting on the operator, items 2 and 3).
 - **Freeze:** the core freezes on Nov 27 (§5); the G2 sample runs on the frozen system.
 
 ## P2-13, the code graph in shadow mode (2026-10-23)
