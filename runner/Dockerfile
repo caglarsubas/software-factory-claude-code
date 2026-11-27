@@ -16,9 +16,9 @@
 # caches at the task's own cache directory (controller/src/session/env.ts).
 ARG TARGETARCH
 
-FROM node:24.21.0-trixie-slim@sha256:173f125896c3b47ddf056734c7ea789d04595a6a08769a8f78e0df642781fb66 AS node
+FROM node:24.22.2-trixie-slim@sha256:0820eaa85e07d0490446dd01d14707e17e6108a36988cf374899cd057eb3812d AS node
 
-FROM python:3.14.8-slim-trixie@sha256:f85c5697265c178cc6887276c55fe16cf3d14ca35c3df6a5eab3b360534a55d2 AS base
+FROM python:3.15.1-slim-trixie@sha256:533b0b2f9b5d46fd097091cf826f27902f1d6c3bca714b6dc74551356aa97a51 AS base
 
 FROM base AS downloads-amd64
 ADD --checksum=sha256:60f6a3b611f06c0561933bdbc66e7288a172bffcd76f02c221ad6f3ac866f440 \
